@@ -1,0 +1,80 @@
+═══════════════════════════════════════════════════════════════
+📦 NATURAL BALL PLAYER - COMPLETE FILE MANIFEST
+═══════════════════════════════════════════════════════════════
+
+All files are prefixed with their destination folder for clarity.
+
+═══════════════════════════════════════════════════════════════
+ROOT DIRECTORY FILES:
+═══════════════════════════════════════════════════════════════
+
+✅ package.json
+✅ tailwind.config.js
+✅ gitignore.txt (rename to .gitignore)
+✅ README.md
+✅ INSTALLATION_CHECKLIST.md
+✅ complete_database_schema.sql
+
+═══════════════════════════════════════════════════════════════
+PUBLIC/ FOLDER FILES:
+═══════════════════════════════════════════════════════════════
+
+✅ public_index.html (rename to index.html)
+✅ public_manifest.json (rename to manifest.json)
+✅ public_robots.txt (rename to robots.txt)
+
+═══════════════════════════════════════════════════════════════
+SRC/ FOLDER FILES:
+═══════════════════════════════════════════════════════════════
+
+CORE FILES:
+✅ src_index.js (rename to index.js)
+✅ src_index.css (rename to index.css)
+✅ src_App.css (rename to App.css)
+✅ src_App.js (rename to App.js)
+✅ src_supabaseClient.js (rename to supabaseClient.js) ⚠️ UPDATE KEYS!
+✅ src_reportWebVitals.js (rename to reportWebVitals.js)
+✅ src_setupTests.js (rename to setupTests.js)
+
+COMPONENTS:
+✅ src_Schedule.js (rename to Schedule.js)
+✅ src_Profile.js (rename to Profile.js)
+✅ src_CoachTools.js (rename to CoachTools.js)
+✅ src_Messages.js (rename to Messages.js)
+✅ src_PlayerDashboard.js (rename to PlayerDashboard.js)
+✅ src_AdminSettings.js (rename to AdminSettings.js)
+
+═══════════════════════════════════════════════════════════════
+INSTALLATION ORDER:
+═══════════════════════════════════════════════════════════════
+
+1. Create React app
+2. Copy package.json → npm install
+3. Copy all public/ files
+4. Copy all src/ files
+5. Copy config files to root
+6. Update supabaseClient.js with your keys
+7. Run database SQL in Supabase
+8. Create avatars bucket (PUBLIC)
+9. npm start
+
+═══════════════════════════════════════════════════════════════
+FEATURES INCLUDED:
+═══════════════════════════════════════════════════════════════
+
+✅ Profile Pictures (avatar upload)
+✅ Messages System (send/receive/reply)
+✅ Calendar View (week/month toggle)
+✅ Inline Event Creation (hover + add)
+✅ Separate Event Types (team/workout/meal)
+✅ Training Programs (full CRUD)
+✅ Meal Plans (full CRUD)
+✅ Schedule Events (quick templates)
+✅ Admin Settings (users/teams)
+✅ Player Dashboard (stats/schedule)
+
+ALL LATEST VERSIONS AS OF FEBRUARY 19, 2026! ✨
+
+═══════════════════════════════════════════════════════════════
+TOTAL FILE COUNT: 25 files
+═══════════════════════════════════════════════════════════════

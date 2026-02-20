@@ -1,0 +1,8 @@
+{
+  "short_name": "NBP",
+  "name": "Natural Ball Player",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}
