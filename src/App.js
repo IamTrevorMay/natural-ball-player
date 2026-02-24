@@ -3,11 +3,11 @@ import { supabase } from './supabaseClient';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
-import Messages from './Messages';
-import KnowledgeBase from './KnowledgeBase';
-import MyTeam from './MyTeam';
 import Profile from './Profile';
 import Schedule from './Schedule';
+import Messages from './Messages';
+import MyTeam from './MyTeam';
+import KnowledgeBase from './KnowledgeBase';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench } from 'lucide-react';
 import './App.css';
 
@@ -178,7 +178,7 @@ function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
             )
           )}
           {currentView === 'profile' && <Profile userId={userId} />}
-          {currentView === 'team' && <MyTeam userId={userId} />}
+          {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
           {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
           {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
           {currentView === 'messages' && <Messages userId={userId} userRole={userRole} />}
