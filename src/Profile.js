@@ -1,12 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { User, Mail, Phone, Ruler, Scale, Edit2, Save, X } from 'lucide-react';
+import { User, Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt } from 'lucide-react';
+
+const EQUIPMENT_FIELDS = [
+  { key: 'shirt', label: 'Shirt' },
+  { key: 'shorts', label: 'Shorts' },
+  { key: 'pants', label: 'Pants' },
+  { key: 'shoe', label: 'Shoe' },
+  { key: 'belt', label: 'Belt' },
+  { key: 'hat', label: 'Hat' },
+  { key: 'helmet', label: 'Helmet' },
+  { key: 'batting_gloves', label: 'Batting Gloves' },
+  { key: 'bat', label: 'Bat' },
+];
 
 export default function Profile({ userId }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
+  const [equipmentSizes, setEquipmentSizes] = useState({});
+  const [editEquipment, setEditEquipment] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -29,14 +43,38 @@ export default function Profile({ userId }) {
         .single();
 
       if (error) throw error;
-      
+
       setUserData(data);
+
+      const profile = data.player_profiles?.[0];
       setEditForm({
         full_name: data.full_name || '',
         email: data.email || '',
         phone: data.phone || '',
         height: data.height || '',
         weight: data.weight || '',
+        sport: profile?.sport || '',
+      });
+
+      // Fetch equipment sizes
+      const { data: eqData } = await supabase
+        .from('equipment_sizes')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      const eq = eqData || {};
+      setEquipmentSizes(eq);
+      setEditEquipment({
+        shirt: eq.shirt || '',
+        shorts: eq.shorts || '',
+        pants: eq.pants || '',
+        shoe: eq.shoe || '',
+        belt: eq.belt || '',
+        hat: eq.hat || '',
+        helmet: eq.helmet || '',
+        batting_gloves: eq.batting_gloves || '',
+        bat: eq.bat || '',
       });
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -48,6 +86,7 @@ export default function Profile({ userId }) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Update users table
       const { error } = await supabase
         .from('users')
         .update({
@@ -59,6 +98,36 @@ export default function Profile({ userId }) {
         .eq('id', userId);
 
       if (error) throw error;
+
+      // Update sport in player_profiles
+      const profile = userData.player_profiles?.[0];
+      if (profile) {
+        const { error: profileError } = await supabase
+          .from('player_profiles')
+          .update({ sport: editForm.sport || null })
+          .eq('user_id', userId);
+
+        if (profileError) throw profileError;
+      }
+
+      // Upsert equipment sizes
+      const { error: eqError } = await supabase
+        .from('equipment_sizes')
+        .upsert({
+          user_id: userId,
+          shirt: editEquipment.shirt || null,
+          shorts: editEquipment.shorts || null,
+          pants: editEquipment.pants || null,
+          shoe: editEquipment.shoe || null,
+          belt: editEquipment.belt || null,
+          hat: editEquipment.hat || null,
+          helmet: editEquipment.helmet || null,
+          batting_gloves: editEquipment.batting_gloves || null,
+          bat: editEquipment.bat || null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+
+      if (eqError) throw eqError;
 
       await fetchUserData();
       setEditing(false);
@@ -72,12 +141,25 @@ export default function Profile({ userId }) {
   };
 
   const handleCancel = () => {
+    const profile = userData.player_profiles?.[0];
     setEditForm({
       full_name: userData.full_name || '',
       email: userData.email || '',
       phone: userData.phone || '',
       height: userData.height || '',
       weight: userData.weight || '',
+      sport: profile?.sport || '',
+    });
+    setEditEquipment({
+      shirt: equipmentSizes.shirt || '',
+      shorts: equipmentSizes.shorts || '',
+      pants: equipmentSizes.pants || '',
+      shoe: equipmentSizes.shoe || '',
+      belt: equipmentSizes.belt || '',
+      hat: equipmentSizes.hat || '',
+      helmet: equipmentSizes.helmet || '',
+      batting_gloves: equipmentSizes.batting_gloves || '',
+      bat: equipmentSizes.bat || '',
     });
     setEditing(false);
   };
@@ -161,7 +243,7 @@ export default function Profile({ userId }) {
                   <p className="text-gray-900">{userData.email}</p>
                 </div>
               </div>
-              
+
               <div className="flex items-center space-x-3">
                 <Phone className="text-gray-400" size={20} />
                 <div className="flex-1">
@@ -203,7 +285,7 @@ export default function Profile({ userId }) {
                   )}
                 </div>
               </div>
-              
+
               <div className="flex items-center space-x-3">
                 <Scale className="text-gray-400" size={20} />
                 <div className="flex-1">
@@ -228,7 +310,21 @@ export default function Profile({ userId }) {
           {profile && (
             <div className="mb-6">
               <h4 className="text-lg font-semibold text-gray-900 mb-4">Player Information</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div>
+                  <p className="text-sm text-gray-600">Sport</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.sport}
+                      onChange={(e) => setEditForm({...editForm, sport: e.target.value})}
+                      placeholder="e.g., Baseball"
+                      className="w-full border border-gray-300 rounded px-2 py-1 mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900 font-medium">{profile.sport || 'Not set'}</p>
+                  )}
+                </div>
                 <div>
                   <p className="text-sm text-gray-600">Jersey Number</p>
                   <p className="text-gray-900 font-medium">{profile.jersey_number || 'Not set'}</p>
@@ -248,6 +344,32 @@ export default function Profile({ userId }) {
               </div>
             </div>
           )}
+
+          {/* Equipment Sizes */}
+          <div className="mb-6">
+            <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+              <Shirt className="text-gray-400" size={20} />
+              <span>Equipment Sizes</span>
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {EQUIPMENT_FIELDS.map(({ key, label }) => (
+                <div key={key}>
+                  <p className="text-sm text-gray-600">{label}</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editEquipment[key]}
+                      onChange={(e) => setEditEquipment({...editEquipment, [key]: e.target.value})}
+                      placeholder={`Enter ${label.toLowerCase()} size`}
+                      className="w-full border border-gray-300 rounded px-2 py-1 mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900 font-medium">{equipmentSizes[key] || 'Not set'}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
 
           {/* Action Buttons */}
           {editing && (

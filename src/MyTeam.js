@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Calendar, MessageSquare, TrendingUp, User, Mail, Phone, Award, Activity } from 'lucide-react';
+import { Users, Calendar, MessageSquare, TrendingUp, User, Mail, Phone, Award, Activity, Star, Plus, Trash2, Edit2, Save, X, UserPlus } from 'lucide-react';
 
-export default function MyTeam({ userId }) {
+export default function MyTeam({ userId, userRole }) {
   const [loading, setLoading] = useState(true);
   const [teamData, setTeamData] = useState(null);
   const [roster, setRoster] = useState([]);
@@ -186,7 +186,8 @@ export default function MyTeam({ userId }) {
               { key: 'roster', label: 'Roster', icon: Users },
               { key: 'coaches', label: 'Coaches', icon: User },
               { key: 'schedule', label: 'Schedule', icon: Calendar },
-              { key: 'announcements', label: 'Announcements', icon: MessageSquare }
+              { key: 'announcements', label: 'Announcements', icon: MessageSquare },
+              ...((userRole === 'admin' || userRole === 'coach') ? [{ key: 'prospects', label: 'Prospects', icon: Star }] : [])
             ].map(tab => (
               <button
                 key={tab.key}
@@ -209,6 +210,9 @@ export default function MyTeam({ userId }) {
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
+          {activeTab === 'prospects' && (userRole === 'admin' || userRole === 'coach') && (
+            <ProspectsTab teamId={teamData.id} userId={userId} roster={roster} />
+          )}
         </div>
       </div>
     </div>
@@ -495,7 +499,7 @@ function AnnouncementsTab({ announcements }) {
 
 function AnnouncementCard({ announcement }) {
   const latestMessage = announcement.messages?.[0];
-  
+
   return (
     <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
       <div className="flex items-start space-x-3">
@@ -506,8 +510,8 @@ function AnnouncementCard({ announcement }) {
             <p className="text-sm text-gray-700 mt-1 line-clamp-2">{latestMessage.content}</p>
           )}
           <p className="text-xs text-gray-500 mt-2">
-            {new Date(announcement.created_at).toLocaleDateString('en-US', { 
-              month: 'short', 
+            {new Date(announcement.created_at).toLocaleDateString('en-US', {
+              month: 'short',
               day: 'numeric',
               hour: 'numeric',
               minute: '2-digit'
@@ -515,6 +519,274 @@ function AnnouncementCard({ announcement }) {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// PROSPECTS TAB (Coach/Admin Only)
+// ============================================
+
+function ProspectsTab({ teamId, userId, roster }) {
+  const [prospects, setProspects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [addMode, setAddMode] = useState(null); // null, 'roster', 'external'
+  const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '' });
+  const [editingId, setEditingId] = useState(null);
+  const [editNotes, setEditNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchProspects();
+  }, [teamId]);
+
+  const fetchProspects = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('prospects')
+        .select('*, users:player_id(full_name)')
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setProspects(data || []);
+    } catch (error) {
+      console.error('Error fetching prospects:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddProspect = async () => {
+    if (!newProspect.name.trim()) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('prospects')
+        .insert({
+          team_id: teamId,
+          player_id: newProspect.player_id || null,
+          name: newProspect.name,
+          notes: newProspect.notes || null,
+          added_by: userId,
+        });
+
+      if (error) throw error;
+      setNewProspect({ name: '', notes: '', player_id: '' });
+      setAddMode(null);
+      await fetchProspects();
+    } catch (error) {
+      console.error('Error adding prospect:', error);
+      alert('Error adding prospect: ' + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteProspect = async (id) => {
+    if (!window.confirm('Remove this prospect from the list?')) return;
+    try {
+      const { error } = await supabase
+        .from('prospects')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      await fetchProspects();
+    } catch (error) {
+      console.error('Error deleting prospect:', error);
+    }
+  };
+
+  const handleUpdateNotes = async (id) => {
+    try {
+      const { error } = await supabase
+        .from('prospects')
+        .update({ notes: editNotes || null })
+        .eq('id', id);
+
+      if (error) throw error;
+      setEditingId(null);
+      await fetchProspects();
+    } catch (error) {
+      console.error('Error updating prospect:', error);
+    }
+  };
+
+  const handleSelectRosterPlayer = (playerId) => {
+    const player = roster.find(p => p.id === playerId);
+    if (player) {
+      setNewProspect({ ...newProspect, name: player.full_name, player_id: playerId });
+    }
+  };
+
+  // Filter out roster players already in prospects
+  const existingPlayerIds = prospects.filter(p => p.player_id).map(p => p.player_id);
+  const availableRoster = roster.filter(p => !existingPlayerIds.includes(p.id));
+
+  if (loading) {
+    return <div className="text-center py-8 text-gray-500">Loading prospects...</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">Prospects List</h3>
+        {!addMode && (
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => { setAddMode('roster'); setNewProspect({ name: '', notes: '', player_id: '' }); }}
+              className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center space-x-1"
+            >
+              <UserPlus size={16} />
+              <span>From Roster</span>
+            </button>
+            <button
+              onClick={() => { setAddMode('external'); setNewProspect({ name: '', notes: '', player_id: '' }); }}
+              className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center space-x-1"
+            >
+              <Plus size={16} />
+              <span>External</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Add Prospect Form */}
+      {addMode && (
+        <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+          <h4 className="font-medium text-gray-900 mb-3">
+            {addMode === 'roster' ? 'Add Roster Player as Prospect' : 'Add External Prospect'}
+          </h4>
+          <div className="space-y-3">
+            {addMode === 'roster' ? (
+              <select
+                value={newProspect.player_id}
+                onChange={(e) => handleSelectRosterPlayer(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select a player...</option>
+                {availableRoster.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name} {p.player_profile?.position ? `(${p.player_profile.position})` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={newProspect.name}
+                onChange={(e) => setNewProspect({...newProspect, name: e.target.value})}
+                placeholder="Prospect name"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            )}
+            <textarea
+              value={newProspect.notes}
+              onChange={(e) => setNewProspect({...newProspect, notes: e.target.value})}
+              placeholder="Notes (optional)"
+              rows={2}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex space-x-2">
+              <button
+                onClick={handleAddProspect}
+                disabled={saving || !newProspect.name.trim()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-1"
+              >
+                <Save size={16} />
+                <span>{saving ? 'Adding...' : 'Add Prospect'}</span>
+              </button>
+              <button
+                onClick={() => setAddMode(null)}
+                className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center space-x-1"
+              >
+                <X size={16} />
+                <span>Cancel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Prospects List */}
+      {prospects.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <Star size={40} className="mx-auto mb-3 text-gray-300" />
+          <p>No prospects added yet.</p>
+          <p className="text-sm mt-1">Add players from your roster or external prospects to track.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {prospects.map(prospect => (
+            <div key={prospect.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:bg-gray-100 transition">
+              <div className="flex items-start justify-between">
+                <div className="flex items-start space-x-3 flex-1">
+                  <div className="w-10 h-10 bg-yellow-500 rounded-full flex items-center justify-center text-white flex-shrink-0">
+                    <Star size={18} />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <h4 className="font-semibold text-gray-900">{prospect.name}</h4>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        prospect.player_id ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                      }`}>
+                        {prospect.player_id ? 'Roster' : 'External'}
+                      </span>
+                    </div>
+                    {editingId === prospect.id ? (
+                      <div className="mt-2 flex items-center space-x-2">
+                        <input
+                          type="text"
+                          value={editNotes}
+                          onChange={(e) => setEditNotes(e.target.value)}
+                          placeholder="Add notes..."
+                          className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button
+                          onClick={() => handleUpdateNotes(prospect.id)}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          <Save size={16} />
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="text-gray-400 hover:text-gray-600"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-600 mt-1">
+                        {prospect.notes || 'No notes'}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      Added {new Date(prospect.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-1 ml-2">
+                  <button
+                    onClick={() => { setEditingId(prospect.id); setEditNotes(prospect.notes || ''); }}
+                    className="p-1.5 text-gray-400 hover:text-blue-600 transition"
+                    title="Edit notes"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteProspect(prospect.id)}
+                    className="p-1.5 text-gray-400 hover:text-red-600 transition"
+                    title="Remove prospect"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -46,6 +46,35 @@ CREATE TABLE IF NOT EXISTS player_profiles (
   grade TEXT,
   bats TEXT CHECK (bats IN ('Right', 'Left', 'Switch')),
   throws TEXT CHECK (throws IN ('Right', 'Left')),
+  sport TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Equipment sizes (one row per player)
+CREATE TABLE IF NOT EXISTS equipment_sizes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  shirt TEXT,
+  shorts TEXT,
+  pants TEXT,
+  shoe TEXT,
+  belt TEXT,
+  hat TEXT,
+  helmet TEXT,
+  batting_gloves TEXT,
+  bat TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Prospects (coach/admin only - players cannot see)
+CREATE TABLE IF NOT EXISTS prospects (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+  player_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  notes TEXT,
+  added_by UUID REFERENCES users(id),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -238,6 +267,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
 CREATE INDEX IF NOT EXISTS idx_performance_stats_player ON performance_stats(player_id);
 CREATE INDEX IF NOT EXISTS idx_performance_stats_date ON performance_stats(date);
+CREATE INDEX IF NOT EXISTS idx_equipment_sizes_user ON equipment_sizes(user_id);
+CREATE INDEX IF NOT EXISTS idx_prospects_team ON prospects(team_id);
+CREATE INDEX IF NOT EXISTS idx_prospects_player ON prospects(player_id);
 
 -- STEP 8: ROW LEVEL SECURITY (RLS)
 -- ═══════════════════════════════════════════════════════════════
@@ -258,6 +290,8 @@ ALTER TABLE meal_plan_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meal_plan_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE performance_stats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE equipment_sizes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prospects ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies: Users can read all, but only update their own
 CREATE POLICY "Users can view all users" ON users FOR SELECT USING (true);
@@ -297,7 +331,29 @@ CREATE POLICY "Users can update received messages" ON messages FOR UPDATE USING 
 
 -- RLS Policies: Performance stats - players see own, coaches see all
 CREATE POLICY "Players can view own stats" ON performance_stats FOR SELECT USING (
-  auth.uid() = player_id OR 
+  auth.uid() = player_id OR
+  EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role IN ('admin', 'coach'))
+);
+
+-- RLS Policies: Equipment sizes - players see/edit own, coaches/admins see all
+CREATE POLICY "Users can view own equipment sizes" ON equipment_sizes FOR SELECT USING (
+  auth.uid() = user_id OR
+  EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role IN ('admin', 'coach'))
+);
+CREATE POLICY "Users can insert own equipment sizes" ON equipment_sizes FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own equipment sizes" ON equipment_sizes FOR UPDATE USING (auth.uid() = user_id);
+
+-- RLS Policies: Prospects - coaches/admins only (players have NO access)
+CREATE POLICY "Coaches and admins can view prospects" ON prospects FOR SELECT USING (
+  EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role IN ('admin', 'coach'))
+);
+CREATE POLICY "Coaches and admins can insert prospects" ON prospects FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role IN ('admin', 'coach'))
+);
+CREATE POLICY "Coaches and admins can update prospects" ON prospects FOR UPDATE USING (
+  EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role IN ('admin', 'coach'))
+);
+CREATE POLICY "Coaches and admins can delete prospects" ON prospects FOR DELETE USING (
   EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role IN ('admin', 'coach'))
 );
 
