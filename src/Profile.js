@@ -61,7 +61,7 @@ export default function Profile({ userId }) {
         .from('equipment_sizes')
         .select('*')
         .eq('user_id', userId)
-        .single();
+        .maybeSingle();
 
       const eq = eqData || {};
       setEquipmentSizes(eq);
