@@ -183,7 +183,7 @@ function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
           {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
           {currentView === 'messages' && <Messages userId={userId} userRole={userRole} />}
           {currentView === 'coach-tools' && <CoachTools userRole={userRole} />}
-          {currentView === 'settings' && <AdminSettings />}
+          {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} />}
         </div>
       </div>
     </div>
