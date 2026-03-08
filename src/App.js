@@ -236,6 +236,12 @@ function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
     }
   }, [userId, userRole]);
 
+  // Re-fetch counts when switching tabs (e.g., Messages marks reads, Coach Tools confirms slots)
+  useEffect(() => {
+    const timer = setTimeout(() => fetchNotificationCounts(), 500);
+    return () => clearTimeout(timer);
+  }, [currentView]);
+
   useEffect(() => {
     fetchNotificationCounts();
 
