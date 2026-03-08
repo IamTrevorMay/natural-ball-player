@@ -71,7 +71,8 @@ function expandRecurringEvents(masters, exceptions, rangeStart, rangeEnd) {
 }
 
 export default function Schedule({ userId, userRole }) {
-  const [view, setView] = useState(userRole === 'player' ? 'facility' : 'team');
+  const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'team');
+  const [myScheduleEvents, setMyScheduleEvents] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('month');
   const [teams, setTeams] = useState([]);
@@ -109,6 +110,12 @@ export default function Schedule({ userId, userRole }) {
       fetchPlayerEvents();
     }
   }, [view, selectedTeam, selectedPlayer, selectedDate]);
+
+  useEffect(() => {
+    if (view === 'my-schedule') {
+      fetchMyScheduleEvents();
+    }
+  }, [view, selectedDate]);
 
   useEffect(() => {
     if (view === 'facility') {
@@ -200,6 +207,20 @@ export default function Schedule({ userId, userRole }) {
     setEvents(data || []);
   };
 
+  const fetchMyScheduleEvents = async () => {
+    const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+
+    const { data } = await supabase
+      .from('schedule_events')
+      .select('*')
+      .eq('player_id', userId)
+      .gte('event_date', startOfMonth.toISOString().split('T')[0])
+      .lte('event_date', endOfMonth.toISOString().split('T')[0]);
+
+    setMyScheduleEvents(data || []);
+  };
+
   const fetchFacilityEvents = async () => {
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
@@ -276,7 +297,28 @@ export default function Schedule({ userId, userRole }) {
         
         {/* View Toggle */}
         <div className="flex items-center space-x-2">
-          {(userRole === 'admin' || userRole === 'coach') && (
+          {userRole === 'player' ? (
+            <>
+              <button
+                onClick={() => { setView('my-schedule'); setSelectedCoach(null); }}
+                className={`px-4 py-2 rounded-lg font-medium transition flex items-center space-x-2 ${
+                  view === 'my-schedule' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <CalendarIcon size={18} />
+                <span>My Schedule</span>
+              </button>
+              <button
+                onClick={() => { setView('facility'); setSelectedCoach(null); }}
+                className={`px-4 py-2 rounded-lg font-medium transition flex items-center space-x-2 ${
+                  view === 'facility' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Building size={18} />
+                <span>Facility</span>
+              </button>
+            </>
+          ) : (
             <>
               <button
                 onClick={() => { setView('team'); setSelectedCoach(null); }}
@@ -296,19 +338,46 @@ export default function Schedule({ userId, userRole }) {
                 <User size={18} />
                 <span>Player</span>
               </button>
+              <button
+                onClick={() => { setView('facility'); setSelectedCoach(null); }}
+                className={`px-4 py-2 rounded-lg font-medium transition flex items-center space-x-2 ${
+                  view === 'facility' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Building size={18} />
+                <span>Facility</span>
+              </button>
             </>
           )}
-          <button
-            onClick={() => { setView('facility'); setSelectedCoach(null); }}
-            className={`px-4 py-2 rounded-lg font-medium transition flex items-center space-x-2 ${
-              view === 'facility' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            <Building size={18} />
-            <span>Facility</span>
-          </button>
         </div>
       </div>
+
+      {/* My Schedule View (Player) */}
+      {view === 'my-schedule' && (
+        <div className="bg-white rounded-lg shadow">
+          <div className="border-b border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">My Schedule</h3>
+              <div className="flex items-center space-x-2">
+                <button onClick={() => setViewMode('week')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Week</button>
+                <button onClick={() => setViewMode('month')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'month' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Month</button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
+              <h3 className="text-xl font-semibold text-gray-900">{selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+              <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
+            </div>
+          </div>
+          <div className="p-6">
+            {viewMode === 'month' ? (
+              <MonthView selectedDate={selectedDate} events={myScheduleEvents} onDateClick={() => {}} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={false} setSelectedEvent={setSelectedEvent} setShowEventDetail={setShowEventDetail} />
+            ) : (
+              <WeekView selectedDate={selectedDate} events={myScheduleEvents} onDateClick={() => {}} canManage={false} />
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Facility View */}
       {view === 'facility' && (
@@ -398,7 +467,7 @@ export default function Schedule({ userId, userRole }) {
       )}
 
       {/* Team/Player Calendar Container */}
-      {view !== 'facility' && <><div className="bg-white rounded-lg shadow">
+      {view !== 'facility' && view !== 'my-schedule' && <><div className="bg-white rounded-lg shadow">
         {/* Calendar Header */}
         <div className="border-b border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink } from 'lucide-react';
+import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle } from 'lucide-react';
 
-export default function CoachTools({ userRole }) {
+export default function CoachTools({ userRole, userId }) {
   const [activeTab, setActiveTab] = useState('schedule');
   const [teams, setTeams] = useState([]);
   const [players, setPlayers] = useState([]);
@@ -35,6 +35,7 @@ export default function CoachTools({ userRole }) {
     { key: 'benchmarks', icon: Target, label: 'Benchmarks' },
     { key: 'training', icon: Dumbbell, label: 'Training Programs' },
     { key: 'meals', icon: Utensils, label: 'Meal Plans' },
+    { key: 'slots', icon: Clock, label: 'Training Slots' },
   ];
 
   return (
@@ -60,6 +61,7 @@ export default function CoachTools({ userRole }) {
           {activeTab === 'benchmarks' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
           {activeTab === 'meals' && <MealsTab teams={teams} players={players} />}
+          {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
         </div>
       </div>
     </div>
@@ -1000,6 +1002,218 @@ function AssignMealPlanModal({ plan, teams, players, onClose, onSuccess }) {
             <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Assigning...' : 'Assign Plan'}</button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================
+   TRAINING SLOTS TAB
+   ============================================ */
+
+function TrainingSlotsTab({ userId }) {
+  const [slots, setSlots] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { fetchSlots(); }, [userId]);
+
+  const formatTime = (time) => {
+    if (!time) return '';
+    const [h, m] = time.split(':');
+    const hour = parseInt(h);
+    return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
+  };
+
+  const fetchSlots = async () => {
+    setLoading(true);
+    const { data: slotData, error } = await supabase
+      .from('training_slots')
+      .select('*')
+      .eq('coach_id', userId)
+      .order('slot_date', { ascending: true });
+    if (error) { console.error(error); setLoading(false); return; }
+    setSlots(slotData || []);
+
+    const slotIds = (slotData || []).map(s => s.id);
+    if (slotIds.length > 0) {
+      const { data: resData } = await supabase
+        .from('slot_reservations')
+        .select('*, users:player_id(full_name, email)')
+        .in('slot_id', slotIds);
+      setReservations(resData || []);
+    } else {
+      setReservations([]);
+    }
+    setLoading(false);
+  };
+
+  const handleConfirm = async (reservationId) => {
+    await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
+    fetchSlots();
+  };
+
+  const handleDecline = async (reservationId) => {
+    await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId);
+    fetchSlots();
+  };
+
+  const handleDeleteSlot = async (slotId) => {
+    if (!window.confirm('Delete this training slot and all its reservations?')) return;
+    await supabase.from('slot_reservations').delete().eq('slot_id', slotId);
+    await supabase.from('training_slots').delete().eq('id', slotId);
+    fetchSlots();
+  };
+
+  const handleCreateSlot = async (formData) => {
+    const { error } = await supabase.from('training_slots').insert({
+      coach_id: userId,
+      slot_date: formData.slotDate,
+      start_time: formData.startTime,
+      duration_minutes: formData.duration,
+      auto_confirm: formData.autoConfirm,
+      is_recurring: formData.repeatWeekly,
+      repeat_weekly: formData.repeatWeekly,
+      repeat_end_date: formData.repeatWeekly && formData.repeatEndDate ? formData.repeatEndDate : null,
+      max_players: formData.maxPlayers,
+      notes: formData.notes || null
+    });
+    if (error) { alert('Error creating slot: ' + error.message); return; }
+    setShowCreateForm(false);
+    fetchSlots();
+  };
+
+  if (loading) return <div className="text-gray-600">Loading training slots...</div>;
+
+  // Group slots by date
+  const slotsByDate = {};
+  slots.forEach(slot => {
+    if (!slotsByDate[slot.slot_date]) slotsByDate[slot.slot_date] = [];
+    slotsByDate[slot.slot_date].push(slot);
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">Training Slots</h3>
+        <button onClick={() => setShowCreateForm(true)} className="bg-teal-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-teal-700 transition flex items-center space-x-2">
+          <Plus size={18} /><span>Create Slot</span>
+        </button>
+      </div>
+
+      {slots.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <Clock size={40} className="mx-auto mb-3 text-gray-300" />
+          <p>No training slots yet. Create your first slot to allow players to book sessions!</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {Object.entries(slotsByDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, dateSlots]) => (
+            <div key={date}>
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                {new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+              </h4>
+              <div className="space-y-3">
+                {dateSlots.map(slot => {
+                  const slotReservations = reservations.filter(r => r.slot_id === slot.id);
+                  return (
+                    <div key={slot.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center space-x-3">
+                            <span className="font-medium text-gray-900">{formatTime(slot.start_time)}</span>
+                            <span className="text-sm text-gray-500">{slot.duration_minutes} min</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">Max {slot.max_players} player{slot.max_players > 1 ? 's' : ''}</span>
+                            {slot.auto_confirm && <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">Auto-confirm</span>}
+                            {slot.repeat_weekly && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Weekly</span>}
+                          </div>
+                          {slot.notes && <p className="text-sm text-gray-500 mt-1">{slot.notes}</p>}
+                        </div>
+                        <button onClick={() => handleDeleteSlot(slot.id)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={16} /></button>
+                      </div>
+                      {slotReservations.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200 space-y-2">
+                          {slotReservations.map(res => (
+                            <div key={res.id} className="flex items-center justify-between text-sm">
+                              <div className="flex items-center space-x-2">
+                                <span className="font-medium text-gray-900">{res.users?.full_name || 'Unknown'}</span>
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  res.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                                  res.status === 'declined' ? 'bg-red-100 text-red-700' :
+                                  'bg-yellow-100 text-yellow-700'
+                                }`}>{res.status}</span>
+                                {res.player_note && <span className="text-gray-400 text-xs">"{res.player_note}"</span>}
+                              </div>
+                              {res.status === 'pending' && (
+                                <div className="flex items-center space-x-2">
+                                  <button onClick={() => handleConfirm(res.id)} className="text-green-600 hover:text-green-800 transition" title="Confirm"><Check size={18} /></button>
+                                  <button onClick={() => handleDecline(res.id)} className="text-red-600 hover:text-red-800 transition" title="Decline"><XCircle size={18} /></button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showCreateForm && (
+        <CreateSlotForm
+          onClose={() => setShowCreateForm(false)}
+          onSave={handleCreateSlot}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateSlotForm({ onClose, onSave }) {
+  const [slotDate, setSlotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startTime, setStartTime] = useState('09:00');
+  const [duration, setDuration] = useState(60);
+  const [autoConfirm, setAutoConfirm] = useState(false);
+  const [repeatWeekly, setRepeatWeekly] = useState(false);
+  const [repeatEndDate, setRepeatEndDate] = useState('');
+  const [maxPlayers, setMaxPlayers] = useState(1);
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    await onSave({ slotDate, startTime, duration, autoConfirm, repeatWeekly, repeatEndDate, maxPlayers, notes });
+    setLoading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Create Training Slot</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Duration</label><select value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option><option value={90}>90 min</option></select></div>
+          </div>
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="10" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div className="flex items-center space-x-3"><input type="checkbox" id="ctAutoConfirm" checked={autoConfirm} onChange={(e) => setAutoConfirm(e.target.checked)} className="rounded" /><label htmlFor="ctAutoConfirm" className="text-sm text-gray-700">Auto-confirm reservations</label></div>
+          <div className="flex items-center space-x-3"><input type="checkbox" id="ctRepeatWeekly" checked={repeatWeekly} onChange={(e) => setRepeatWeekly(e.target.checked)} className="rounded" /><label htmlFor="ctRepeatWeekly" className="text-sm text-gray-700">Repeat weekly</label></div>
+          {repeatWeekly && <div><label className="block text-sm font-medium text-gray-700 mb-1">Repeat until</label><input type="date" value={repeatEndDate} onChange={(e) => setRepeatEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>}
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g., Hitting session, Pitching mechanics" rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div className="flex space-x-3 pt-2">
+            <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+            <button onClick={handleSubmit} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Create Slot'}</button>
+          </div>
+        </div>
       </div>
     </div>
   );
