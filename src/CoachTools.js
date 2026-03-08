@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Edit2 } from 'lucide-react';
+import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink } from 'lucide-react';
 
 export default function CoachTools({ userRole }) {
   const [activeTab, setActiveTab] = useState('schedule');

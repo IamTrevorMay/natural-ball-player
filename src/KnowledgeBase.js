@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, Edit } from 'lucide-react';
+import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft } from 'lucide-react';
 
 export default function KnowledgeBase({ userId, userRole }) {
   const [activeView, setActiveView] = useState('browse'); // browse, article, ai-assistant

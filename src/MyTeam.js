@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Calendar, MessageSquare, TrendingUp, User, Mail, Phone, Award, Activity, Star, Plus, Trash2, Edit2, Save, X, UserPlus } from 'lucide-react';
+import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus } from 'lucide-react';
 
 export default function MyTeam({ userId, userRole }) {
   const [loading, setLoading] = useState(true);

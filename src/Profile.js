@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { User, Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
