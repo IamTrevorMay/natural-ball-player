@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight } from 'lucide-react';
 
 export default function AdminSettings({ userId, userRole }) {
   const [activeTab, setActiveTab] = useState('users');
@@ -119,9 +119,11 @@ export default function AdminSettings({ userId, userRole }) {
           {activeTab === 'teams' && (
             <TeamsTab
               teams={teams}
+              users={users}
               showCreateTeam={showCreateTeam}
               setShowCreateTeam={setShowCreateTeam}
               refreshTeams={fetchTeams}
+              refreshUsers={fetchUsers}
             />
           )}
           {activeTab === 'coaches' && (
@@ -553,6 +555,9 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
     setError('');
 
     try {
+      // Save admin session before signUp (signUp switches the active session)
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+
       // 1. Create auth user using signUp
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
@@ -567,8 +572,13 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
 
       if (authError) throw authError;
 
-      // Wait a moment for the auth user to be created
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Restore admin session immediately so the app doesn't redirect
+      if (adminSession) {
+        await supabase.auth.setSession({
+          access_token: adminSession.access_token,
+          refresh_token: adminSession.refresh_token,
+        });
+      }
 
       // 2. Insert into users table
       const { error: userError } = await supabase
@@ -852,7 +862,9 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
   );
 }
 
-function TeamsTab({ teams, showCreateTeam, setShowCreateTeam, refreshTeams }) {
+function TeamsTab({ teams, users, showCreateTeam, setShowCreateTeam, refreshTeams, refreshUsers }) {
+  const [selectedTeam, setSelectedTeam] = useState(null);
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -868,7 +880,11 @@ function TeamsTab({ teams, showCreateTeam, setShowCreateTeam, refreshTeams }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {teams.map(team => (
-          <div key={team.id} className="bg-gray-50 rounded-lg p-6 hover:bg-gray-100 transition">
+          <div
+            key={team.id}
+            onClick={() => setSelectedTeam(team)}
+            className="bg-gray-50 rounded-lg p-6 hover:bg-gray-100 transition cursor-pointer"
+          >
             <div className="flex items-start justify-between">
               <div>
                 <h4 className="text-xl font-semibold text-gray-900">{team.name}</h4>
@@ -879,7 +895,7 @@ function TeamsTab({ teams, showCreateTeam, setShowCreateTeam, refreshTeams }) {
                   Created {new Date(team.created_at).toLocaleDateString()}
                 </p>
               </div>
-              <Users className="text-blue-600" size={24} />
+              <ChevronRight className="text-gray-400 mt-1" size={20} />
             </div>
           </div>
         ))}
@@ -894,6 +910,313 @@ function TeamsTab({ teams, showCreateTeam, setShowCreateTeam, refreshTeams }) {
           }}
         />
       )}
+
+      {selectedTeam && (
+        <TeamDetailModal
+          team={selectedTeam}
+          users={users}
+          onClose={() => setSelectedTeam(null)}
+          onRefresh={() => {
+            refreshTeams();
+            refreshUsers();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TeamDetailModal({ team, users, onClose, onRefresh }) {
+  const [name, setName] = useState(team.name);
+  const [description, setDescription] = useState(team.description || '');
+  const [editing, setEditing] = useState(false);
+  const [members, setMembers] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [addUserId, setAddUserId] = useState('');
+  const [addRole, setAddRole] = useState('player');
+  const [adding, setAdding] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchMembers = async () => {
+    const { data, error } = await supabase
+      .from('team_members')
+      .select('*, users(id, full_name, email, role)')
+      .eq('team_id', team.id);
+
+    if (error) {
+      console.error('Error fetching members:', error);
+    } else {
+      setMembers(data || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchMembers();
+  }, [team.id]);
+
+  const memberUserIds = new Set(members.map(m => m.user_id));
+  const availableUsers = users.filter(u => !memberUserIds.has(u.id));
+
+  const handleSaveDetails = async () => {
+    setSaving(true);
+    setError('');
+    const { error: updateError } = await supabase
+      .from('teams')
+      .update({ name, description: description || null })
+      .eq('id', team.id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setEditing(false);
+      onRefresh();
+    }
+    setSaving(false);
+  };
+
+  const handleAddMember = async () => {
+    if (!addUserId) return;
+    setAdding(true);
+    setError('');
+
+    const { error: insertError } = await supabase
+      .from('team_members')
+      .insert({
+        team_id: team.id,
+        user_id: addUserId,
+        role: addRole,
+      });
+
+    if (insertError) {
+      setError(insertError.message);
+    } else {
+      setAddUserId('');
+      fetchMembers();
+      onRefresh();
+    }
+    setAdding(false);
+  };
+
+  const handleRemoveMember = async (memberId) => {
+    const { error: deleteError } = await supabase
+      .from('team_members')
+      .delete()
+      .eq('id', memberId);
+
+    if (deleteError) {
+      setError(deleteError.message);
+    } else {
+      fetchMembers();
+      onRefresh();
+    }
+  };
+
+  const handleDeleteTeam = async () => {
+    setSaving(true);
+    // Delete team members first, then team
+    await supabase.from('team_members').delete().eq('team_id', team.id);
+    const { error: deleteError } = await supabase
+      .from('teams')
+      .delete()
+      .eq('id', team.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      setSaving(false);
+    } else {
+      onRefresh();
+      onClose();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Team Details</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
+              {error}
+            </div>
+          )}
+
+          {/* Team Name & Description */}
+          <div>
+            {editing ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Team Name</label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows="2"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleSaveDetails}
+                    disabled={saving || !name.trim()}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-1"
+                  >
+                    <Save size={14} />
+                    <span>{saving ? 'Saving...' : 'Save'}</span>
+                  </button>
+                  <button
+                    onClick={() => { setEditing(false); setName(team.name); setDescription(team.description || ''); }}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between">
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900">{team.name}</h4>
+                  {team.description && <p className="text-sm text-gray-600 mt-1">{team.description}</p>}
+                </div>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="text-gray-400 hover:text-blue-600 ml-2"
+                >
+                  <Edit2 size={16} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Members List */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+              Members ({members.length})
+            </h4>
+            {loading ? (
+              <p className="text-gray-500 text-sm">Loading members...</p>
+            ) : members.length === 0 ? (
+              <p className="text-gray-500 text-sm py-4 text-center">No members yet</p>
+            ) : (
+              <div className="space-y-2">
+                {members.map(member => (
+                  <div key={member.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                        {member.users?.full_name?.charAt(0) || '?'}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{member.users?.full_name}</p>
+                        <p className="text-xs text-gray-500">{member.users?.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
+                        {member.role}
+                      </span>
+                      <button
+                        onClick={() => handleRemoveMember(member.id)}
+                        className="text-gray-400 hover:text-red-600 transition"
+                        title="Remove from team"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add Member */}
+          <div>
+            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+              Add Member
+            </h4>
+            <div className="flex space-x-2">
+              <select
+                value={addUserId}
+                onChange={(e) => setAddUserId(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select user...</option>
+                {availableUsers.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({u.role})
+                  </option>
+                ))}
+              </select>
+              <select
+                value={addRole}
+                onChange={(e) => setAddRole(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="player">Player</option>
+                <option value="coach">Coach</option>
+              </select>
+              <button
+                onClick={handleAddMember}
+                disabled={!addUserId || adding}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-1"
+              >
+                <UserPlus size={14} />
+                <span>{adding ? '...' : 'Add'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Delete Team */}
+          <div className="pt-4 border-t border-gray-200">
+            {confirmDelete ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <p className="text-sm text-red-700 mb-3">
+                  Delete <strong>{team.name}</strong>? This will remove all members from the team. This cannot be undone.
+                </p>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleDeleteTeam}
+                    disabled={saving}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-50"
+                  >
+                    {saving ? 'Deleting...' : 'Yes, Delete'}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1"
+              >
+                <Trash2 size={14} />
+                <span>Delete Team</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
