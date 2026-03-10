@@ -60,9 +60,13 @@ export default function Profile({ userId, userRole }) {
 
       if (error) throw error;
 
+      // Normalize: player_profiles may be object (unique FK) or array
+      const pp = data.player_profiles;
+      data._profile = Array.isArray(pp) ? pp[0] : pp;
+
       setUserData(data);
 
-      const profile = data.player_profiles?.[0];
+      const profile = data._profile;
       setEditForm({
         full_name: data.full_name || '',
         email: data.email || '',
@@ -116,7 +120,7 @@ export default function Profile({ userId, userRole }) {
       if (error) throw error;
 
       // Update sport in player_profiles
-      const profile = userData.player_profiles?.[0];
+      const profile = userData._profile;
       if (profile) {
         const { error: profileError } = await supabase
           .from('player_profiles')
@@ -157,7 +161,7 @@ export default function Profile({ userId, userRole }) {
   };
 
   const handleCancel = () => {
-    const profile = userData.player_profiles?.[0];
+    const profile = userData._profile;
     setEditForm({
       full_name: userData.full_name || '',
       email: userData.email || '',
@@ -239,7 +243,8 @@ export default function Profile({ userId, userRole }) {
     );
   }
 
-  const profile = userData.player_profiles?.[0];
+  const profile = userData._profile;
+  const canEditProfile = userRole === 'coach' || userRole === 'admin';
 
   return (
     <div className="space-y-6">
@@ -313,9 +318,7 @@ export default function Profile({ userId, userRole }) {
             </div>
           </div>
 
-          {profile && (() => {
-            const canEdit = userRole === 'coach' || userRole === 'admin';
-            return (
+          {profile && (
             <div className="mb-6 pb-6 border-b border-gray-200">
               <div className="grid grid-cols-3 gap-6">
                 <div>
@@ -324,8 +327,8 @@ export default function Profile({ userId, userRole }) {
                     <select
                       value={profile.program || ''}
                       onChange={(e) => handleDropdownChange('program', e.target.value)}
-                      disabled={!canEdit}
-                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
+                      disabled={!canEditProfile}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       <option value="">No Program</option>
                       {PROGRAM_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -338,8 +341,8 @@ export default function Profile({ userId, userRole }) {
                     <select
                       value={profile.level || ''}
                       onChange={(e) => handleDropdownChange('level', e.target.value)}
-                      disabled={!canEdit}
-                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
+                      disabled={!canEditProfile}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       <option value="">No Level</option>
                       {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -352,8 +355,8 @@ export default function Profile({ userId, userRole }) {
                     <select
                       value={profile.status || ''}
                       onChange={(e) => handleDropdownChange('status', e.target.value)}
-                      disabled={!canEdit}
-                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
+                      disabled={!canEditProfile}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       <option value="">Active</option>
                       {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -362,8 +365,7 @@ export default function Profile({ userId, userRole }) {
                 </div>
               </div>
             </div>
-            );
-          })()}
+          )}
 
           {/* Tab Bar */}
           <div className="border-b border-gray-200 mb-6">
