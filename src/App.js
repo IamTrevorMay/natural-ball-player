@@ -370,7 +370,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
                 <AdminDashboard userId={userId} userRole={userRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={userRole} />}
             {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}

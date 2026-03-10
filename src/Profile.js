@@ -313,7 +313,9 @@ export default function Profile({ userId, userRole }) {
             </div>
           </div>
 
-          {profile && (userRole === 'coach' || userRole === 'admin') && (
+          {profile && (() => {
+            const canEdit = userRole === 'coach' || userRole === 'admin';
+            return (
             <div className="mb-6 pb-6 border-b border-gray-200">
               <div className="grid grid-cols-3 gap-6">
                 <div>
@@ -322,7 +324,8 @@ export default function Profile({ userId, userRole }) {
                     <select
                       value={profile.program || ''}
                       onChange={(e) => handleDropdownChange('program', e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                      disabled={!canEdit}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       <option value="">No Program</option>
                       {PROGRAM_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -335,7 +338,8 @@ export default function Profile({ userId, userRole }) {
                     <select
                       value={profile.level || ''}
                       onChange={(e) => handleDropdownChange('level', e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                      disabled={!canEdit}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       <option value="">No Level</option>
                       {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -348,7 +352,8 @@ export default function Profile({ userId, userRole }) {
                     <select
                       value={profile.status || ''}
                       onChange={(e) => handleDropdownChange('status', e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                      disabled={!canEdit}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEdit ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
                       <option value="">Active</option>
                       {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -357,7 +362,8 @@ export default function Profile({ userId, userRole }) {
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* Tab Bar */}
           <div className="border-b border-gray-200 mb-6">
