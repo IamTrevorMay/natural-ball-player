@@ -371,7 +371,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
               )
             )}
             {currentView === 'profile' && <Profile userId={userId} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}

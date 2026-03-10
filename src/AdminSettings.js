@@ -239,8 +239,8 @@ function CoachCard({ coach, refreshUsers }) {
       console.error('Error updating title:', error);
       alert('Error updating title: ' + error.message);
     } else {
+      await refreshUsers();
       setEditingTitle(false);
-      refreshUsers();
     }
     setSaving(false);
   };

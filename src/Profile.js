@@ -14,7 +14,20 @@ const EQUIPMENT_FIELDS = [
   { key: 'bat', label: 'Bat' },
 ];
 
-export default function Profile({ userId }) {
+const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'No Program'];
+const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
+const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
+
+const PROFILE_TABS = [
+  { key: 'general', label: 'General' },
+  { key: 'trackman', label: 'Trackman' },
+  { key: 'whoop', label: 'Whoop' },
+  { key: 'hittrax', label: 'Hittrax' },
+  { key: 'assessment', label: 'Assessment' },
+  { key: 'armcare', label: 'Arm Care' },
+];
+
+export default function Profile({ userId, userRole }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -23,6 +36,7 @@ export default function Profile({ userId }) {
   const [editEquipment, setEditEquipment] = useState({});
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [activeProfileTab, setActiveProfileTab] = useState('general');
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -166,6 +180,20 @@ export default function Profile({ userId }) {
     setEditing(false);
   };
 
+  const handleDropdownChange = async (field, value) => {
+    try {
+      const { error } = await supabase
+        .from('player_profiles')
+        .update({ [field]: value || null })
+        .eq('user_id', userId);
+      if (error) throw error;
+      await fetchUserData();
+    } catch (error) {
+      console.error(`Error updating ${field}:`, error);
+      alert(`Error updating ${field}: ` + error.message);
+    }
+  };
+
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -283,8 +311,63 @@ export default function Profile({ userId }) {
                 </p>
               )}
             </div>
+            {profile && (userRole === 'coach' || userRole === 'admin') && (
+              <div className="flex flex-wrap gap-3 ml-auto">
+                <select
+                  value={profile.program || ''}
+                  onChange={(e) => handleDropdownChange('program', e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Program</option>
+                  {PROGRAM_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+                <select
+                  value={profile.level || ''}
+                  onChange={(e) => handleDropdownChange('level', e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Level</option>
+                  {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+                <select
+                  value={profile.status || ''}
+                  onChange={(e) => handleDropdownChange('status', e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Status</option>
+                  {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              </div>
+            )}
           </div>
 
+          {/* Tab Bar */}
+          <div className="border-b border-gray-200 mb-6">
+            <nav className="flex space-x-8 overflow-x-auto">
+              {PROFILE_TABS.map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveProfileTab(tab.key)}
+                  className={`py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap transition ${
+                    activeProfileTab === tab.key
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {activeProfileTab !== 'general' && (
+            <div className="py-12 text-center">
+              <p className="text-gray-500 text-lg">Coming Soon</p>
+            </div>
+          )}
+
+          {activeProfileTab === 'general' && (
+          <>
           {/* Contact Information */}
           <div className="mb-6">
             <h4 className="text-lg font-semibold text-gray-900 mb-4">Contact Information</h4>
@@ -443,6 +526,8 @@ export default function Profile({ userId }) {
                 <span>{saving ? 'Saving...' : 'Save Changes'}</span>
               </button>
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

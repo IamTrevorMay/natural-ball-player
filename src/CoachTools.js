@@ -31,9 +31,9 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
 
   const tabs = [
     { key: 'schedule', icon: Calendar, label: 'Schedule' },
-    { key: 'roster', icon: Users, label: 'Roster' },
+    { key: 'roster', icon: Users, label: 'Manage Athletes' },
     { key: 'stats', icon: TrendingUp, label: 'Player Stats' },
-    { key: 'benchmarks', icon: Target, label: 'Benchmarks' },
+    { key: 'benchmarks', icon: Target, label: 'Assessments' },
     { key: 'training', icon: Dumbbell, label: 'Training Programs' },
     { key: 'meals', icon: Utensils, label: 'Meal Plans' },
     { key: 'slots', icon: Clock, label: 'Training Slots' },
