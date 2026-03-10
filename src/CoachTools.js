@@ -89,6 +89,17 @@ function ScheduleTab({ teams }) {
     if (!error) setEvents(data);
   };
 
+  const handleDeleteEvent = async (eventId) => {
+    if (!window.confirm('Are you sure you want to delete this event?')) return;
+    const { error } = await supabase.from('schedule_events').delete().eq('id', eventId);
+    if (error) {
+      console.error('Error deleting event:', error);
+      alert('Error deleting event: ' + error.message);
+    } else {
+      fetchEvents();
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -118,6 +129,13 @@ function ScheduleTab({ teams }) {
               </div>
               {event.teams && <div className="text-xs text-gray-500 mt-1">Team: {event.teams.name}</div>}
             </div>
+            <button
+              onClick={() => handleDeleteEvent(event.id)}
+              className="text-gray-400 hover:text-red-600 transition ml-4 flex-shrink-0"
+              title="Delete event"
+            >
+              <Trash2 size={18} />
+            </button>
           </div>
         ))}
       </div>

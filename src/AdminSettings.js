@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search } from 'lucide-react';
 
 export default function AdminSettings({ userId, userRole }) {
   const [activeTab, setActiveTab] = useState('users');
@@ -146,6 +146,13 @@ export default function AdminSettings({ userId, userRole }) {
 // ============================================
 
 function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refreshUsers }) {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredCoaches = coaches.filter(c => {
+    const q = searchQuery.toLowerCase();
+    return c.full_name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q);
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -159,14 +166,25 @@ function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refresh
         </button>
       </div>
 
-      {coaches.length === 0 ? (
+      <div className="relative">
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search coaches by name or email..."
+          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+        />
+      </div>
+
+      {filteredCoaches.length === 0 ? (
         <div className="text-center py-12 text-gray-500">
           <Users size={48} className="mx-auto mb-4 text-gray-300" />
-          <p>No coaches yet. Assign the coach role to a user to get started.</p>
+          <p>{searchQuery ? 'No coaches match your search.' : 'No coaches yet. Assign the coach role to a user to get started.'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4">
-          {coaches.map(coach => (
+          {filteredCoaches.map(coach => (
             <CoachCard key={coach.id} coach={coach} refreshUsers={refreshUsers} />
           ))}
         </div>
@@ -190,6 +208,24 @@ function CoachCard({ coach, refreshUsers }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [title, setTitle] = useState(coach.title || '');
   const [saving, setSaving] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  const handleRemoveCoach = async () => {
+    setSaving(true);
+    const { error } = await supabase
+      .from('users')
+      .update({ role: 'player', title: null })
+      .eq('id', coach.id);
+
+    if (error) {
+      console.error('Error removing coach:', error);
+      alert('Error removing coach: ' + error.message);
+    } else {
+      refreshUsers();
+    }
+    setSaving(false);
+    setConfirmRemove(false);
+  };
 
   const handleSaveTitle = async () => {
     setSaving(true);
@@ -269,9 +305,37 @@ function CoachCard({ coach, refreshUsers }) {
             )}
           </div>
         </div>
-        <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-          coach
-        </span>
+        <div className="flex items-center space-x-2">
+          <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+            coach
+          </span>
+          {confirmRemove ? (
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-red-600">Demote to player?</span>
+              <button
+                onClick={handleRemoveCoach}
+                disabled={saving}
+                className="text-red-600 hover:text-red-700 text-xs font-medium"
+              >
+                {saving ? '...' : 'Yes'}
+              </button>
+              <button
+                onClick={() => setConfirmRemove(false)}
+                className="text-gray-400 hover:text-gray-600 text-xs font-medium"
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmRemove(true)}
+              className="text-gray-400 hover:text-red-600 transition"
+              title="Remove coach role"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -422,6 +486,13 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 // ============================================
 
 function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers }) {
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredUsers = users.filter(u => {
+    const q = searchQuery.toLowerCase();
+    return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -435,8 +506,19 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
         </button>
       </div>
 
+      <div className="relative">
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search users by name or email..."
+          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+        />
+      </div>
+
       <div className="grid grid-cols-1 gap-4">
-        {users.map(user => (
+        {filteredUsers.map(user => (
           <UserCard key={user.id} user={user} refreshUsers={refreshUsers} />
         ))}
       </div>
@@ -864,6 +946,12 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
 
 function TeamsTab({ teams, users, showCreateTeam, setShowCreateTeam, refreshTeams, refreshUsers }) {
   const [selectedTeam, setSelectedTeam] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredTeams = teams.filter(t => {
+    const q = searchQuery.toLowerCase();
+    return t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
+  });
 
   return (
     <div className="space-y-4">
@@ -878,8 +966,19 @@ function TeamsTab({ teams, users, showCreateTeam, setShowCreateTeam, refreshTeam
         </button>
       </div>
 
+      <div className="relative">
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search teams by name or description..."
+          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {teams.map(team => (
+        {filteredTeams.map(team => (
           <div
             key={team.id}
             onClick={() => setSelectedTeam(team)}
@@ -938,6 +1037,9 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
   const [adding, setAdding] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
+  const [memberSearch, setMemberSearch] = useState('');
+  const [showMemberDropdown, setShowMemberDropdown] = useState(false);
+  const memberDropdownRef = useRef(null);
 
   const fetchMembers = async () => {
     const { data, error } = await supabase
@@ -957,8 +1059,23 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
     fetchMembers();
   }, [team.id]);
 
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (memberDropdownRef.current && !memberDropdownRef.current.contains(e.target)) {
+        setShowMemberDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const memberUserIds = new Set(members.map(m => m.user_id));
   const availableUsers = users.filter(u => !memberUserIds.has(u.id));
+  const filteredAvailableUsers = availableUsers.filter(u => {
+    const q = memberSearch.toLowerCase();
+    if (!q) return true;
+    return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+  });
 
   const handleSaveDetails = async () => {
     setSaving(true);
@@ -994,6 +1111,7 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
       setError(insertError.message);
     } else {
       setAddUserId('');
+      setMemberSearch('');
       fetchMembers();
       onRefresh();
     }
@@ -1151,18 +1269,43 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
               Add Member
             </h4>
             <div className="flex space-x-2">
-              <select
-                value={addUserId}
-                onChange={(e) => setAddUserId(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select user...</option>
-                {availableUsers.map(u => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name} ({u.role})
-                  </option>
-                ))}
-              </select>
+              <div className="flex-1 relative" ref={memberDropdownRef}>
+                <input
+                  type="text"
+                  value={memberSearch}
+                  onChange={(e) => {
+                    setMemberSearch(e.target.value);
+                    setAddUserId('');
+                    setShowMemberDropdown(true);
+                  }}
+                  onFocus={() => setShowMemberDropdown(true)}
+                  placeholder="Search users..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {showMemberDropdown && (
+                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {filteredAvailableUsers.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-gray-500">No users found</div>
+                    ) : (
+                      filteredAvailableUsers.map(u => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => {
+                            setAddUserId(u.id);
+                            setMemberSearch(u.full_name);
+                            setShowMemberDropdown(false);
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center justify-between"
+                        >
+                          <span>{u.full_name}</span>
+                          <span className="text-xs text-gray-400">{u.email}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
               <select
                 value={addRole}
                 onChange={(e) => setAddRole(e.target.value)}
