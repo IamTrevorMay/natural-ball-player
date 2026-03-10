@@ -114,6 +114,7 @@ export default function AdminSettings({ userId, userRole }) {
               showCreateUser={showCreateUser}
               setShowCreateUser={setShowCreateUser}
               refreshUsers={fetchUsers}
+              userId={userId}
             />
           )}
           {activeTab === 'teams' && (
@@ -485,7 +486,7 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 // USERS TAB
 // ============================================
 
-function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers }) {
+function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId }) {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredUsers = users.filter(u => {
@@ -519,7 +520,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
 
       <div className="grid grid-cols-1 gap-4">
         {filteredUsers.map(user => (
-          <UserCard key={user.id} user={user} refreshUsers={refreshUsers} />
+          <UserCard key={user.id} user={user} refreshUsers={refreshUsers} userId={userId} />
         ))}
       </div>
 
@@ -537,8 +538,21 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   );
 }
 
-function UserCard({ user, refreshUsers }) {
+function UserCard({ user, refreshUsers, userId }) {
   const [expanded, setExpanded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteUser = async () => {
+    setDeleting(true);
+    const { error } = await supabase.from('users').delete().eq('id', user.id);
+    if (error) {
+      console.error('Error deleting user:', error);
+      setDeleting(false);
+    } else {
+      refreshUsers();
+    }
+  };
 
   const getRoleBadgeColor = (role) => {
     switch(role) {
@@ -605,6 +619,41 @@ function UserCard({ user, refreshUsers }) {
               </>
             )}
           </div>
+
+          {user.id !== userId && (
+            <div className="pt-4 border-t border-gray-200 mt-4">
+              {confirmDelete ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <p className="text-sm text-red-700 mb-3">
+                    Delete <strong>{user.full_name}</strong>? This will remove all their data. This cannot be undone.
+                  </p>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={handleDeleteUser}
+                      disabled={deleting}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-50"
+                    >
+                      {deleting ? 'Deleting...' : 'Yes, Delete'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1"
+                >
+                  <Trash2 size={14} />
+                  <span>Delete User</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
