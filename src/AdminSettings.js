@@ -545,12 +545,32 @@ function UserCard({ user, refreshUsers, userId }) {
 
   const handleDeleteUser = async () => {
     setDeleting(true);
-    const { error } = await supabase.from('users').delete().eq('id', user.id);
-    if (error) {
-      console.error('Error deleting user:', error);
-      setDeleting(false);
-    } else {
+    try {
+      // Delete from auth.users via edge function (also cascades or we clean up manually)
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        'https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/delete-user',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ user_id: user.id }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to delete auth user');
+
+      // Delete from users table
+      const { error } = await supabase.from('users').delete().eq('id', user.id);
+      if (error) throw error;
+
       refreshUsers();
+    } catch (err) {
+      console.error('Error deleting user:', err);
+      alert('Error deleting user: ' + err.message);
+      setDeleting(false);
     }
   };
 
