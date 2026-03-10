@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle } from 'lucide-react';
+import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link } from 'lucide-react';
 
-export default function CoachTools({ userRole, userId }) {
+export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('schedule');
   const [teams, setTeams] = useState([]);
   const [players, setPlayers] = useState([]);
@@ -31,6 +31,7 @@ export default function CoachTools({ userRole, userId }) {
 
   const tabs = [
     { key: 'schedule', icon: Calendar, label: 'Schedule' },
+    { key: 'roster', icon: Users, label: 'Roster' },
     { key: 'stats', icon: TrendingUp, label: 'Player Stats' },
     { key: 'benchmarks', icon: Target, label: 'Benchmarks' },
     { key: 'training', icon: Dumbbell, label: 'Training Programs' },
@@ -57,6 +58,7 @@ export default function CoachTools({ userRole, userId }) {
         </div>
         <div className="p-6">
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
+          {activeTab === 'roster' && <RosterTab userRole={userRole} userId={userId} players={players} teams={teams} onNavigateToProfile={onNavigateToProfile} onRefreshPlayers={fetchPlayers} />}
           {activeTab === 'stats' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'benchmarks' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
@@ -208,17 +210,292 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
 }
 
 /* ============================================
+   ROSTER TAB
+   ============================================ */
+
+const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'No Program'];
+const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
+const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
+
+function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlayers }) {
+  const [rosterPlayers, setRosterPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterProgram, setFilterProgram] = useState('All');
+  const [filterLevel, setFilterLevel] = useState('All');
+  const [filterStatus, setFilterStatus] = useState('All');
+  const [editingPlayer, setEditingPlayer] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  useEffect(() => { fetchRosterPlayers(); }, []);
+
+  const fetchRosterPlayers = async () => {
+    setLoading(true);
+    let query = supabase
+      .from('users')
+      .select('id, full_name, phone, avatar_url, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status), team_members(team_id, teams(name))')
+      .eq('role', 'player')
+      .order('full_name');
+
+    const { data, error } = await query;
+    if (error) { console.error(error); setLoading(false); return; }
+
+    let filtered = data || [];
+    // Coach: only show players on their teams
+    if (userRole === 'coach') {
+      const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
+      const teamIds = (coachTeams || []).map(t => t.team_id);
+      filtered = filtered.filter(p => p.team_members?.some(tm => teamIds.includes(tm.team_id)));
+    }
+    setRosterPlayers(filtered);
+    setLoading(false);
+  };
+
+  const handleInlineUpdate = async (playerId, field, value) => {
+    const player = rosterPlayers.find(p => p.id === playerId);
+    const profileId = player?.player_profiles?.[0]?.id;
+    if (!profileId) return;
+    const { error } = await supabase.from('player_profiles').update({ [field]: value }).eq('id', profileId);
+    if (!error) {
+      setRosterPlayers(prev => prev.map(p =>
+        p.id === playerId ? { ...p, player_profiles: [{ ...p.player_profiles[0], [field]: value }] } : p
+      ));
+    }
+  };
+
+  const handleRemoveFromTeam = async (playerId, teamId) => {
+    if (!window.confirm('Remove this player from the team?')) return;
+    await supabase.from('team_members').delete().eq('user_id', playerId).eq('team_id', teamId);
+    fetchRosterPlayers();
+  };
+
+  const handleEditSave = async () => {
+    const profileId = editingPlayer?.player_profiles?.[0]?.id;
+    if (!profileId) return;
+    const { error } = await supabase.from('player_profiles').update({
+      position: editForm.position || null,
+      jersey_number: editForm.jersey_number || null,
+      grade: editForm.grade || null,
+      bats: editForm.bats || null,
+      throws: editForm.throws || null,
+    }).eq('id', profileId);
+    if (!error) {
+      fetchRosterPlayers();
+      setEditingPlayer(null);
+    }
+  };
+
+  const displayPlayers = rosterPlayers.filter(p => {
+    const profile = p.player_profiles?.[0] || {};
+    if (filterProgram !== 'All' && profile.program !== filterProgram) return false;
+    if (filterLevel !== 'All' && profile.level !== filterLevel) return false;
+    if (filterStatus !== 'All' && profile.status !== filterStatus) return false;
+    return true;
+  });
+
+  if (loading) return <div className="text-gray-600">Loading roster...</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">Roster ({displayPlayers.length})</h3>
+      </div>
+
+      {/* Filters */}
+      <div className="flex space-x-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Program</label>
+          <select value={filterProgram} onChange={(e) => setFilterProgram(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="All">All</option>
+            {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Level</label>
+          <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="All">All</option>
+            {LEVEL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="All">All</option>
+            {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="text-left py-3 px-2 font-medium text-gray-600">Name</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-600">Phone</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-600">Program</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-600">Level</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-600">Status</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-600">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayPlayers.map(player => {
+              const profile = player.player_profiles?.[0] || {};
+              const teamNames = player.team_members?.map(tm => tm.teams?.name).filter(Boolean) || [];
+              return (
+                <tr key={player.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-2">
+                    <div className="flex items-center space-x-2">
+                      {player.avatar_url ? (
+                        <img src={player.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">{player.full_name?.charAt(0)}</div>
+                      )}
+                      <div>
+                        <button
+                          onClick={() => onNavigateToProfile && onNavigateToProfile(player.id)}
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {player.full_name}
+                        </button>
+                        {teamNames.length > 0 && <p className="text-xs text-gray-400">{teamNames.join(', ')}</p>}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 px-2 text-gray-600">{player.phone || '—'}</td>
+                  <td className="py-3 px-2">
+                    <select
+                      value={profile.program || 'No Program'}
+                      onChange={(e) => handleInlineUpdate(player.id, 'program', e.target.value)}
+                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-3 px-2">
+                    <select
+                      value={profile.level || 'No Level'}
+                      onChange={(e) => handleInlineUpdate(player.id, 'level', e.target.value)}
+                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {LEVEL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-3 px-2">
+                    <select
+                      value={profile.status || 'Active'}
+                      onChange={(e) => handleInlineUpdate(player.id, 'status', e.target.value)}
+                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-3 px-2">
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => {
+                          setEditingPlayer(player);
+                          setEditForm({
+                            position: profile.position || '',
+                            jersey_number: profile.jersey_number || '',
+                            grade: profile.grade || '',
+                            bats: profile.bats || '',
+                            throws: profile.throws || '',
+                          });
+                        }}
+                        className="text-gray-500 hover:text-blue-600 transition"
+                        title="Edit info"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      {player.team_members?.map(tm => (
+                        <button
+                          key={tm.team_id}
+                          onClick={() => handleRemoveFromTeam(player.id, tm.team_id)}
+                          className="text-gray-400 hover:text-red-600 transition"
+                          title={`Remove from ${tm.teams?.name}`}
+                        >
+                          <XCircle size={14} />
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {displayPlayers.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            <Users size={40} className="mx-auto mb-3 text-gray-300" />
+            <p>No players found matching filters.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Edit Player Info Modal */}
+      {editingPlayer && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-900">Edit Player Info</h3>
+              <button onClick={() => setEditingPlayer(null)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Position</label>
+                <input type="text" value={editForm.position} onChange={(e) => setEditForm({...editForm, position: e.target.value})} placeholder="e.g., SS, RHP" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Jersey Number</label>
+                <input type="text" value={editForm.jersey_number} onChange={(e) => setEditForm({...editForm, jersey_number: e.target.value})} placeholder="e.g., 7" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
+                <input type="text" value={editForm.grade} onChange={(e) => setEditForm({...editForm, grade: e.target.value})} placeholder="e.g., Senior, 2026" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Bats</label>
+                  <select value={editForm.bats} onChange={(e) => setEditForm({...editForm, bats: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">—</option><option value="R">R</option><option value="L">L</option><option value="S">S</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Throws</label>
+                  <select value={editForm.throws} onChange={(e) => setEditForm({...editForm, throws: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">—</option><option value="R">R</option><option value="L">L</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex space-x-3 pt-2">
+                <button onClick={() => setEditingPlayer(null)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
+                <button onClick={handleEditSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm hover:bg-blue-700 transition">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================
    TRAINING PROGRAMS TAB
    ============================================ */
 
 function TrainingTab({ teams, players }) {
+  const [trainingSubTab, setTrainingSubTab] = useState('programs');
   const [programs, setPrograms] = useState([]);
+  const [workoutTemplates, setWorkoutTemplates] = useState([]);
   const [showCreateProgram, setShowCreateProgram] = useState(false);
+  const [showCreateWorkout, setShowCreateWorkout] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expandedWorkout, setExpandedWorkout] = useState(null);
 
-  useEffect(() => { fetchPrograms(); }, []);
+  useEffect(() => { fetchPrograms(); fetchWorkoutTemplates(); }, []);
 
   const fetchPrograms = async () => {
     const { data, error } = await supabase
@@ -240,57 +517,155 @@ function TrainingTab({ teams, players }) {
     setLoading(false);
   };
 
+  const fetchWorkoutTemplates = async () => {
+    const { data, error } = await supabase
+      .from('workout_templates')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error) setWorkoutTemplates(data || []);
+  };
+
   const handleDeleteProgram = async (programId) => {
     if (!window.confirm('Delete this training program and all its days/exercises?')) return;
     const { error } = await supabase.from('training_programs').delete().eq('id', programId);
     if (!error) fetchPrograms();
   };
 
+  const handleDeleteWorkout = async (workoutId) => {
+    if (!window.confirm('Delete this workout template?')) return;
+    const { error } = await supabase.from('workout_templates').delete().eq('id', workoutId);
+    if (!error) fetchWorkoutTemplates();
+  };
+
   if (loading) return <div className="text-gray-600">Loading training programs...</div>;
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-gray-900">Training Programs</h3>
-        <button onClick={() => setShowCreateProgram(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
-          <Plus size={18} /><span>Create Program</span>
-        </button>
+      <div className="flex space-x-2">
+        <button onClick={() => setTrainingSubTab('workouts')} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${trainingSubTab === 'workouts' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Individual Workouts ({workoutTemplates.length})</button>
+        <button onClick={() => setTrainingSubTab('programs')} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${trainingSubTab === 'programs' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Training Programs ({programs.length})</button>
       </div>
 
-      {programs.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <Dumbbell size={40} className="mx-auto mb-3 text-gray-300" />
-          <p>No training programs yet. Create your first program to get started!</p>
-        </div>
-      ) : (
+      {trainingSubTab === 'workouts' && (
         <div className="space-y-4">
-          {programs.map(program => (
-            <TrainingProgramCard
-              key={program.id}
-              program={program}
-              onDelete={handleDeleteProgram}
-              onAssign={() => { setSelectedProgram(program); setShowAssign(true); }}
-              onRefresh={fetchPrograms}
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-gray-900">Individual Workouts</h3>
+            <button onClick={() => setShowCreateWorkout(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
+              <Plus size={18} /><span>Create Workout</span>
+            </button>
+          </div>
+
+          {workoutTemplates.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Dumbbell size={40} className="mx-auto mb-3 text-gray-300" />
+              <p>No workout templates yet. Create your first workout to get started!</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {workoutTemplates.map(wt => {
+                const exercises = wt.exercises || [];
+                return (
+                  <div key={wt.id} className="bg-gray-50 rounded-lg p-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3">
+                          <span className="font-semibold text-gray-900">{wt.name}</span>
+                          {wt.program && wt.program !== 'No Program' && (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">{wt.program}</span>
+                          )}
+                          {wt.folder && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-600">{wt.folder}</span>}
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1">{exercises.length} exercise{exercises.length !== 1 ? 's' : ''}</p>
+                        {wt.notes && <p className="text-xs text-gray-400 mt-1">{wt.notes}</p>}
+                      </div>
+                      <div className="flex items-center space-x-2 ml-4">
+                        <button onClick={() => setExpandedWorkout(expandedWorkout === wt.id ? null : wt.id)} className="text-gray-400 hover:text-gray-600 transition">
+                          {expandedWorkout === wt.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                        </button>
+                        <button onClick={() => handleDeleteWorkout(wt.id)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={16} /></button>
+                      </div>
+                    </div>
+                    {expandedWorkout === wt.id && exercises.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-xs text-gray-500">
+                              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Link</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {exercises.map((ex, i) => (
+                              <tr key={i} className="border-t border-gray-100">
+                                <td className="py-2 text-gray-900">{ex.name}</td>
+                                <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
+                                <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
+                                <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {showCreateWorkout && (
+            <CreateWorkoutTemplateModal
+              onClose={() => setShowCreateWorkout(false)}
+              onSuccess={() => { setShowCreateWorkout(false); fetchWorkoutTemplates(); }}
             />
-          ))}
+          )}
         </div>
       )}
 
-      {showCreateProgram && (
-        <CreateTrainingProgramModal
-          onClose={() => setShowCreateProgram(false)}
-          onSuccess={() => { setShowCreateProgram(false); fetchPrograms(); }}
-        />
-      )}
+      {trainingSubTab === 'programs' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-gray-900">Training Programs</h3>
+            <button onClick={() => setShowCreateProgram(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
+              <Plus size={18} /><span>Create Program</span>
+            </button>
+          </div>
 
-      {showAssign && selectedProgram && (
-        <AssignTrainingProgramModal
-          program={selectedProgram}
-          teams={teams}
-          players={players}
-          onClose={() => { setShowAssign(false); setSelectedProgram(null); }}
-          onSuccess={() => { setShowAssign(false); setSelectedProgram(null); fetchPrograms(); }}
-        />
+          {programs.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Dumbbell size={40} className="mx-auto mb-3 text-gray-300" />
+              <p>No training programs yet. Create your first program to get started!</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {programs.map(program => (
+                <TrainingProgramCard
+                  key={program.id}
+                  program={program}
+                  onDelete={handleDeleteProgram}
+                  onAssign={() => { setSelectedProgram(program); setShowAssign(true); }}
+                  onRefresh={fetchPrograms}
+                />
+              ))}
+            </div>
+          )}
+
+          {showCreateProgram && (
+            <CreateTrainingProgramModal
+              onClose={() => setShowCreateProgram(false)}
+              onSuccess={() => { setShowCreateProgram(false); fetchPrograms(); }}
+            />
+          )}
+
+          {showAssign && selectedProgram && (
+            <AssignTrainingProgramModal
+              program={selectedProgram}
+              teams={teams}
+              players={players}
+              onClose={() => { setShowAssign(false); setSelectedProgram(null); }}
+              onSuccess={() => { setShowAssign(false); setSelectedProgram(null); fetchPrograms(); }}
+            />
+          )}
+        </div>
       )}
     </div>
   );
@@ -716,6 +1091,106 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
           <div className="flex space-x-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
             <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Assigning...' : 'Assign Program'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ---- CREATE WORKOUT TEMPLATE MODAL ---- */
+
+function CreateWorkoutTemplateModal({ onClose, onSuccess }) {
+  const [name, setName] = useState('');
+  const [program, setProgram] = useState('No Program');
+  const [folder, setFolder] = useState('');
+  const [notes, setNotes] = useState('');
+  const [exercises, setExercises] = useState([{ name: '', sets: '', reps: '', link: '' }]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const addRow = () => setExercises([...exercises, { name: '', sets: '', reps: '', link: '' }]);
+  const removeRow = (index) => setExercises(exercises.filter((_, i) => i !== index));
+  const updateRow = (index, field, value) => {
+    const updated = [...exercises];
+    updated[index] = { ...updated[index], [field]: value };
+    setExercises(updated);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    const { data: { user } } = await supabase.auth.getUser();
+    const filteredExercises = exercises.filter(ex => ex.name.trim());
+    const { error: insertError } = await supabase.from('workout_templates').insert({
+      name,
+      program: program || null,
+      folder: folder || null,
+      notes: notes || null,
+      exercises: filteredExercises,
+      created_by: user?.id,
+    });
+    if (insertError) { setError(insertError.message); setLoading(false); } else { onSuccess(); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between z-10">
+          <h3 className="text-xl font-bold text-gray-900">Create Workout</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Workout Name *</label>
+            <input type="text" required placeholder="e.g., Upper Body Day" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Program</label>
+              <select value={program} onChange={(e) => setProgram(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Folder</label>
+              <input type="text" placeholder="No Folder" value={folder} onChange={(e) => setFolder(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Workout Notes</label>
+            <textarea placeholder="Any special instructions..." value={notes} onChange={(e) => setNotes(e.target.value)} rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          {/* Exercises Table */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Exercises</label>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
+                  <th className="pb-2 pr-2">Name</th><th className="pb-2 pr-2 w-20">Sets</th><th className="pb-2 pr-2 w-20">Reps</th><th className="pb-2 pr-2">Link</th><th className="pb-2 w-8"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {exercises.map((ex, i) => (
+                  <tr key={i} className="border-b border-gray-100">
+                    <td className="py-2 pr-2"><input type="text" placeholder="Exercise name" value={ex.name} onChange={(e) => updateRow(i, 'name', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-2"><input type="text" placeholder="3" value={ex.sets} onChange={(e) => updateRow(i, 'sets', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-2"><input type="text" placeholder="10" value={ex.reps} onChange={(e) => updateRow(i, 'reps', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2 pr-2"><input type="url" placeholder="https://..." value={ex.link} onChange={(e) => updateRow(i, 'link', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td className="py-2"><button type="button" onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button type="button" onClick={addRow} className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center space-x-1"><Plus size={14} /><span>Add Exercise</span></button>
+          </div>
+
+          <div className="flex space-x-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
+            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Save Workout'}</button>
           </div>
         </form>
       </div>

@@ -44,10 +44,13 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  const [userName, setUserName] = useState('');
+  const [userAvatar, setUserAvatar] = useState(null);
+
   const fetchUserRole = async (userId) => {
     const { data, error } = await supabase
       .from('users')
-      .select('role, full_name')
+      .select('role, full_name, avatar_url')
       .eq('id', userId)
       .single();
 
@@ -55,6 +58,8 @@ export default function App() {
       console.error('Error fetching user role:', error);
     } else {
       setUserRole(data.role);
+      setUserName(data.full_name || '');
+      setUserAvatar(data.avatar_url || null);
     }
   };
 
@@ -91,9 +96,11 @@ export default function App() {
 
   return (
     <div className="bg-gray-100 min-h-screen">
-      <MainApp 
+      <MainApp
         userRole={userRole}
         userId={userId}
+        userName={userName}
+        userAvatar={userAvatar}
         onLogout={handleLogout}
         currentView={currentView}
         setCurrentView={setCurrentView}
@@ -159,11 +166,12 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
+function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView }) {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [pendingSlotCount, setPendingSlotCount] = useState(0);
   const [pendingSlotDetails, setPendingSlotDetails] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [viewProfileUserId, setViewProfileUserId] = useState(null);
   const notifRef = useRef(null);
 
   const fetchNotificationCounts = useCallback(async () => {
@@ -282,6 +290,8 @@ function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
     <div className="flex">
       <Sidebar
         userRole={userRole}
+        userName={userName}
+        userAvatar={userAvatar}
         currentView={currentView}
         setCurrentView={setCurrentView}
         onLogout={onLogout}
@@ -361,11 +371,12 @@ function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
               )
             )}
             {currentView === 'profile' && <Profile userId={userId} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={userRole} />}
-            {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} />}
+            {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} />}
           </div>
         </div>
@@ -374,12 +385,24 @@ function MainApp({ userRole, userId, onLogout, currentView, setCurrentView }) {
   );
 }
 
-function Sidebar({ userRole, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0 }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0 }) {
   return (
     <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-6 flex flex-col">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-blue-400">Natural Ball Player</h1>
-        <p className="text-sm text-gray-400 mt-1">{userRole?.toUpperCase()}</p>
+        <div className="flex items-center space-x-3 mt-3">
+          {userAvatar ? (
+            <img src={userAvatar} alt="Avatar" className="w-9 h-9 rounded-full object-cover" />
+          ) : (
+            <div className="w-9 h-9 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+              {userName?.charAt(0) || '?'}
+            </div>
+          )}
+          <div>
+            <p className="text-sm font-medium text-gray-200 truncate">{userName || 'User'}</p>
+            <p className="text-xs text-gray-400">{userRole?.toUpperCase()}</p>
+          </div>
+        </div>
       </div>
 
       <nav className="space-y-2 flex-1">

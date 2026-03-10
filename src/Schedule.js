@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple } from 'lucide-react';
 
 // ============================================
 // RECURRENCE UTILITIES
@@ -912,7 +912,9 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
   const [selectedMealPlanId, setSelectedMealPlanId] = useState('');
   const [workoutSelectionMode, setWorkoutSelectionMode] = useState(null); // 'existing' or 'create'
   const [mealSelectionMode, setMealSelectionMode] = useState(null); // 'existing' or 'create'
-  const [newWorkoutData, setNewWorkoutData] = useState({ title: '', notes: '' });
+  const [newWorkoutData, setNewWorkoutData] = useState({ title: '', notes: '', program: 'No Program', folder: '', exercises: [{ name: '', sets: '', reps: '', link: '' }] });
+  const [workoutTemplates, setWorkoutTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [newMealData, setNewMealData] = useState({ 
     name: '', 
     description: '', 
@@ -927,11 +929,20 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
   useEffect(() => {
     if (eventType === 'workout') {
       fetchTrainingPrograms();
+      fetchWorkoutTemplates();
     } else if (eventType === 'meal') {
       fetchMeals();
       fetchMealPlans();
     }
   }, [eventType]);
+
+  const fetchWorkoutTemplates = async () => {
+    const { data } = await supabase
+      .from('workout_templates')
+      .select('*')
+      .order('name');
+    setWorkoutTemplates(data || []);
+  };
 
   useEffect(() => {
     if (selectedProgramId) {
@@ -999,7 +1010,15 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
       } else if (eventType === 'workout') {
         if (workoutType === 'single-day') {
           if (workoutSelectionMode === 'create') {
-            // Create new one-time workout
+            // Create new workout with exercises
+            const filteredExercises = (newWorkoutData.exercises || []).filter(ex => ex.name.trim());
+            const notesWithExercises = [
+              newWorkoutData.notes || '',
+              filteredExercises.length > 0 ? '\n--- Exercises ---\n' + filteredExercises.map(ex =>
+                `${ex.name}${ex.sets ? ` - ${ex.sets} sets` : ''}${ex.reps ? ` x ${ex.reps} reps` : ''}${ex.link ? ` (${ex.link})` : ''}`
+              ).join('\n') : ''
+            ].filter(Boolean).join('\n');
+
             const { error } = await supabase
               .from('schedule_events')
               .insert({
@@ -1007,12 +1026,35 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                 event_type: 'workout',
                 event_date: date,
                 title: newWorkoutData.title,
-                notes: newWorkoutData.notes || null
+                notes: notesWithExercises || null
               });
 
             if (error) {
               console.error('Error creating new workout:', error);
               throw error;
+            }
+          } else if (workoutSelectionMode === 'template') {
+            // Apply workout template to calendar
+            const template = workoutTemplates.find(t => t.id === selectedTemplateId);
+            if (template) {
+              const exercises = template.exercises || [];
+              const notesWithExercises = [
+                template.notes || '',
+                exercises.length > 0 ? '\n--- Exercises ---\n' + exercises.map(ex =>
+                  `${ex.name}${ex.sets ? ` - ${ex.sets} sets` : ''}${ex.reps ? ` x ${ex.reps} reps` : ''}${ex.link ? ` (${ex.link})` : ''}`
+                ).join('\n') : ''
+              ].filter(Boolean).join('\n');
+
+              const { error } = await supabase
+                .from('schedule_events')
+                .insert({
+                  player_id: playerId,
+                  event_type: 'workout',
+                  event_date: date,
+                  title: template.name,
+                  notes: notesWithExercises || null
+                });
+              if (error) throw error;
             }
           } else {
             // Create single workout day event from existing program
@@ -1178,7 +1220,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                       <Dumbbell className="text-purple-600" size={24} />
                       <div>
                         <div className="font-semibold text-gray-900">Workout</div>
-                        <div className="text-sm text-gray-600">Single day or full program</div>
+                        <div className="text-sm text-gray-600">Add a single workout day</div>
                       </div>
                     </div>
                   </button>
@@ -1191,7 +1233,33 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                       <Utensils className="text-orange-600" size={24} />
                       <div>
                         <div className="font-semibold text-gray-900">Meal</div>
-                        <div className="text-sm text-gray-600">Single meal or full plan</div>
+                        <div className="text-sm text-gray-600">Add a single meal</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => { setEventType('workout'); setWorkoutType('program'); }}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <ClipboardList className="text-blue-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Assign Training Program</div>
+                        <div className="text-sm text-gray-600">Assign a full multi-day program</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => { setEventType('meal'); setMealType('plan'); }}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Apple className="text-green-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Assign Meal Plan</div>
+                        <div className="text-sm text-gray-600">Assign a full meal plan</div>
                       </div>
                     </div>
                   </button>
@@ -1279,7 +1347,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             </div>
           )}
 
-          {/* Workout Selection */}
+          {/* Workout Selection — auto-route to single-day when clicking "Workout" */}
           {eventType === 'workout' && !workoutType && (
             <div className="space-y-3">
               <button
@@ -1297,7 +1365,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                 className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition text-left"
               >
                 <div className="font-semibold text-gray-900">Single Workout Day</div>
-                <div className="text-sm text-gray-600">Add one day from a training program</div>
+                <div className="text-sm text-gray-600">Add one workout to this date</div>
               </button>
 
               <button
@@ -1330,15 +1398,22 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                       onClick={() => setWorkoutSelectionMode('existing')}
                       className="w-full p-3 border-2 border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition text-left"
                     >
-                      <div className="font-semibold text-gray-900">Select Existing Workout</div>
-                      <div className="text-sm text-gray-600">Choose from existing training programs</div>
+                      <div className="font-semibold text-gray-900">From Training Program</div>
+                      <div className="text-sm text-gray-600">Choose a day from a training program</div>
+                    </button>
+                    <button
+                      onClick={() => setWorkoutSelectionMode('template')}
+                      className="w-full p-3 border-2 border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition text-left"
+                    >
+                      <div className="font-semibold text-gray-900">From Saved Templates</div>
+                      <div className="text-sm text-gray-600">Choose from your workout templates</div>
                     </button>
                     <button
                       onClick={() => setWorkoutSelectionMode('create')}
                       className="w-full p-3 border-2 border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition text-left"
                     >
                       <div className="font-semibold text-gray-900">Create New Workout</div>
-                      <div className="text-sm text-gray-600">Create a one-time workout</div>
+                      <div className="text-sm text-gray-600">Build a custom workout with exercises</div>
                     </button>
                   </div>
                 </div>
@@ -1401,7 +1476,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                   </button>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Workout Title *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Workout Name *</label>
                     <input
                       type="text"
                       placeholder="e.g., Upper Body Day, Hitting Focus"
@@ -1411,16 +1486,178 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                     />
                   </div>
 
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Program</label>
+                      <select
+                        value={newWorkoutData.program}
+                        onChange={(e) => setNewWorkoutData({ ...newWorkoutData, program: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        {['No Program', 'Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab'].map(o => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Folder</label>
+                      <input
+                        type="text"
+                        placeholder="No Folder"
+                        value={newWorkoutData.folder}
+                        onChange={(e) => setNewWorkoutData({ ...newWorkoutData, folder: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Workout Notes</label>
                     <textarea
                       placeholder="Any special instructions or details..."
                       value={newWorkoutData.notes}
                       onChange={(e) => setNewWorkoutData({ ...newWorkoutData, notes: e.target.value })}
-                      rows="3"
+                      rows="2"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
+
+                  {/* Exercises Table */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Exercises</label>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
+                          <th className="pb-2 pr-2">Name</th>
+                          <th className="pb-2 pr-2 w-16">Sets</th>
+                          <th className="pb-2 pr-2 w-16">Reps</th>
+                          <th className="pb-2 pr-2">Link</th>
+                          <th className="pb-2 w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {newWorkoutData.exercises.map((ex, i) => (
+                          <tr key={i} className="border-b border-gray-100">
+                            <td className="py-1.5 pr-2">
+                              <input type="text" placeholder="Exercise name" value={ex.name}
+                                onChange={(e) => {
+                                  const updated = [...newWorkoutData.exercises];
+                                  updated[i] = { ...updated[i], name: e.target.value };
+                                  setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2">
+                              <input type="text" placeholder="3" value={ex.sets}
+                                onChange={(e) => {
+                                  const updated = [...newWorkoutData.exercises];
+                                  updated[i] = { ...updated[i], sets: e.target.value };
+                                  setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2">
+                              <input type="text" placeholder="10" value={ex.reps}
+                                onChange={(e) => {
+                                  const updated = [...newWorkoutData.exercises];
+                                  updated[i] = { ...updated[i], reps: e.target.value };
+                                  setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2">
+                              <input type="url" placeholder="https://..." value={ex.link}
+                                onChange={(e) => {
+                                  const updated = [...newWorkoutData.exercises];
+                                  updated[i] = { ...updated[i], link: e.target.value };
+                                  setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5">
+                              <button type="button" onClick={() => {
+                                const updated = newWorkoutData.exercises.filter((_, idx) => idx !== i);
+                                setNewWorkoutData({ ...newWorkoutData, exercises: updated.length ? updated : [{ name: '', sets: '', reps: '', link: '' }] });
+                              }} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <button type="button" onClick={() => setNewWorkoutData({ ...newWorkoutData, exercises: [...newWorkoutData.exercises, { name: '', sets: '', reps: '', link: '' }] })}
+                      className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center space-x-1">
+                      <Plus size={14} /><span>Add Exercise</span>
+                    </button>
+                  </div>
+
+                  {/* Save as Template button */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!newWorkoutData.title) { alert('Enter a workout name first'); return; }
+                      const { data: { user } } = await supabase.auth.getUser();
+                      const filteredExercises = (newWorkoutData.exercises || []).filter(ex => ex.name.trim());
+                      const { error } = await supabase.from('workout_templates').insert({
+                        name: newWorkoutData.title,
+                        program: newWorkoutData.program || null,
+                        folder: newWorkoutData.folder || null,
+                        notes: newWorkoutData.notes || null,
+                        exercises: filteredExercises,
+                        created_by: user?.id,
+                      });
+                      if (error) { alert('Error saving template: ' + error.message); }
+                      else { alert('Workout saved as template!'); }
+                    }}
+                    className="w-full border-2 border-dashed border-blue-300 text-blue-600 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition"
+                  >
+                    Save as Template
+                  </button>
+                </div>
+              )}
+
+              {/* Select from Saved Templates */}
+              {workoutSelectionMode === 'template' && (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setWorkoutSelectionMode(null)}
+                    className="text-sm text-blue-600 hover:text-blue-800 flex items-center space-x-1"
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Back</span>
+                  </button>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Select Workout Template *</label>
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => setSelectedTemplateId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Choose a template...</option>
+                      {workoutTemplates.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}{t.program && t.program !== 'No Program' ? ` (${t.program})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedTemplateId && (() => {
+                    const tmpl = workoutTemplates.find(t => t.id === selectedTemplateId);
+                    const exercises = tmpl?.exercises || [];
+                    return exercises.length > 0 ? (
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <p className="text-xs font-medium text-gray-500 mb-2">Exercises ({exercises.length})</p>
+                        {exercises.map((ex, i) => (
+                          <div key={i} className="text-sm text-gray-700 py-1">
+                            {ex.name}{ex.sets ? ` - ${ex.sets} sets` : ''}{ex.reps ? ` x ${ex.reps}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               )}
             </div>
@@ -1696,10 +1933,11 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
           </button>
           <button
             onClick={handleSubmit}
-            disabled={loading || !eventType || 
+            disabled={loading || !eventType ||
               (eventType === 'team-event' && !teamEventData.opponent) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'existing' && !selectedDayId) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'create' && !newWorkoutData.title) ||
+              (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'template' && !selectedTemplateId) ||
               (eventType === 'workout' && workoutType === 'program' && !selectedProgramId) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'existing' && !selectedMealId) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'create' && !newMealData.name) ||

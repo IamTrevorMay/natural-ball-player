@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -22,6 +22,8 @@ export default function Profile({ userId }) {
   const [equipmentSizes, setEquipmentSizes] = useState({});
   const [editEquipment, setEditEquipment] = useState({});
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const avatarInputRef = useRef(null);
 
   useEffect(() => {
     fetchUserData();
@@ -164,6 +166,34 @@ export default function Profile({ userId }) {
     setEditing(false);
   };
 
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const filePath = `${userId}/${Date.now()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file, { upsert: true });
+      if (uploadError) throw uploadError;
+      const { data: { publicUrl } } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ avatar_url: publicUrl })
+        .eq('id', userId);
+      if (updateError) throw updateError;
+      await fetchUserData();
+    } catch (error) {
+      console.error('Error uploading avatar:', error);
+      alert('Error uploading avatar: ' + error.message);
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -207,8 +237,31 @@ export default function Profile({ userId }) {
         <div className="p-6">
           {/* Avatar and Name */}
           <div className="flex items-center space-x-6 mb-6 pb-6 border-b border-gray-200">
-            <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
-              {userData.full_name.charAt(0)}
+            <div
+              className="relative w-24 h-24 rounded-full cursor-pointer group"
+              onClick={() => avatarInputRef.current?.click()}
+            >
+              {userData.avatar_url ? (
+                <img src={userData.avatar_url} alt="Avatar" className="w-24 h-24 rounded-full object-cover" />
+              ) : (
+                <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
+                  {userData.full_name.charAt(0)}
+                </div>
+              )}
+              <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                {uploadingAvatar ? (
+                  <span className="text-white text-xs">Uploading...</span>
+                ) : (
+                  <Camera className="text-white" size={24} />
+                )}
+              </div>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarUpload}
+              />
             </div>
             <div>
               {editing ? (
