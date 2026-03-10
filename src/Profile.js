@@ -311,35 +311,53 @@ export default function Profile({ userId, userRole }) {
                 </p>
               )}
             </div>
-            {profile && (userRole === 'coach' || userRole === 'admin') && (
-              <div className="flex flex-wrap gap-3 ml-auto">
-                <select
-                  value={profile.program || ''}
-                  onChange={(e) => handleDropdownChange('program', e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Program</option>
-                  {PROGRAM_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-                <select
-                  value={profile.level || ''}
-                  onChange={(e) => handleDropdownChange('level', e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Level</option>
-                  {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-                <select
-                  value={profile.status || ''}
-                  onChange={(e) => handleDropdownChange('status', e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Status</option>
-                  {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-              </div>
-            )}
           </div>
+
+          {profile && (userRole === 'coach' || userRole === 'admin') && (
+            <div className="mb-6 pb-6 border-b border-gray-200">
+              <div className="grid grid-cols-3 gap-6">
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">Program</p>
+                  <div className="border-t border-gray-200 pt-3">
+                    <select
+                      value={profile.program || ''}
+                      onChange={(e) => handleDropdownChange('program', e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                    >
+                      <option value="">No Program</option>
+                      {PROGRAM_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">Level</p>
+                  <div className="border-t border-gray-200 pt-3">
+                    <select
+                      value={profile.level || ''}
+                      onChange={(e) => handleDropdownChange('level', e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                    >
+                      <option value="">No Level</option>
+                      {LEVEL_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">Status</p>
+                  <div className="border-t border-gray-200 pt-3">
+                    <select
+                      value={profile.status || ''}
+                      onChange={(e) => handleDropdownChange('status', e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                    >
+                      <option value="">Active</option>
+                      {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Tab Bar */}
           <div className="border-b border-gray-200 mb-6">
