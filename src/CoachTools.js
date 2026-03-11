@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link } from 'lucide-react';
+import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search } from 'lucide-react';
 
 export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('schedule');
@@ -235,30 +235,52 @@ const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 
 const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
 const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 
+const LEVEL_COLORS = {
+  'Professional': 'bg-teal-600 text-white',
+  'High School': 'bg-orange-500 text-white',
+  'College': 'bg-amber-500 text-white',
+  'Youth': 'bg-yellow-500 text-white',
+  'Independent': 'bg-blue-500 text-white',
+  'Affiliate': 'bg-indigo-500 text-white',
+  'MiLB': 'bg-emerald-500 text-white',
+  'MLB': 'bg-red-600 text-white',
+};
+
+const STATUS_COLORS = {
+  'Active': 'bg-green-500 text-white',
+  'Remote': 'bg-orange-500 text-white',
+  'Inactive': 'bg-gray-500 text-white',
+  'On-Site': 'bg-blue-500 text-white',
+  'Archived': 'bg-red-500 text-white',
+};
+
 function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlayers }) {
   const [rosterPlayers, setRosterPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterTeam, setFilterTeam] = useState('All');
+  const [filterTrainer, setFilterTrainer] = useState('All');
   const [filterProgram, setFilterProgram] = useState('All');
   const [filterLevel, setFilterLevel] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
+  const [filterSubStatus, setFilterSubStatus] = useState('All');
   const [editingPlayer, setEditingPlayer] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [teamCoachMap, setTeamCoachMap] = useState({});
 
-  useEffect(() => { fetchRosterPlayers(); }, []);
+  useEffect(() => { fetchRosterPlayers(); fetchTeamCoaches(); }, []);
 
   const fetchRosterPlayers = async () => {
     setLoading(true);
-    let query = supabase
+    const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, phone, avatar_url, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status), team_members(team_id, teams(name))')
+      .select('id, full_name, phone, avatar_url, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
       .eq('role', 'player')
       .order('full_name');
 
-    const { data, error } = await query;
     if (error) { console.error(error); setLoading(false); return; }
 
     let filtered = data || [];
-    // Coach: only show players on their teams
     if (userRole === 'coach') {
       const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
       const teamIds = (coachTeams || []).map(t => t.team_id);
@@ -266,6 +288,21 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
     }
     setRosterPlayers(filtered);
     setLoading(false);
+  };
+
+  const fetchTeamCoaches = async () => {
+    const { data } = await supabase
+      .from('team_members')
+      .select('team_id, users(full_name)')
+      .eq('role', 'coach');
+    const map = {};
+    (data || []).forEach(row => {
+      const name = row.users?.full_name;
+      if (!name) return;
+      if (!map[row.team_id]) map[row.team_id] = [];
+      if (!map[row.team_id].includes(name)) map[row.team_id].push(name);
+    });
+    setTeamCoachMap(map);
   };
 
   const handleInlineUpdate = async (playerId, field, value) => {
@@ -302,141 +339,221 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
     }
   };
 
+  const splitName = (fullName) => {
+    const parts = (fullName || '').trim().split(/\s+/);
+    return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
+  };
+
+  const getTrainer = (player) => {
+    const teamIds = (player.team_members || []).map(tm => tm.team_id);
+    const names = [];
+    teamIds.forEach(tid => {
+      if (teamCoachMap[tid]) names.push(...teamCoachMap[tid]);
+    });
+    return [...new Set(names)].join(', ') || '';
+  };
+
+  const allTrainerNames = [...new Set(Object.values(teamCoachMap).flat())].sort();
+  const allTeamNames = [...new Set(
+    rosterPlayers.flatMap(p => (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean))
+  )].sort();
+
   const displayPlayers = rosterPlayers.filter(p => {
     const profile = p.player_profiles?.[0] || {};
+    const teamNames = (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean);
+    const trainerName = getTrainer(p);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      if (!p.full_name.toLowerCase().includes(q)) return false;
+    }
+    if (filterTeam !== 'All' && !teamNames.includes(filterTeam)) return false;
+    if (filterTrainer !== 'All' && !trainerName.includes(filterTrainer)) return false;
     if (filterProgram !== 'All' && profile.program !== filterProgram) return false;
     if (filterLevel !== 'All' && profile.level !== filterLevel) return false;
     if (filterStatus !== 'All' && profile.status !== filterStatus) return false;
+    if (filterSubStatus !== 'All' && (profile.sub_status || '') !== filterSubStatus) return false;
     return true;
   });
+
+  const BadgeSelect = ({ value, options, colors, onChange, placeholder }) => {
+    const color = value && colors[value] ? colors[value] : '';
+    return (
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        className={`px-2 py-1 rounded text-xs font-medium border-0 cursor-pointer appearance-none pr-5 ${color || 'bg-gray-100 text-gray-600'}`}
+        style={value && colors[value] ? {
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'right 4px center',
+        } : {
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'right 4px center',
+        }}
+      >
+        <option value="">{placeholder || '—'}</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+  };
+
+  const filterSelectClass = "w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-700";
 
   if (loading) return <div className="text-gray-600">Loading roster...</div>;
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-gray-900">Roster ({displayPlayers.length})</h3>
-      </div>
-
-      {/* Filters */}
-      <div className="flex space-x-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Program</label>
-          <select value={filterProgram} onChange={(e) => setFilterProgram(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="All">All</option>
-            {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Level</label>
-          <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="All">All</option>
-            {LEVEL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="All">All</option>
-            {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+        <div className="flex items-center space-x-3">
+          <h3 className="text-2xl font-bold text-gray-900">Manage Athletes</h3>
+          <span className="bg-orange-500 text-white px-3 py-1 rounded-lg text-sm font-bold">
+            {rosterPlayers.length}
+          </span>
         </div>
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto border border-gray-200 rounded-lg">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200">
-              <th className="text-left py-3 px-2 font-medium text-gray-600">Name</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-600">Phone</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-600">Program</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-600">Level</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-600">Status</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-600">Actions</th>
+            {/* Filter Row */}
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th colSpan={2} className="px-3 py-2 text-left">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search for an Athlete..."
+                    className="w-full pl-7 pr-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {allTeamNames.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterTrainer} onChange={(e) => setFilterTrainer(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {allTrainerNames.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterProgram} onChange={(e) => setFilterProgram(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {LEVEL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterSubStatus} onChange={(e) => setFilterSubStatus(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2"></th>
+            </tr>
+            {/* Column Headers */}
+            <tr className="border-b border-gray-200 bg-white">
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">First Name</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Last Name</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Team</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Trainer</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Program</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Level</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Sub Status</th>
+              <th className="py-3 px-2"></th>
             </tr>
           </thead>
           <tbody>
             {displayPlayers.map(player => {
               const profile = player.player_profiles?.[0] || {};
-              const teamNames = player.team_members?.map(tm => tm.teams?.name).filter(Boolean) || [];
+              const { firstName, lastName } = splitName(player.full_name);
+              const teamNames = (player.team_members || []).map(tm => tm.teams?.name).filter(Boolean);
+              const trainerName = getTrainer(player);
+
               return (
                 <tr key={player.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-2">
-                    <div className="flex items-center space-x-2">
-                      {player.avatar_url ? (
-                        <img src={player.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
-                      ) : (
-                        <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">{player.full_name?.charAt(0)}</div>
-                      )}
-                      <div>
-                        <button
-                          onClick={() => onNavigateToProfile && onNavigateToProfile(player.id)}
-                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                        >
-                          {player.full_name}
-                        </button>
-                        {teamNames.length > 0 && <p className="text-xs text-gray-400">{teamNames.join(', ')}</p>}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-2 text-gray-600">{player.phone || '—'}</td>
-                  <td className="py-3 px-2">
-                    <select
-                      value={profile.program || 'No Program'}
-                      onChange={(e) => handleInlineUpdate(player.id, 'program', e.target.value)}
-                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  <td className="py-3 px-3">
+                    <button
+                      onClick={() => onNavigateToProfile && onNavigateToProfile(player.id)}
+                      className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
                     >
+                      {firstName}
+                    </button>
+                  </td>
+                  <td className="py-3 px-3 font-semibold text-gray-900">{lastName}</td>
+                  <td className="py-3 px-3 text-gray-600 text-xs">{teamNames.join(', ') || '—'}</td>
+                  <td className="py-3 px-3 text-gray-600 text-xs">{trainerName || '—'}</td>
+                  <td className="py-3 px-3">
+                    <select
+                      value={profile.program || ''}
+                      onChange={(e) => handleInlineUpdate(player.id, 'program', e.target.value)}
+                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="">—</option>
                       {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </td>
-                  <td className="py-3 px-2">
-                    <select
-                      value={profile.level || 'No Level'}
-                      onChange={(e) => handleInlineUpdate(player.id, 'level', e.target.value)}
-                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    >
-                      {LEVEL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
+                  <td className="py-3 px-3">
+                    <BadgeSelect
+                      value={profile.level}
+                      options={LEVEL_OPTIONS}
+                      colors={LEVEL_COLORS}
+                      onChange={(val) => handleInlineUpdate(player.id, 'level', val)}
+                    />
+                  </td>
+                  <td className="py-3 px-3">
+                    <BadgeSelect
+                      value={profile.status}
+                      options={STATUS_OPTIONS}
+                      colors={STATUS_COLORS}
+                      onChange={(val) => handleInlineUpdate(player.id, 'status', val)}
+                    />
+                  </td>
+                  <td className="py-3 px-3">
+                    <BadgeSelect
+                      value={profile.sub_status}
+                      options={STATUS_OPTIONS}
+                      colors={STATUS_COLORS}
+                      onChange={(val) => handleInlineUpdate(player.id, 'sub_status', val)}
+                    />
                   </td>
                   <td className="py-3 px-2">
-                    <select
-                      value={profile.status || 'Active'}
-                      onChange={(e) => handleInlineUpdate(player.id, 'status', e.target.value)}
-                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    <button
+                      onClick={() => {
+                        setEditingPlayer(player);
+                        setEditForm({
+                          position: profile.position || '',
+                          jersey_number: profile.jersey_number || '',
+                          grade: profile.grade || '',
+                          bats: profile.bats || '',
+                          throws: profile.throws || '',
+                        });
+                      }}
+                      className="text-gray-500 hover:text-blue-600 transition"
+                      title="Edit info"
                     >
-                      {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  </td>
-                  <td className="py-3 px-2">
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => {
-                          setEditingPlayer(player);
-                          setEditForm({
-                            position: profile.position || '',
-                            jersey_number: profile.jersey_number || '',
-                            grade: profile.grade || '',
-                            bats: profile.bats || '',
-                            throws: profile.throws || '',
-                          });
-                        }}
-                        className="text-gray-500 hover:text-blue-600 transition"
-                        title="Edit info"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      {player.team_members?.map(tm => (
-                        <button
-                          key={tm.team_id}
-                          onClick={() => handleRemoveFromTeam(player.id, tm.team_id)}
-                          className="text-gray-400 hover:text-red-600 transition"
-                          title={`Remove from ${tm.teams?.name}`}
-                        >
-                          <XCircle size={14} />
-                        </button>
-                      ))}
-                    </div>
+                      <Edit2 size={14} />
+                    </button>
                   </td>
                 </tr>
               );
@@ -446,7 +563,7 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
         {displayPlayers.length === 0 && (
           <div className="text-center py-8 text-gray-500">
             <Users size={40} className="mx-auto mb-3 text-gray-300" />
-            <p>No players found matching filters.</p>
+            <p>No athletes found matching your filters.</p>
           </div>
         )}
       </div>
