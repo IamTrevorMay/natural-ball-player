@@ -1,6 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from './supabaseClient';
+import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search } from 'lucide-react';
+
+async function deleteAuthUser(userId) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(
+    `${supabaseUrl}/functions/v1/delete-user`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ user_id: userId }),
+    }
+  );
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'Failed to delete auth user');
+  return result;
+}
 
 export default function AdminSettings({ userId, userRole }) {
   const [activeTab, setActiveTab] = useState('users');
@@ -705,21 +724,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   const handleDeleteUser = async () => {
     setDeleting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(
-        'https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/delete-user',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqaWxrcXppZnloc3Nic2lxZ2Z1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NzM0NjMsImV4cCI6MjA4NjE0OTQ2M30.sZH3suieH6Y4PHHb_rSbVS8zPMs-Uy20_rdt51Tfw3c',
-          },
-          body: JSON.stringify({ user_id: user.id }),
-        }
-      );
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Failed to delete auth user');
+      await deleteAuthUser(user.id);
       const { error } = await supabase.from('users').delete().eq('id', user.id);
       if (error) throw error;
       onSuccess();
@@ -996,7 +1001,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
       const { data: { session: adminSession } } = await supabase.auth.getSession();
 
       // 1. Create auth user using signUp
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      let { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
         options: {
@@ -1007,14 +1012,69 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
         }
       });
 
-      if (authError) throw authError;
+      // Handle "User already registered" — clean up orphaned records and retry
+      if (authError && authError.message.includes('User already registered')) {
+        // Restore admin session before cleanup
+        if (adminSession) {
+          await supabase.auth.setSession({
+            access_token: adminSession.access_token,
+            refresh_token: adminSession.refresh_token,
+          });
+        }
 
-      // Restore admin session immediately so the app doesn't redirect
-      if (adminSession) {
-        await supabase.auth.setSession({
-          access_token: adminSession.access_token,
-          refresh_token: adminSession.refresh_token,
-        });
+        // Look up in public.users to get the ID for the edge function
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id')
+          .eq('email', formData.email)
+          .single();
+
+        if (existingUser) {
+          // Delete auth user via edge function, then public.users row
+          await deleteAuthUser(existingUser.id);
+          await supabase.from('users').delete().eq('id', existingUser.id);
+
+          // Re-save admin session (may have been refreshed)
+          const { data: { session: freshSession } } = await supabase.auth.getSession();
+
+          // Retry signUp
+          const retry = await supabase.auth.signUp({
+            email: formData.email,
+            password: formData.password,
+            options: {
+              data: {
+                full_name: formData.full_name,
+                role: formData.role
+              }
+            }
+          });
+
+          if (retry.error) throw retry.error;
+          authData = retry.data;
+          authError = null;
+
+          // Restore admin session after retry
+          if (freshSession) {
+            await supabase.auth.setSession({
+              access_token: freshSession.access_token,
+              refresh_token: freshSession.refresh_token,
+            });
+          }
+        } else {
+          throw new Error(
+            'This email exists in auth but not in the users table. Please delete it manually from the Supabase Authentication dashboard, then try again.'
+          );
+        }
+      } else if (authError) {
+        throw authError;
+      } else {
+        // Restore admin session immediately so the app doesn't redirect
+        if (adminSession) {
+          await supabase.auth.setSession({
+            access_token: adminSession.access_token,
+            refresh_token: adminSession.refresh_token,
+          });
+        }
       }
 
       // 2. Insert into users table

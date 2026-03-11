@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell } from 'lucide-react';
+import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search } from 'lucide-react';
 
 export default function Messages({ userId, userRole }) {
   const [conversations, setConversations] = useState([]);
@@ -307,6 +307,7 @@ export default function Messages({ userId, userRole }) {
               conversation={selectedConversation}
               userId={userId}
               userRole={userRole}
+              users={users}
               onBack={() => setSelectedConversation(null)}
               onRefresh={() => fetchConversationDetail(selectedConversation.id)}
             />
@@ -417,10 +418,97 @@ function ConversationItem({ conversation, isSelected, onClick, onTogglePin, user
   );
 }
 
-function ConversationDetail({ conversation, userId, userRole, onBack, onRefresh }) {
+function MemberPanel({ conversation, userId, userRole, users, onAddMember, onRemoveMember, onClose }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const isCreator = conversation.created_by === userId;
+  const canManage = isCreator || userRole === 'admin' || userRole === 'coach';
+
+  const participantIds = (conversation.conversation_participants || []).map(p => p.user_id);
+  const availableUsers = users.filter(u =>
+    !participantIds.includes(u.id) &&
+    u.full_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div className="w-72 border-l border-gray-200 flex flex-col h-full bg-gray-50">
+      <div className="p-3 border-b border-gray-200 flex items-center justify-between bg-white">
+        <h4 className="font-semibold text-gray-900 text-sm">Members ({participantIds.length})</h4>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <X size={16} />
+        </button>
+      </div>
+
+      {/* Current members */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+        {(conversation.conversation_participants || []).map(p => (
+          <div key={p.user_id} className="flex items-center justify-between p-2 rounded hover:bg-gray-100">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {p.users?.full_name || 'Unknown'}
+              </p>
+              <div className="flex items-center space-x-1">
+                <span className="text-xs text-gray-500">{p.users?.role}</span>
+                {p.user_id === conversation.created_by && (
+                  <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Creator</span>
+                )}
+              </div>
+            </div>
+            {canManage && p.user_id !== userId && (
+              <button
+                onClick={() => onRemoveMember(p.user_id)}
+                className="text-gray-400 hover:text-red-500 ml-2"
+                title="Remove member"
+              >
+                <UserMinus size={14} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Add members section */}
+      {canManage && (
+        <div className="border-t border-gray-200 p-3 bg-white">
+          <p className="text-xs font-medium text-gray-700 mb-2">Add Members</p>
+          <div className="relative mb-2">
+            <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search users..."
+              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="max-h-32 overflow-y-auto space-y-1">
+            {availableUsers.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-2">
+                {searchQuery ? 'No users found' : 'All users added'}
+              </p>
+            ) : (
+              availableUsers.map(user => (
+                <button
+                  key={user.id}
+                  onClick={() => onAddMember(user.id)}
+                  className="w-full flex items-center justify-between p-2 text-left rounded hover:bg-gray-50 text-sm"
+                >
+                  <span className="truncate">{user.full_name}</span>
+                  <UserPlus size={14} className="text-blue-600 flex-shrink-0 ml-2" />
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConversationDetail({ conversation, userId, userRole, users, onBack, onRefresh }) {
   const [newMessage, setNewMessage] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [sending, setSending] = useState(false);
+  const [showMemberPanel, setShowMemberPanel] = useState(false);
 
   // Check if user can reply
   const canReply = !conversation.replies_disabled || userRole === 'admin' || userRole === 'coach';
@@ -445,109 +533,160 @@ function ConversationDetail({ conversation, userId, userRole, onBack, onRefresh 
     setSending(false);
   };
 
+  const handleAddMember = async (memberId) => {
+    const { error } = await supabase.from('conversation_participants').insert({
+      conversation_id: conversation.id,
+      user_id: memberId
+    });
+    if (!error) onRefresh();
+  };
+
+  const handleRemoveMember = async (memberId) => {
+    const { error } = await supabase
+      .from('conversation_participants')
+      .delete()
+      .eq('conversation_id', conversation.id)
+      .eq('user_id', memberId);
+    if (!error) onRefresh();
+  };
+
   const getReplies = (messageId) => {
     return conversation.messages.filter(m => m.parent_message_id === messageId);
   };
 
   const topLevelMessages = conversation.messages.filter(m => !m.parent_message_id);
 
+  const isGroupOrTeam = conversation.type === 'group' || conversation.type === 'team_announcement';
+
   return (
-    <div className="bg-white rounded-lg shadow flex flex-col h-[600px]">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={onBack}
-            className="lg:hidden text-gray-600 hover:text-gray-900"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h3 className="font-semibold text-gray-900">
-              {conversation.type === 'team_announcement' 
-                ? `${conversation.teams?.name} - ${conversation.title}`
-                : conversation.type === 'group'
-                ? conversation.title
-                : 'Direct Message'
-              }
-            </h3>
-            <p className="text-xs text-gray-500">
-              {conversation.conversation_participants?.length || 0} participants
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center space-x-2">
-          {conversation.type === 'team_announcement' && (
-            <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium flex items-center space-x-1">
-              <Bell size={12} />
-              <span>Announcement</span>
-            </span>
-          )}
-          {conversation.replies_disabled && (
-            <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium">
-              🔒 Replies Off
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {topLevelMessages.map((message) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            isOwn={message.sender_id === userId}
-            onReply={canReply ? () => setReplyingTo(message) : null}
-            replies={getReplies(message.id)}
-            userId={userId}
-          />
-        ))}
-      </div>
-
-      {/* Reply indicator */}
-      {replyingTo && canReply && (
-        <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
-          <div className="text-sm">
-            <span className="text-gray-600">Replying to </span>
-            <span className="font-medium">{replyingTo.sender.full_name}</span>
-          </div>
-          <button
-            onClick={() => setReplyingTo(null)}
-            className="text-gray-400 hover:text-gray-600"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* Input - Show based on replies_disabled and user role */}
-      {canReply ? (
-        <form onSubmit={handleSend} className="p-4 border-t border-gray-200">
-          <div className="flex space-x-2">
-            <input
-              type="text"
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Type your message..."
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+    <div className="bg-white rounded-lg shadow flex h-[600px]">
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header */}
+        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
             <button
-              type="submit"
-              disabled={sending || !newMessage.trim()}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-2"
+              onClick={onBack}
+              className="lg:hidden text-gray-600 hover:text-gray-900"
             >
-              <Send size={18} />
+              <ArrowLeft size={20} />
+            </button>
+            <div>
+              <h3 className="font-semibold text-gray-900">
+                {conversation.type === 'team_announcement'
+                  ? `${conversation.teams?.name} - ${conversation.title}`
+                  : conversation.type === 'group'
+                  ? conversation.title
+                  : 'Direct Message'
+                }
+              </h3>
+              {isGroupOrTeam ? (
+                <button
+                  onClick={() => setShowMemberPanel(!showMemberPanel)}
+                  className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                >
+                  {conversation.conversation_participants?.length || 0} members
+                </button>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  {conversation.conversation_participants?.length || 0} participants
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            {isGroupOrTeam && (
+              <button
+                onClick={() => setShowMemberPanel(!showMemberPanel)}
+                className={`p-1.5 rounded transition ${showMemberPanel ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:text-gray-600'}`}
+                title="Manage members"
+              >
+                <Users size={18} />
+              </button>
+            )}
+            {conversation.type === 'team_announcement' && (
+              <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium flex items-center space-x-1">
+                <Bell size={12} />
+                <span>Announcement</span>
+              </span>
+            )}
+            {conversation.replies_disabled && (
+              <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium">
+                Replies Off
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {topLevelMessages.map((message) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              isOwn={message.sender_id === userId}
+              onReply={canReply ? () => setReplyingTo(message) : null}
+              replies={getReplies(message.id)}
+              userId={userId}
+            />
+          ))}
+        </div>
+
+        {/* Reply indicator */}
+        {replyingTo && canReply && (
+          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+            <div className="text-sm">
+              <span className="text-gray-600">Replying to </span>
+              <span className="font-medium">{replyingTo.sender.full_name}</span>
+            </div>
+            <button
+              onClick={() => setReplyingTo(null)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X size={16} />
             </button>
           </div>
-        </form>
-      ) : (
-        <div className="p-4 border-t border-gray-200 bg-gray-50">
-          <p className="text-sm text-gray-600 text-center italic flex items-center justify-center space-x-2">
-            <span>📢</span>
-            <span>Replies are disabled for this announcement</span>
-          </p>
-        </div>
+        )}
+
+        {/* Input - Show based on replies_disabled and user role */}
+        {canReply ? (
+          <form onSubmit={handleSend} className="p-4 border-t border-gray-200">
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Type your message..."
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                disabled={sending || !newMessage.trim()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-2"
+              >
+                <Send size={18} />
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="p-4 border-t border-gray-200 bg-gray-50">
+            <p className="text-sm text-gray-600 text-center italic flex items-center justify-center space-x-2">
+              <span>Replies are disabled for this announcement</span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Member Panel */}
+      {showMemberPanel && isGroupOrTeam && (
+        <MemberPanel
+          conversation={conversation}
+          userId={userId}
+          userRole={userRole}
+          users={users}
+          onAddMember={handleAddMember}
+          onRemoveMember={handleRemoveMember}
+          onClose={() => setShowMemberPanel(false)}
+        />
       )}
     </div>
   );
@@ -770,7 +909,7 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                Group Chat
+                Chat Room
               </button>
               <button
                 type="button"
@@ -827,7 +966,7 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
           {(messageType === 'direct' || messageType === 'group') && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Recipients * {messageType === 'direct' && '(select one)'}
+                {messageType === 'group' ? 'Invite Members *' : 'Recipients *'} {messageType === 'direct' && '(select one)'}
               </label>
               <div className="border border-gray-300 rounded-lg p-3 max-h-48 overflow-y-auto space-y-2">
                 {users.filter(u => u.id !== userId).map(user => (
