@@ -239,61 +239,62 @@ export default function Messages({ userId, userRole }) {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Page Header */}
       <div>
         <h2 className="text-3xl font-bold text-gray-900">Communication</h2>
-        <p className="text-gray-600 mt-1">Messages, announcements, and chat rooms</p>
+        <p className="text-gray-600 mt-1">Direct messages, announcements, and group chats</p>
       </div>
 
       {/* ========== MESSAGES SECTION ========== */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-semibold text-gray-900">Messages</h3>
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {/* Section Header */}
+        <div className="flex items-center justify-between px-5 py-3 bg-blue-50 border-b border-blue-100">
+          <div className="flex items-center space-x-2">
+            <MessageSquare size={18} className="text-blue-600" />
+            <h3 className="text-lg font-semibold text-gray-900">Messages</h3>
+            <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200">{messageConvos.length}</span>
+          </div>
           {(userRole === 'admin' || userRole === 'coach') && (
             <button
               onClick={() => setShowNewMessage(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+              className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center space-x-1.5"
             >
-              <Plus size={18} />
+              <Plus size={16} />
               <span>New Message</span>
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Message Conversations List */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow">
-              <div className="p-4 border-b border-gray-200">
-                <h4 className="font-semibold text-gray-900 text-sm">Conversations</h4>
-              </div>
-              <div className="divide-y divide-gray-200 max-h-[400px] overflow-y-auto">
-                {messageConvos.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500">
-                    <MessageSquare size={40} className="mx-auto mb-3 text-gray-300" />
-                    <p>No messages yet</p>
-                  </div>
-                ) : (
-                  messageConvos.map((conv) => (
-                    <ConversationItem
-                      key={conv.id}
-                      conversation={conv}
-                      isSelected={selectedConversation?.id === conv.id}
-                      onClick={() => fetchConversationDetail(conv.id, 'message')}
-                      onTogglePin={() => togglePin(conv.id, conv.is_pinned)}
-                      onDelete={() => deleteConversation(conv.id)}
-                      userId={userId}
-                      userRole={userRole}
-                    />
-                  ))
-                )}
-              </div>
+        {/* List + Detail in one row */}
+        <div className="flex h-[450px]">
+          {/* Conversation List */}
+          <div className="w-72 flex-shrink-0 border-r border-gray-200 flex flex-col">
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+              {messageConvos.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  <MessageSquare size={32} className="mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm">No messages yet</p>
+                </div>
+              ) : (
+                messageConvos.map((conv) => (
+                  <ConversationItem
+                    key={conv.id}
+                    conversation={conv}
+                    isSelected={selectedConversation?.id === conv.id}
+                    onClick={() => fetchConversationDetail(conv.id, 'message')}
+                    onTogglePin={() => togglePin(conv.id, conv.is_pinned)}
+                    onDelete={() => deleteConversation(conv.id)}
+                    userId={userId}
+                    userRole={userRole}
+                  />
+                ))
+              )}
             </div>
           </div>
 
-          {/* Message Detail */}
-          <div className="lg:col-span-2">
+          {/* Detail */}
+          <div className="flex-1 min-w-0">
             {selectedConversation ? (
               <ConversationDetail
                 conversation={selectedConversation}
@@ -304,68 +305,65 @@ export default function Messages({ userId, userRole }) {
                 onRefresh={() => fetchConversationDetail(selectedConversation.id, 'message')}
               />
             ) : (
-              <div className="bg-white rounded-lg shadow p-12 text-center">
-                <MessageSquare size={64} className="mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Select a conversation
-                </h3>
-                <p className="text-gray-600">
-                  Choose a conversation from the list to view messages
-                </p>
+              <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                <MessageSquare size={48} className="mb-3 text-gray-300" />
+                <p className="font-medium text-gray-500">Select a conversation</p>
+                <p className="text-sm">Choose from the list to view messages</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* ========== CHAT ROOMS SECTION ========== */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-semibold text-gray-900">Chat Rooms</h3>
+      {/* ========== CHATS SECTION ========== */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {/* Section Header */}
+        <div className="flex items-center justify-between px-5 py-3 bg-green-50 border-b border-green-100">
+          <div className="flex items-center space-x-2">
+            <Users size={18} className="text-green-600" />
+            <h3 className="text-lg font-semibold text-gray-900">Chats</h3>
+            <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200">{chatRooms.length}</span>
+          </div>
           {(userRole === 'admin' || userRole === 'coach') && (
             <button
               onClick={() => setShowNewChat(true)}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition flex items-center space-x-2"
+              className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center space-x-1.5"
             >
-              <Plus size={18} />
-              <span>New Chat Room</span>
+              <Plus size={16} />
+              <span>New Chat</span>
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Chat Room List */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow">
-              <div className="p-4 border-b border-gray-200">
-                <h4 className="font-semibold text-gray-900 text-sm">Rooms</h4>
-              </div>
-              <div className="divide-y divide-gray-200 max-h-[400px] overflow-y-auto">
-                {chatRooms.length === 0 ? (
-                  <div className="p-8 text-center text-gray-500">
-                    <Users size={40} className="mx-auto mb-3 text-gray-300" />
-                    <p>No chat rooms yet</p>
-                  </div>
-                ) : (
-                  chatRooms.map((conv) => (
-                    <ConversationItem
-                      key={conv.id}
-                      conversation={conv}
-                      isSelected={selectedChat?.id === conv.id}
-                      onClick={() => fetchConversationDetail(conv.id, 'chat')}
-                      onTogglePin={() => togglePin(conv.id, conv.is_pinned)}
-                      onDelete={() => deleteConversation(conv.id)}
-                      userId={userId}
-                      userRole={userRole}
-                    />
-                  ))
-                )}
-              </div>
+        {/* List + Detail in one row */}
+        <div className="flex h-[450px]">
+          {/* Chat List */}
+          <div className="w-72 flex-shrink-0 border-r border-gray-200 flex flex-col">
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+              {chatRooms.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">
+                  <Users size={32} className="mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm">No chats yet</p>
+                </div>
+              ) : (
+                chatRooms.map((conv) => (
+                  <ConversationItem
+                    key={conv.id}
+                    conversation={conv}
+                    isSelected={selectedChat?.id === conv.id}
+                    onClick={() => fetchConversationDetail(conv.id, 'chat')}
+                    onTogglePin={() => togglePin(conv.id, conv.is_pinned)}
+                    onDelete={() => deleteConversation(conv.id)}
+                    userId={userId}
+                    userRole={userRole}
+                  />
+                ))
+              )}
             </div>
           </div>
 
-          {/* Chat Room Detail */}
-          <div className="lg:col-span-2">
+          {/* Detail */}
+          <div className="flex-1 min-w-0">
             {selectedChat ? (
               <ChatRoomDetail
                 conversation={selectedChat}
@@ -376,14 +374,10 @@ export default function Messages({ userId, userRole }) {
                 onRefresh={() => fetchConversationDetail(selectedChat.id, 'chat')}
               />
             ) : (
-              <div className="bg-white rounded-lg shadow p-12 text-center">
-                <Users size={64} className="mx-auto mb-4 text-gray-300" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Select a chat room
-                </h3>
-                <p className="text-gray-600">
-                  Choose a chat room from the list to start chatting
-                </p>
+              <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                <Users size={48} className="mb-3 text-gray-300" />
+                <p className="font-medium text-gray-500">Select a chat</p>
+                <p className="text-sm">Choose from the list to start chatting</p>
               </div>
             )}
           </div>
@@ -447,7 +441,7 @@ function ConversationItem({ conversation, isSelected, onClick, onTogglePin, onDe
   if (confirmDelete) {
     return (
       <div className="p-4 bg-red-50 border-l-4 border-red-500">
-        <p className="text-sm font-medium text-red-800 mb-2">Delete this {conversation.type === 'group' ? 'chat room' : 'conversation'}?</p>
+        <p className="text-sm font-medium text-red-800 mb-2">Delete this {conversation.type === 'group' ? 'chat' : 'conversation'}?</p>
         <p className="text-xs text-red-600 mb-3">This will permanently delete all messages.</p>
         <div className="flex space-x-2">
           <button
@@ -667,7 +661,7 @@ function ConversationDetail({ conversation, userId, userRole, users, onBack, onR
   const isTeamAnnouncement = conversation.type === 'team_announcement';
 
   return (
-    <div className="bg-white rounded-lg shadow flex h-[400px]">
+    <div className="flex h-full">
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
@@ -859,7 +853,7 @@ function ChatRoomDetail({ conversation, userId, userRole, users, onBack, onRefre
   const topLevelMessages = conversation.messages.filter(m => !m.parent_message_id);
 
   return (
-    <div className="bg-white rounded-lg shadow flex h-[400px]">
+    <div className="flex h-full">
       {/* Chat Messages Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
@@ -1430,7 +1424,7 @@ function NewChatRoomModal({ users, userId, onClose, onSuccess }) {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-900">New Chat Room</h3>
+          <h3 className="text-xl font-bold text-gray-900">New Chat</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X size={24} />
           </button>
@@ -1446,12 +1440,12 @@ function NewChatRoomModal({ users, userId, onClose, onSuccess }) {
           {/* Chat Room Title */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Chat Room Name *
+              Chat Name *
             </label>
             <input
               type="text"
               required
-              placeholder="e.g., Game Strategy, Social, Fitness Tips"
+              placeholder="e.g., Game Strategy, Social, Varsity Squad"
               value={formData.title}
               onChange={(e) => setFormData({...formData, title: e.target.value})}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1512,7 +1506,7 @@ function NewChatRoomModal({ users, userId, onClose, onSuccess }) {
               disabled={loading || formData.recipientIds.length === 0}
               className="flex-1 bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50"
             >
-              {loading ? 'Creating...' : 'Create Chat Room'}
+              {loading ? 'Creating...' : 'Create Chat'}
             </button>
           </div>
         </form>
