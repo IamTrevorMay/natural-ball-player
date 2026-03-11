@@ -220,14 +220,15 @@ export default function Messages({ userId, userRole }) {
   };
 
   const deleteConversation = async (conversationId) => {
-    // Delete messages, participants, then conversation
+    // Optimistically remove from UI immediately
+    setConversations(prev => prev.filter(c => c.id !== conversationId));
+    if (selectedConversation?.id === conversationId) setSelectedConversation(null);
+    if (selectedChat?.id === conversationId) setSelectedChat(null);
+
+    // Then delete from database
     await supabase.from('messages').delete().eq('conversation_id', conversationId);
     await supabase.from('conversation_participants').delete().eq('conversation_id', conversationId);
     await supabase.from('conversations').delete().eq('id', conversationId);
-
-    if (selectedConversation?.id === conversationId) setSelectedConversation(null);
-    if (selectedChat?.id === conversationId) setSelectedChat(null);
-    fetchConversations();
   };
 
   if (loading) {
