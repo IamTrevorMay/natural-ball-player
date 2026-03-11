@@ -466,7 +466,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           }`}
         >
           <MessageSquare size={20} />
-          <span className="flex-1 text-left">Messages</span>
+          <span className="flex-1 text-left">Communication</span>
           {unreadMessageCount > 0 && (
             <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
           )}
