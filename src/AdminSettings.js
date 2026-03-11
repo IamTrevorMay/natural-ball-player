@@ -1,6 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, ChevronDown } from 'lucide-react';
+
+const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'No Program'];
+const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
+const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
+
+const LEVEL_COLORS = {
+  'Professional': 'bg-teal-600 text-white',
+  'High School': 'bg-orange-500 text-white',
+  'College': 'bg-amber-500 text-white',
+  'Youth': 'bg-yellow-500 text-white',
+  'Independent': 'bg-blue-500 text-white',
+  'Affiliate': 'bg-indigo-500 text-white',
+  'MiLB': 'bg-emerald-500 text-white',
+  'MLB': 'bg-red-600 text-white',
+};
+
+const STATUS_COLORS = {
+  'Active': 'bg-green-500 text-white',
+  'Remote': 'bg-orange-500 text-white',
+  'Inactive': 'bg-gray-500 text-white',
+  'On-Site': 'bg-blue-500 text-white',
+  'Archived': 'bg-red-500 text-white',
+};
 
 export default function AdminSettings({ userId, userRole }) {
   const [activeTab, setActiveTab] = useState('users');
@@ -81,7 +104,7 @@ export default function AdminSettings({ userId, userRole }) {
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              Users ({users.length})
+              Athletes ({users.filter(u => u.role === 'player').length})
             </button>
             <button
               onClick={() => setActiveTab('teams')}
@@ -111,6 +134,7 @@ export default function AdminSettings({ userId, userRole }) {
             <UsersTab
               users={users}
               teams={teams}
+              coaches={coaches}
               showCreateUser={showCreateUser}
               setShowCreateUser={setShowCreateUser}
               refreshUsers={fetchUsers}
@@ -483,45 +507,320 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 }
 
 // ============================================
-// USERS TAB
+// MANAGE ATHLETES TAB
 // ============================================
 
-function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId }) {
+function UsersTab({ users, teams, coaches, showCreateUser, setShowCreateUser, refreshUsers, userId }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterTeam, setFilterTeam] = useState('All');
+  const [filterTrainer, setFilterTrainer] = useState('All');
+  const [filterProgram, setFilterProgram] = useState('All');
+  const [filterLevel, setFilterLevel] = useState('All');
+  const [filterStatus, setFilterStatus] = useState('All');
+  const [filterSubStatus, setFilterSubStatus] = useState('All');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const filteredUsers = users.filter(u => {
-    const q = searchQuery.toLowerCase();
-    return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+  // Only athletes (players)
+  const athletes = users.filter(u => u.role === 'player');
+
+  // Build team -> coaches map
+  const teamCoachMap = {};
+  (coaches || []).forEach(coach => {
+    (coach.team_members || []).forEach(tm => {
+      if (!teamCoachMap[tm.team_id]) teamCoachMap[tm.team_id] = [];
+      if (!teamCoachMap[tm.team_id].includes(coach.full_name)) {
+        teamCoachMap[tm.team_id].push(coach.full_name);
+      }
+    });
   });
+
+  const allTrainerNames = [...new Set(Object.values(teamCoachMap).flat())].sort();
+  const allTeamNames = [...new Set(teams.map(t => t.name))].sort();
+
+  const getProfile = (user) => {
+    const pp = user.player_profiles;
+    if (Array.isArray(pp)) return pp[0] || {};
+    if (pp && typeof pp === 'object') return pp;
+    return {};
+  };
+
+  const getTeamNames = (user) => {
+    return (user.team_members || []).map(tm => tm.teams?.name).filter(Boolean);
+  };
+
+  const getTrainer = (user) => {
+    const teamIds = (user.team_members || []).map(tm => tm.team_id);
+    const trainerNames = [];
+    teamIds.forEach(tid => {
+      if (teamCoachMap[tid]) trainerNames.push(...teamCoachMap[tid]);
+    });
+    return [...new Set(trainerNames)].join(', ') || '';
+  };
+
+  const splitName = (fullName) => {
+    const parts = (fullName || '').trim().split(/\s+/);
+    return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
+  };
+
+  const filteredAthletes = athletes.filter(u => {
+    const profile = getProfile(u);
+    const teamNames = getTeamNames(u);
+    const trainerName = getTrainer(u);
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      if (!u.full_name.toLowerCase().includes(q)) return false;
+    }
+    if (filterTeam !== 'All' && !teamNames.includes(filterTeam)) return false;
+    if (filterTrainer !== 'All' && !trainerName.includes(filterTrainer)) return false;
+    if (filterProgram !== 'All' && profile.program !== filterProgram) return false;
+    if (filterLevel !== 'All' && profile.level !== filterLevel) return false;
+    if (filterStatus !== 'All' && profile.status !== filterStatus) return false;
+    if (filterSubStatus !== 'All' && (profile.sub_status || '') !== filterSubStatus) return false;
+    return true;
+  });
+
+  const handleInlineUpdate = async (user, field, value) => {
+    const profile = getProfile(user);
+    if (!profile.id) return;
+    const { error } = await supabase.from('player_profiles').update({ [field]: value }).eq('id', profile.id);
+    if (!error) refreshUsers();
+  };
+
+  const handleDeleteUser = async (user) => {
+    setDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        'https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/delete-user',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqaWxrcXppZnloc3Nic2lxZ2Z1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NzM0NjMsImV4cCI6MjA4NjE0OTQ2M30.sZH3suieH6Y4PHHb_rSbVS8zPMs-Uy20_rdt51Tfw3c',
+          },
+          body: JSON.stringify({ user_id: user.id }),
+        }
+      );
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to delete auth user');
+      const { error } = await supabase.from('users').delete().eq('id', user.id);
+      if (error) throw error;
+      refreshUsers();
+    } catch (err) {
+      console.error('Error deleting user:', err);
+      alert('Error deleting user: ' + err.message);
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(null);
+    }
+  };
+
+  const filterSelectClass = "w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-700";
+
+  const BadgeSelect = ({ value, options, colors, onChange, placeholder }) => {
+    const color = value && colors[value] ? colors[value] : '';
+    return (
+      <select
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        className={`px-2 py-1 rounded text-xs font-medium border-0 cursor-pointer appearance-none pr-5 ${color || 'bg-gray-100 text-gray-600'}`}
+        style={value && colors[value] ? {
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'right 4px center',
+        } : {
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'right 4px center',
+        }}
+      >
+        <option value="">{placeholder || '—'}</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+  };
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-gray-900">All Users</h3>
+        <div className="flex items-center space-x-3">
+          <h3 className="text-2xl font-bold text-gray-900">Manage Athletes</h3>
+          <span className="bg-orange-500 text-white px-3 py-1 rounded-lg text-sm font-bold">
+            {athletes.length}
+          </span>
+        </div>
         <button
           onClick={() => setShowCreateUser(true)}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
         >
           <Plus size={18} />
-          <span>Create User</span>
+          <span>Create Athlete</span>
         </button>
       </div>
 
-      <div className="relative">
-        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search users by name or email..."
-          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-        />
-      </div>
+      {/* Table */}
+      <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <table className="w-full text-sm">
+          <thead>
+            {/* Filter Row */}
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th colSpan={2} className="px-3 py-2 text-left">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search for an Athlete..."
+                    className="w-full pl-7 pr-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {allTeamNames.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterTrainer} onChange={(e) => setFilterTrainer(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {allTrainerNames.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterProgram} onChange={(e) => setFilterProgram(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {LEVEL_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2">
+                <select value={filterSubStatus} onChange={(e) => setFilterSubStatus(e.target.value)} className={filterSelectClass}>
+                  <option value="All">All</option>
+                  {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </th>
+              <th className="px-2 py-2"></th>
+            </tr>
+            {/* Column Headers */}
+            <tr className="border-b border-gray-200 bg-white">
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">First Name</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Last Name</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Team</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Trainer</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Program</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Level</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
+              <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Sub Status</th>
+              <th className="py-3 px-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredAthletes.map(athlete => {
+              const profile = getProfile(athlete);
+              const { firstName, lastName } = splitName(athlete.full_name);
+              const teamNames = getTeamNames(athlete);
+              const trainerName = getTrainer(athlete);
 
-      <div className="grid grid-cols-1 gap-4">
-        {filteredUsers.map(user => (
-          <UserCard key={user.id} user={user} refreshUsers={refreshUsers} userId={userId} />
-        ))}
+              return (
+                <tr key={athlete.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-3 font-medium text-gray-900">{firstName}</td>
+                  <td className="py-3 px-3 font-semibold text-gray-900">{lastName}</td>
+                  <td className="py-3 px-3 text-gray-600 text-xs">{teamNames.join(', ') || '—'}</td>
+                  <td className="py-3 px-3 text-gray-600 text-xs">{trainerName || '—'}</td>
+                  <td className="py-3 px-3">
+                    <select
+                      value={profile.program || ''}
+                      onChange={(e) => handleInlineUpdate(athlete, 'program', e.target.value)}
+                      className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="">—</option>
+                      {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-3 px-3">
+                    <BadgeSelect
+                      value={profile.level}
+                      options={LEVEL_OPTIONS}
+                      colors={LEVEL_COLORS}
+                      onChange={(val) => handleInlineUpdate(athlete, 'level', val)}
+                      placeholder="—"
+                    />
+                  </td>
+                  <td className="py-3 px-3">
+                    <BadgeSelect
+                      value={profile.status}
+                      options={STATUS_OPTIONS}
+                      colors={STATUS_COLORS}
+                      onChange={(val) => handleInlineUpdate(athlete, 'status', val)}
+                      placeholder="—"
+                    />
+                  </td>
+                  <td className="py-3 px-3">
+                    <BadgeSelect
+                      value={profile.sub_status}
+                      options={STATUS_OPTIONS}
+                      colors={STATUS_COLORS}
+                      onChange={(val) => handleInlineUpdate(athlete, 'sub_status', val)}
+                      placeholder="—"
+                    />
+                  </td>
+                  <td className="py-3 px-2">
+                    {athlete.id !== userId && (
+                      confirmDelete === athlete.id ? (
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={() => handleDeleteUser(athlete)}
+                            disabled={deleting}
+                            className="text-red-600 hover:text-red-700 text-xs font-medium"
+                          >
+                            {deleting ? '...' : 'Yes'}
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(null)}
+                            className="text-gray-500 hover:text-gray-700 text-xs"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDelete(athlete.id)}
+                          className="text-gray-400 hover:text-red-600 transition"
+                          title="Delete athlete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {filteredAthletes.length === 0 && (
+              <tr>
+                <td colSpan={9} className="py-8 text-center text-gray-500">
+                  No athletes found matching your filters.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       {showCreateUser && (
@@ -538,148 +837,6 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   );
 }
 
-function UserCard({ user, refreshUsers, userId }) {
-  const [expanded, setExpanded] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-
-  const handleDeleteUser = async () => {
-    setDeleting(true);
-    try {
-      // Delete from auth.users via edge function (also cascades or we clean up manually)
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(
-        'https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/delete-user',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqaWxrcXppZnloc3Nic2lxZ2Z1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA1NzM0NjMsImV4cCI6MjA4NjE0OTQ2M30.sZH3suieH6Y4PHHb_rSbVS8zPMs-Uy20_rdt51Tfw3c',
-          },
-          body: JSON.stringify({ user_id: user.id }),
-        }
-      );
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Failed to delete auth user');
-
-      // Delete from users table
-      const { error } = await supabase.from('users').delete().eq('id', user.id);
-      if (error) throw error;
-
-      refreshUsers();
-    } catch (err) {
-      console.error('Error deleting user:', err);
-      alert('Error deleting user: ' + err.message);
-      setDeleting(false);
-    }
-  };
-
-  const getRoleBadgeColor = (role) => {
-    switch(role) {
-      case 'admin': return 'bg-purple-100 text-purple-700';
-      case 'coach': return 'bg-blue-100 text-blue-700';
-      case 'player': return 'bg-green-100 text-green-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
-
-  return (
-    <div className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
-            {user.full_name.charAt(0)}
-          </div>
-          <div>
-            <h4 className="font-semibold text-gray-900">{user.full_name}</h4>
-            <p className="text-sm text-gray-600">{user.email}</p>
-            {user.team_members && user.team_members.length > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
-                Teams: {user.team_members.map(tm => tm.teams.name).join(', ')}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center space-x-3">
-          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
-            {user.role}
-          </span>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="text-gray-600 hover:text-gray-900"
-          >
-            {expanded ? '\u2212' : '+'}
-          </button>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-gray-600">Phone:</span>
-              <span className="ml-2 text-gray-900">{user.phone || 'Not set'}</span>
-            </div>
-            <div>
-              <span className="text-gray-600">Created:</span>
-              <span className="ml-2 text-gray-900">
-                {new Date(user.created_at).toLocaleDateString()}
-              </span>
-            </div>
-            {user.player_profiles && user.player_profiles.length > 0 && (
-              <>
-                <div>
-                  <span className="text-gray-600">Position:</span>
-                  <span className="ml-2 text-gray-900">{user.player_profiles[0].position || 'Not set'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Number:</span>
-                  <span className="ml-2 text-gray-900">{user.player_profiles[0].jersey_number || 'Not set'}</span>
-                </div>
-              </>
-            )}
-          </div>
-
-          {user.id !== userId && (
-            <div className="pt-4 border-t border-gray-200 mt-4">
-              {confirmDelete ? (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <p className="text-sm text-red-700 mb-3">
-                    Delete <strong>{user.full_name}</strong>? This will remove all their data. This cannot be undone.
-                  </p>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleDeleteUser}
-                      disabled={deleting}
-                      className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-50"
-                    >
-                      {deleting ? 'Deleting...' : 'Yes, Delete'}
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(false)}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1"
-                >
-                  <Trash2 size={14} />
-                  <span>Delete User</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function CreateUserModal({ teams, onClose, onSuccess }) {
   const [formData, setFormData] = useState({
