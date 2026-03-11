@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Users, Search, Edit2, X } from 'lucide-react';
+import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
 
 const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo'];
 const LEVEL_OPTIONS = ['Varsity', 'JV', 'Freshman', 'Travel', 'Rec'];
-const STATUS_OPTIONS = ['Active', 'Remote', 'On-Site', 'Inactive', 'Archived'];
 
 const LEVEL_COLORS = {
   'Varsity': 'bg-purple-600 text-white',
@@ -35,6 +35,10 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const [editingPlayer, setEditingPlayer] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [teamCoachMap, setTeamCoachMap] = useState({});
+
+  const { options: statusOptions, addOption: addStatusOption } = useStatusOptions('status');
+  const { options: subStatusOptions, addOption: addSubStatusOption } = useStatusOptions('sub_status');
+  const isAdmin = userRole === 'admin';
 
   useEffect(() => { fetchRosterPlayers(); fetchTeamCoaches(); }, []);
 
@@ -137,29 +141,6 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     return true;
   });
 
-  const BadgeSelect = ({ value, options, colors, onChange, placeholder }) => {
-    const color = value && colors[value] ? colors[value] : '';
-    return (
-      <select
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        className={`px-2 py-1 rounded text-xs font-medium border-0 cursor-pointer appearance-none pr-5 ${color || 'bg-gray-100 text-gray-600'}`}
-        style={value && colors[value] ? {
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'right 4px center',
-        } : {
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E")`,
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'right 4px center',
-        }}
-      >
-        <option value="">{placeholder || '—'}</option>
-        {options.map(o => <option key={o} value={o}>{o}</option>)}
-      </select>
-    );
-  };
-
   const filterSelectClass = "w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-700";
 
   if (loading) {
@@ -172,7 +153,6 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <div className="flex items-center space-x-3">
@@ -185,12 +165,10 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
         </div>
       </div>
 
-      {/* Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              {/* Filter Row */}
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th colSpan={2} className="px-3 py-2 text-left">
                   <div className="relative">
@@ -231,18 +209,17 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                 <th className="px-2 py-2">
                   <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterSelectClass}>
                     <option value="All">All</option>
-                    {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {statusOptions.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </th>
                 <th className="px-2 py-2">
                   <select value={filterSubStatus} onChange={(e) => setFilterSubStatus(e.target.value)} className={filterSelectClass}>
                     <option value="All">All</option>
-                    {STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {subStatusOptions.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </th>
                 <th className="px-2 py-2"></th>
               </tr>
-              {/* Column Headers */}
               <tr className="border-b border-gray-200 bg-white">
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">First Name</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Last Name</th>
@@ -286,27 +263,32 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                       </select>
                     </td>
                     <td className="py-3 px-3">
-                      <BadgeSelect
+                      <StatusBadgeSelect
                         value={profile.level}
                         options={LEVEL_OPTIONS}
                         colors={LEVEL_COLORS}
                         onChange={(val) => handleInlineUpdate(player.id, 'level', val)}
+                        isAdmin={false}
                       />
                     </td>
                     <td className="py-3 px-3">
-                      <BadgeSelect
+                      <StatusBadgeSelect
                         value={profile.status}
-                        options={STATUS_OPTIONS}
+                        options={statusOptions}
                         colors={STATUS_COLORS}
                         onChange={(val) => handleInlineUpdate(player.id, 'status', val)}
+                        onAddOption={addStatusOption}
+                        isAdmin={isAdmin}
                       />
                     </td>
                     <td className="py-3 px-3">
-                      <BadgeSelect
+                      <StatusBadgeSelect
                         value={profile.sub_status}
-                        options={STATUS_OPTIONS}
+                        options={subStatusOptions}
                         colors={STATUS_COLORS}
                         onChange={(val) => handleInlineUpdate(player.id, 'sub_status', val)}
+                        onAddOption={addSubStatusOption}
+                        isAdmin={isAdmin}
                       />
                     </td>
                     <td className="py-3 px-2">
@@ -341,7 +323,6 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
         </div>
       </div>
 
-      {/* Edit Player Info Modal */}
       {editingPlayer && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
