@@ -520,7 +520,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
 
       <div className="grid grid-cols-1 gap-4">
         {filteredUsers.map(user => (
-          <UserCard key={user.id} user={user} refreshUsers={refreshUsers} userId={userId} />
+          <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} />
         ))}
       </div>
 
@@ -538,15 +538,173 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   );
 }
 
-function UserCard({ user, refreshUsers, userId }) {
-  const [expanded, setExpanded] = useState(false);
+function UserCard({ user, teams, refreshUsers, userId }) {
+  const [showEdit, setShowEdit] = useState(false);
+
+  const getRoleBadgeColor = (role) => {
+    switch(role) {
+      case 'admin': return 'bg-purple-100 text-purple-700';
+      case 'coach': return 'bg-blue-100 text-blue-700';
+      case 'player': return 'bg-green-100 text-green-700';
+      default: return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  return (
+    <>
+      <div
+        onClick={() => setShowEdit(true)}
+        className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition cursor-pointer"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
+              {user.full_name.charAt(0)}
+            </div>
+            <div>
+              <h4 className="font-semibold text-gray-900">{user.full_name}</h4>
+              <p className="text-sm text-gray-600">{user.email}</p>
+              {user.team_members && user.team_members.length > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Teams: {user.team_members.map(tm => tm.teams.name).join(', ')}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center space-x-3">
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
+              {user.role}
+            </span>
+            <Edit2 size={16} className="text-gray-400" />
+          </div>
+        </div>
+      </div>
+
+      {showEdit && (
+        <EditUserModal
+          user={user}
+          teams={teams}
+          userId={userId}
+          onClose={() => setShowEdit(false)}
+          onSuccess={() => {
+            setShowEdit(false);
+            refreshUsers();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
+  const profile = Array.isArray(user.player_profiles) ? user.player_profiles[0] : user.player_profiles || null;
+  const currentTeamIds = (user.team_members || []).map(tm => tm.team_id);
+
+  const [formData, setFormData] = useState({
+    full_name: user.full_name || '',
+    email: user.email || '',
+    phone: user.phone || '',
+    role: user.role || 'player',
+    height: user.height || '',
+    weight: user.weight || '',
+    jersey_number: profile?.jersey_number || '',
+    position: profile?.position || '',
+    grade: profile?.grade || '',
+    bats: profile?.bats || 'Right',
+    throws: profile?.throws || 'Right',
+  });
+  const [assignedTeamIds, setAssignedTeamIds] = useState(currentTeamIds);
+  const [addTeamId, setAddTeamId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const availableTeams = teams.filter(t => !assignedTeamIds.includes(t.id));
+
+  const handleAddTeam = () => {
+    if (addTeamId && !assignedTeamIds.includes(addTeamId)) {
+      setAssignedTeamIds([...assignedTeamIds, addTeamId]);
+      setAddTeamId('');
+    }
+  };
+
+  const handleRemoveTeam = (teamId) => {
+    setAssignedTeamIds(assignedTeamIds.filter(id => id !== teamId));
+  };
+
+  const handleSave = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      // 1. Update users table
+      const { error: userError } = await supabase
+        .from('users')
+        .update({
+          full_name: formData.full_name,
+          email: formData.email,
+          phone: formData.phone || null,
+          role: formData.role,
+          height: formData.height || null,
+          weight: formData.weight || null,
+        })
+        .eq('id', user.id);
+      if (userError) throw userError;
+
+      // 2. Update player_profiles if player
+      if (formData.role === 'player' && profile?.id) {
+        const { error: profileError } = await supabase
+          .from('player_profiles')
+          .update({
+            jersey_number: formData.jersey_number || null,
+            position: formData.position || null,
+            grade: formData.grade || null,
+            bats: formData.bats,
+            throws: formData.throws,
+          })
+          .eq('id', profile.id);
+        if (profileError) throw profileError;
+      } else if (formData.role === 'player' && !profile) {
+        // Create player profile if switching to player role
+        const { error: profileError } = await supabase
+          .from('player_profiles')
+          .insert({
+            user_id: user.id,
+            jersey_number: formData.jersey_number || null,
+            position: formData.position || null,
+            grade: formData.grade || null,
+            bats: formData.bats,
+            throws: formData.throws,
+          });
+        if (profileError) throw profileError;
+      }
+
+      // 3. Sync team assignments
+      const teamsToAdd = assignedTeamIds.filter(id => !currentTeamIds.includes(id));
+      const teamsToRemove = currentTeamIds.filter(id => !assignedTeamIds.includes(id));
+
+      for (const teamId of teamsToRemove) {
+        await supabase.from('team_members').delete().eq('user_id', user.id).eq('team_id', teamId);
+      }
+      for (const teamId of teamsToAdd) {
+        await supabase.from('team_members').insert({
+          team_id: teamId,
+          user_id: user.id,
+          role: formData.role === 'admin' ? 'coach' : formData.role,
+        });
+      }
+
+      onSuccess();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDeleteUser = async () => {
     setDeleting(true);
     try {
-      // Delete from auth.users via edge function (also cascades or we clean up manually)
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(
         'https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/delete-user',
@@ -562,12 +720,9 @@ function UserCard({ user, refreshUsers, userId }) {
       );
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Failed to delete auth user');
-
-      // Delete from users table
       const { error } = await supabase.from('users').delete().eq('id', user.id);
       if (error) throw error;
-
-      refreshUsers();
+      onSuccess();
     } catch (err) {
       console.error('Error deleting user:', err);
       alert('Error deleting user: ' + err.message);
@@ -575,94 +730,208 @@ function UserCard({ user, refreshUsers, userId }) {
     }
   };
 
-  const getRoleBadgeColor = (role) => {
-    switch(role) {
-      case 'admin': return 'bg-purple-100 text-purple-700';
-      case 'coach': return 'bg-blue-100 text-blue-700';
-      case 'player': return 'bg-green-100 text-green-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
+  const inputClass = "w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-semibold">
-            {user.full_name.charAt(0)}
-          </div>
-          <div>
-            <h4 className="font-semibold text-gray-900">{user.full_name}</h4>
-            <p className="text-sm text-gray-600">{user.email}</p>
-            {user.team_members && user.team_members.length > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
-                Teams: {user.team_members.map(tm => tm.teams.name).join(', ')}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center space-x-3">
-          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
-            {user.role}
-          </span>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="text-gray-600 hover:text-gray-900"
-          >
-            {expanded ? '\u2212' : '+'}
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Edit User</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={24} />
           </button>
         </div>
-      </div>
 
-      {expanded && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="p-6 space-y-4">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <span className="text-gray-600">Phone:</span>
-              <span className="ml-2 text-gray-900">{user.phone || 'Not set'}</span>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+              <input
+                type="text"
+                value={formData.full_name}
+                onChange={(e) => setFormData({...formData, full_name: e.target.value})}
+                className={inputClass}
+              />
             </div>
             <div>
-              <span className="text-gray-600">Created:</span>
-              <span className="ml-2 text-gray-900">
-                {new Date(user.created_at).toLocaleDateString()}
-              </span>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                className={inputClass}
+              />
             </div>
-            {user.player_profiles && user.player_profiles.length > 0 && (
-              <>
-                <div>
-                  <span className="text-gray-600">Position:</span>
-                  <span className="ml-2 text-gray-900">{user.player_profiles[0].position || 'Not set'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-600">Number:</span>
-                  <span className="ml-2 text-gray-900">{user.player_profiles[0].jersey_number || 'Not set'}</span>
-                </div>
-              </>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
+              <input
+                type="tel"
+                value={formData.phone}
+                onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+              <select
+                value={formData.role}
+                onChange={(e) => setFormData({...formData, role: e.target.value})}
+                className={inputClass}
+              >
+                <option value="player">Player</option>
+                <option value="coach">Coach</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Height</label>
+              <input
+                type="text"
+                placeholder="e.g., 6'2&quot;, 72 in"
+                value={formData.height}
+                onChange={(e) => setFormData({...formData, height: e.target.value})}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Weight</label>
+              <input
+                type="text"
+                placeholder="e.g., 185 lbs"
+                value={formData.weight}
+                onChange={(e) => setFormData({...formData, weight: e.target.value})}
+                className={inputClass}
+              />
+            </div>
+          </div>
+
+          {/* Team Assignments */}
+          <div className="pt-4 border-t border-gray-200">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Team Assignments</label>
+            {assignedTeamIds.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {assignedTeamIds.map(tid => {
+                  const team = teams.find(t => t.id === tid);
+                  return (
+                    <span key={tid} className="inline-flex items-center bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm">
+                      {team?.name || 'Unknown'}
+                      <button onClick={() => handleRemoveTeam(tid)} className="ml-2 text-blue-400 hover:text-red-600">
+                        <X size={14} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {availableTeams.length > 0 && (
+              <div className="flex items-center space-x-2">
+                <select
+                  value={addTeamId}
+                  onChange={(e) => setAddTeamId(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                >
+                  <option value="">Add to team...</option>
+                  {availableTeams.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAddTeam}
+                  disabled={!addTeamId}
+                  className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition disabled:opacity-50"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
             )}
           </div>
 
-          {user.id !== userId && (
-            <div className="pt-4 border-t border-gray-200 mt-4">
-              {confirmDelete ? (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <p className="text-sm text-red-700 mb-3">
-                    Delete <strong>{user.full_name}</strong>? This will remove all their data. This cannot be undone.
-                  </p>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleDeleteUser}
-                      disabled={deleting}
-                      className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-50"
-                    >
-                      {deleting ? 'Deleting...' : 'Yes, Delete'}
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(false)}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
-                    >
-                      Cancel
-                    </button>
-                  </div>
+          {/* Player-specific fields */}
+          {formData.role === 'player' && (
+            <div className="pt-4 border-t border-gray-200">
+              <h4 className="font-semibold text-gray-900 mb-4">Player Details</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Jersey Number</label>
+                  <input
+                    type="text"
+                    value={formData.jersey_number}
+                    onChange={(e) => setFormData({...formData, jersey_number: e.target.value})}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Position</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., SS, P, OF"
+                    value={formData.position}
+                    onChange={(e) => setFormData({...formData, position: e.target.value})}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Grade</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., 8th, 10th"
+                    value={formData.grade}
+                    onChange={(e) => setFormData({...formData, grade: e.target.value})}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Bats</label>
+                  <select
+                    value={formData.bats}
+                    onChange={(e) => setFormData({...formData, bats: e.target.value})}
+                    className={inputClass}
+                  >
+                    <option value="Right">Right</option>
+                    <option value="Left">Left</option>
+                    <option value="Switch">Switch</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Throws</label>
+                  <select
+                    value={formData.throws}
+                    onChange={(e) => setFormData({...formData, throws: e.target.value})}
+                    className={inputClass}
+                  >
+                    <option value="Right">Right</option>
+                    <option value="Left">Left</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+            {user.id !== userId ? (
+              confirmDelete ? (
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-red-600">Delete this user?</span>
+                  <button
+                    onClick={handleDeleteUser}
+                    disabled={deleting}
+                    className="px-3 py-1.5 bg-red-600 text-white rounded text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {deleting ? 'Deleting...' : 'Yes, Delete'}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm hover:bg-gray-50"
+                  >
+                    No
+                  </button>
                 </div>
               ) : (
                 <button
@@ -672,11 +941,27 @@ function UserCard({ user, refreshUsers, userId }) {
                   <Trash2 size={14} />
                   <span>Delete User</span>
                 </button>
-              )}
+              )
+            ) : <div />}
+
+            <div className="flex space-x-3">
+              <button
+                onClick={onClose}
+                className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={loading}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
+              >
+                {loading ? 'Saving...' : 'Save Changes'}
+              </button>
             </div>
-          )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
