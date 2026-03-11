@@ -8,7 +8,9 @@ import Schedule from './Schedule';
 import Messages from './Messages';
 import MyTeam from './MyTeam';
 import KnowledgeBase from './KnowledgeBase';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock } from 'lucide-react';
+import ManageAthletes from './ManageAthletes';
+import ManageCoaches from './ManageCoaches';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -376,6 +378,8 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
             {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={userRole} />}
+            {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} />}
           </div>
@@ -474,7 +478,29 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
 
         {(userRole === 'admin' || userRole === 'coach') && (
           <>
-            <button 
+            <button
+              onClick={() => setCurrentView('manage-athletes')}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+                currentView === 'manage-athletes' ? 'bg-blue-600' : 'hover:bg-gray-800'
+              }`}
+            >
+              <Users size={20} />
+              <span>Manage Athletes</span>
+            </button>
+
+            {userRole === 'admin' && (
+              <button
+                onClick={() => setCurrentView('manage-coaches')}
+                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+                  currentView === 'manage-coaches' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                }`}
+              >
+                <UserCog size={20} />
+                <span>Manage Coaches</span>
+              </button>
+            )}
+
+            <button
               onClick={() => setCurrentView('coach-tools')}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
                 currentView === 'coach-tools' ? 'bg-blue-600' : 'hover:bg-gray-800'
@@ -484,7 +510,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <span>Coach Tools</span>
             </button>
 
-            <button 
+            <button
               onClick={() => setCurrentView('settings')}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
                 currentView === 'settings' ? 'bg-blue-600' : 'hover:bg-gray-800'

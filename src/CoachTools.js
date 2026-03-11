@@ -31,7 +31,6 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
 
   const tabs = [
     { key: 'schedule', icon: Calendar, label: 'Schedule' },
-    { key: 'roster', icon: Users, label: 'Manage Athletes' },
     { key: 'stats', icon: TrendingUp, label: 'Player Stats' },
     { key: 'benchmarks', icon: Target, label: 'Assessments' },
     { key: 'training', icon: Dumbbell, label: 'Training Programs' },
@@ -58,7 +57,6 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
         </div>
         <div className="p-6">
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
-          {activeTab === 'roster' && <RosterTab userRole={userRole} userId={userId} players={players} teams={teams} onNavigateToProfile={onNavigateToProfile} onRefreshPlayers={fetchPlayers} />}
           {activeTab === 'stats' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'benchmarks' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
