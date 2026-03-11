@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search } from 'lucide-react';
+import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
 
 export default function Messages({ userId, userRole }) {
   const [conversations, setConversations] = useState([]);
@@ -219,6 +219,17 @@ export default function Messages({ userId, userRole }) {
     fetchConversations();
   };
 
+  const deleteConversation = async (conversationId) => {
+    // Delete messages, participants, then conversation
+    await supabase.from('messages').delete().eq('conversation_id', conversationId);
+    await supabase.from('conversation_participants').delete().eq('conversation_id', conversationId);
+    await supabase.from('conversations').delete().eq('id', conversationId);
+
+    if (selectedConversation?.id === conversationId) setSelectedConversation(null);
+    if (selectedChat?.id === conversationId) setSelectedChat(null);
+    fetchConversations();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -271,6 +282,7 @@ export default function Messages({ userId, userRole }) {
                       isSelected={selectedConversation?.id === conv.id}
                       onClick={() => fetchConversationDetail(conv.id, 'message')}
                       onTogglePin={() => togglePin(conv.id, conv.is_pinned)}
+                      onDelete={() => deleteConversation(conv.id)}
                       userId={userId}
                       userRole={userRole}
                     />
@@ -342,6 +354,7 @@ export default function Messages({ userId, userRole }) {
                       isSelected={selectedChat?.id === conv.id}
                       onClick={() => fetchConversationDetail(conv.id, 'chat')}
                       onTogglePin={() => togglePin(conv.id, conv.is_pinned)}
+                      onDelete={() => deleteConversation(conv.id)}
                       userId={userId}
                       userRole={userRole}
                     />
@@ -407,7 +420,10 @@ export default function Messages({ userId, userRole }) {
   );
 }
 
-function ConversationItem({ conversation, isSelected, onClick, onTogglePin, userId, userRole }) {
+function ConversationItem({ conversation, isSelected, onClick, onTogglePin, onDelete, userId, userRole }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const isCreator = conversation.created_by === userId;
+
   const getConversationTitle = () => {
     if (conversation.type === 'team_announcement') {
       return `${conversation.teams?.name || 'Team'} - ${conversation.title}`;
@@ -427,6 +443,29 @@ function ConversationItem({ conversation, isSelected, onClick, onTogglePin, user
     }
     return <User size={16} />;
   };
+
+  if (confirmDelete) {
+    return (
+      <div className="p-4 bg-red-50 border-l-4 border-red-500">
+        <p className="text-sm font-medium text-red-800 mb-2">Delete this {conversation.type === 'group' ? 'chat room' : 'conversation'}?</p>
+        <p className="text-xs text-red-600 mb-3">This will permanently delete all messages.</p>
+        <div className="flex space-x-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+            className="flex-1 text-xs py-1.5 px-3 bg-white border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="flex-1 text-xs py-1.5 px-3 bg-red-600 text-white rounded font-medium hover:bg-red-700 transition"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -471,6 +510,18 @@ function ConversationItem({ conversation, isSelected, onClick, onTogglePin, user
               className="text-gray-400 hover:text-orange-500 transition"
             >
               <Pin size={14} />
+            </button>
+          )}
+          {isCreator && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmDelete(true);
+              }}
+              className="text-gray-400 hover:text-red-500 transition"
+              title="Delete"
+            >
+              <Trash2 size={14} />
             </button>
           )}
         </div>
