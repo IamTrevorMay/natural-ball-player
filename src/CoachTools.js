@@ -629,6 +629,7 @@ function TrainingTab({ teams, players }) {
   const [loading, setLoading] = useState(true);
   const [expandedWorkout, setExpandedWorkout] = useState(null);
   const [editingWorkout, setEditingWorkout] = useState(null);
+  const [editingProgram, setEditingProgram] = useState(null);
 
   useEffect(() => { fetchPrograms(); fetchWorkoutTemplates(); }, []);
 
@@ -780,16 +781,18 @@ function TrainingTab({ teams, players }) {
                   program={program}
                   onDelete={handleDeleteProgram}
                   onAssign={() => { setSelectedProgram(program); setShowAssign(true); }}
+                  onEdit={() => setEditingProgram(program)}
                   onRefresh={fetchPrograms}
                 />
               ))}
             </div>
           )}
 
-          {showCreateProgram && (
+          {(showCreateProgram || editingProgram) && (
             <CreateTrainingProgramModal
-              onClose={() => setShowCreateProgram(false)}
-              onSuccess={() => { setShowCreateProgram(false); fetchPrograms(); }}
+              onClose={() => { setShowCreateProgram(false); setEditingProgram(null); }}
+              onSuccess={() => { setShowCreateProgram(false); setEditingProgram(null); fetchPrograms(); }}
+              editingProgram={editingProgram}
             />
           )}
 
@@ -819,7 +822,7 @@ const categoryColors = {
   other: 'bg-gray-100 text-gray-700',
 };
 
-function TrainingProgramCard({ program, onDelete, onAssign, onRefresh }) {
+function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
   const [showAddDay, setShowAddDay] = useState(false);
   const [showAddExercise, setShowAddExercise] = useState(null); // day_id
@@ -860,6 +863,7 @@ function TrainingProgramCard({ program, onDelete, onAssign, onRefresh }) {
         </div>
         <div className="flex items-center space-x-2 ml-4">
           <button onClick={onAssign} className="text-blue-600 hover:text-blue-800 text-sm font-medium transition">Assign</button>
+          <button onClick={onEdit} className="text-gray-400 hover:text-blue-600 transition" title="Edit"><Edit2 size={16} /></button>
           <button onClick={() => setExpanded(!expanded)} className="text-gray-400 hover:text-gray-600 transition">{expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>
           <button onClick={() => onDelete(program.id)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={16} /></button>
         </div>
@@ -979,53 +983,271 @@ function ExerciseRow({ exercise, onRefresh }) {
 
 /* ---- CREATE TRAINING PROGRAM MODAL ---- */
 
-function CreateTrainingProgramModal({ onClose, onSuccess }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [durationWeeks, setDurationWeeks] = useState('');
+function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
+  const [name, setName] = useState(editingProgram?.name || '');
+  const [program, setProgram] = useState('Pitching');
+  const [folder, setFolder] = useState('No Folder');
+  const [notes, setNotes] = useState(editingProgram?.description || '');
+  const [tabs, setTabs] = useState(() => {
+    if (editingProgram?.training_days?.length > 0) {
+      const days = [...editingProgram.training_days].sort((a, b) => a.day_number - b.day_number);
+      return days.map(day => ({
+        tabName: day.title || `Day ${day.day_number}`,
+        dayId: day.id,
+        notes: day.notes || '',
+        exercises: (day.training_exercises || [])
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', link: ex.video_url || '', category: ex.category || 'hitting' }))
+          .concat([]).length > 0
+          ? (day.training_exercises || []).sort((a, b) => a.sort_order - b.sort_order).map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', link: ex.video_url || '', category: ex.category || 'hitting' }))
+          : [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+      }));
+    }
+    return [{ tabName: 'Day 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+  });
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e) => {
-    e.preventDefault(); setLoading(true); setError('');
+  const activeTab = tabs[activeTabIndex] || tabs[0];
+
+  const addTab = () => {
+    const newTabs = [...tabs, { tabName: `Day ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+    setTabs(newTabs);
+    setActiveTabIndex(newTabs.length - 1);
+  };
+
+  const cloneTab = () => {
+    const cloned = JSON.parse(JSON.stringify(activeTab));
+    cloned.tabName = `${activeTab.tabName} (Copy)`;
+    delete cloned.dayId;
+    const newTabs = [...tabs, cloned];
+    setTabs(newTabs);
+    setActiveTabIndex(newTabs.length - 1);
+  };
+
+  const deleteTab = () => {
+    if (tabs.length <= 1) return;
+    const newTabs = tabs.filter((_, i) => i !== activeTabIndex);
+    setTabs(newTabs);
+    setActiveTabIndex(Math.min(activeTabIndex, newTabs.length - 1));
+  };
+
+  const updateExercise = (exIndex, field, value) => {
+    const newTabs = [...tabs];
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: newTabs[activeTabIndex].exercises.map((ex, i) =>
+        i === exIndex ? { ...ex, [field]: value } : ex
+      )
+    };
+    setTabs(newTabs);
+  };
+
+  const addExercise = () => {
+    const newTabs = [...tabs];
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: [...newTabs[activeTabIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+    };
+    setTabs(newTabs);
+  };
+
+  const removeExercise = (exIndex) => {
+    const newTabs = [...tabs];
+    const exercises = newTabs[activeTabIndex].exercises;
+    if (exercises.length <= 1) return;
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: exercises.filter((_, i) => i !== exIndex)
+    };
+    setTabs(newTabs);
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setLoading(true);
+    setError('');
     const { data: { user } } = await supabase.auth.getUser();
-    const { error: insertError } = await supabase.from('training_programs').insert({
-      name, description: description || null,
-      duration_weeks: durationWeeks ? parseInt(durationWeeks) : null,
-      created_by: user?.id
-    });
-    if (insertError) { setError(insertError.message); setLoading(false); } else { onSuccess(); }
+
+    if (editingProgram) {
+      // Update existing program
+      const { error: updateErr } = await supabase.from('training_programs')
+        .update({ name, description: notes || null })
+        .eq('id', editingProgram.id);
+      if (updateErr) { setError(updateErr.message); setLoading(false); return; }
+
+      // Delete old days (cascades to exercises)
+      await supabase.from('training_days').delete().eq('program_id', editingProgram.id);
+
+      // Insert new days and exercises
+      for (let i = 0; i < tabs.length; i++) {
+        const tab = tabs[i];
+        const { data: dayData, error: dayErr } = await supabase.from('training_days').insert({
+          program_id: editingProgram.id, day_number: i + 1, title: tab.tabName || null, notes: tab.notes || null
+        }).select('id').single();
+        if (dayErr) { setError(dayErr.message); setLoading(false); return; }
+
+        const exercises = tab.exercises.filter(ex => ex.name.trim());
+        if (exercises.length > 0) {
+          const { error: exErr } = await supabase.from('training_exercises').insert(
+            exercises.map((ex, j) => ({
+              day_id: dayData.id, category: ex.category || 'hitting', name: ex.name,
+              sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null,
+              video_url: ex.link || null, sort_order: j
+            }))
+          );
+          if (exErr) { setError(exErr.message); setLoading(false); return; }
+        }
+      }
+      onSuccess();
+    } else {
+      // Create new program
+      const { data: progData, error: progErr } = await supabase.from('training_programs').insert({
+        name, description: notes || null, created_by: user?.id
+      }).select('id').single();
+      if (progErr) { setError(progErr.message); setLoading(false); return; }
+
+      // Insert days and exercises
+      for (let i = 0; i < tabs.length; i++) {
+        const tab = tabs[i];
+        const { data: dayData, error: dayErr } = await supabase.from('training_days').insert({
+          program_id: progData.id, day_number: i + 1, title: tab.tabName || null, notes: tab.notes || null
+        }).select('id').single();
+        if (dayErr) { setError(dayErr.message); setLoading(false); return; }
+
+        const exercises = tab.exercises.filter(ex => ex.name.trim());
+        if (exercises.length > 0) {
+          const { error: exErr } = await supabase.from('training_exercises').insert(
+            exercises.map((ex, j) => ({
+              day_id: dayData.id, category: ex.category || 'hitting', name: ex.name,
+              sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null,
+              video_url: ex.link || null, sort_order: j
+            }))
+          );
+          if (exErr) { setError(exErr.message); setLoading(false); return; }
+        }
+      }
+      onSuccess();
+    }
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-900">Create Training Program</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="text-center py-5 border-b border-gray-200">
+          <h3 className="text-2xl font-bold text-gray-900">Workout</h3>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Program Name *</label>
-            <input type="text" required placeholder="e.g., Off-Season Hitting Program" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">{error}</div>}
+
+          {/* Tab Controls */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex space-x-2">
+              <button type="button" onClick={addTab} className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 transition">Add tab</button>
+              <button type="button" onClick={cloneTab} className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 transition">Clone tab</button>
+            </div>
+            <button type="button" onClick={deleteTab} disabled={tabs.length <= 1} className="px-4 py-1.5 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed">Delete tab</button>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-            <textarea placeholder="What is this program for?" value={description} onChange={(e) => setDescription(e.target.value)} rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+          {/* Tab Selector */}
+          {tabs.length > 1 && (
+            <div className="flex space-x-1 mb-4 border-b border-gray-200 overflow-x-auto">
+              {tabs.map((tab, i) => (
+                <button key={i} type="button" onClick={() => setActiveTabIndex(i)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition whitespace-nowrap ${i === activeTabIndex ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                  {tab.tabName}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Form Fields */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-1">Workout Name</label>
+              <input type="text" placeholder="Workout Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-1">Program:</label>
+              <select value={program} onChange={(e) => setProgram(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-1">Folder</label>
+              <select value={folder} onChange={(e) => setFolder(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                {FOLDER_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-1">Workout Notes</label>
+              <input type="text" placeholder="Workout Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+            </div>
+
+            {/* Exercises Table */}
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-2">Exercises</label>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-semibold text-gray-700 border-b border-gray-300">
+                    <th className="pb-2 w-8"></th>
+                    <th className="pb-2 pr-2">Name</th>
+                    <th className="pb-2 pr-2 w-16 text-center">Sets</th>
+                    <th className="pb-2 pr-2 w-20 text-center">Reps</th>
+                    <th className="pb-2 pr-2 text-center">Link</th>
+                    <th className="pb-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeTab.exercises.map((ex, i) => (
+                    <tr key={i} className="border-b border-gray-100">
+                      <td className="py-2">
+                        <button type="button" onClick={addExercise} className="text-gray-400 hover:text-green-600 transition"><Plus size={16} /></button>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" value={ex.name} onChange={(e) => updateExercise(i, 'name', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="1" value={ex.sets} onChange={(e) => updateExercise(i, 'sets', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="Reps" value={ex.reps} onChange={(e) => updateExercise(i, 'reps', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <div className="flex space-x-1">
+                          <input type="text" placeholder="Link" value={ex.link} onChange={(e) => updateExercise(i, 'link', e.target.value)} className="flex-1 px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                          <select value={ex.category || 'hitting'} onChange={(e) => updateExercise(i, 'category', e.target.value)} className="px-1 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white">
+                            <option value="hitting">Hitting</option>
+                            <option value="pitching">Pitching</option>
+                            <option value="fielding">Fielding</option>
+                            <option value="conditioning">Conditioning</option>
+                            <option value="recovery">Recovery</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                      </td>
+                      <td className="py-2">
+                        <button type="button" onClick={() => removeExercise(i)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={14} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Duration (weeks)</label>
-            <input type="number" min="1" placeholder="e.g., 8" value={durationWeeks} onChange={(e) => setDurationWeeks(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
-          <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded text-sm">
-            After creating the program, expand it to add days and exercises.
-          </div>
-          <div className="flex space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Create Program'}</button>
-          </div>
-        </form>
+        </div>
+
+        {/* Footer Buttons */}
+        <div className="border-t border-gray-200 px-6 py-4 flex justify-end space-x-3">
+          <button type="button" onClick={onClose} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm">Close</button>
+          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50">Apply For Calendar</button>
+          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 bg-green-600 text-white rounded font-medium hover:bg-green-700 transition text-sm disabled:opacity-50">
+            {loading ? 'Saving...' : 'Save changes'}
+          </button>
+        </div>
       </div>
     </div>
   );
