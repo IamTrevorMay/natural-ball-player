@@ -230,6 +230,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
    ============================================ */
 
 const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'No Program'];
+const FOLDER_OPTIONS = ['No Folder', 'Warmup', 'In-Season', 'Off-Season', 'Recovery', 'Assessment'];
 const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
 const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 
@@ -627,6 +628,7 @@ function TrainingTab({ teams, players }) {
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedWorkout, setExpandedWorkout] = useState(null);
+  const [editingWorkout, setEditingWorkout] = useState(null);
 
   useEffect(() => { fetchPrograms(); fetchWorkoutTemplates(); }, []);
 
@@ -712,6 +714,7 @@ function TrainingTab({ teams, players }) {
                         {wt.notes && <p className="text-xs text-gray-400 mt-1">{wt.notes}</p>}
                       </div>
                       <div className="flex items-center space-x-2 ml-4">
+                        <button onClick={() => setEditingWorkout(wt)} className="text-gray-400 hover:text-blue-600 transition" title="Edit"><Edit2 size={16} /></button>
                         <button onClick={() => setExpandedWorkout(expandedWorkout === wt.id ? null : wt.id)} className="text-gray-400 hover:text-gray-600 transition">
                           {expandedWorkout === wt.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                         </button>
@@ -745,10 +748,11 @@ function TrainingTab({ teams, players }) {
             </div>
           )}
 
-          {showCreateWorkout && (
+          {(showCreateWorkout || editingWorkout) && (
             <CreateWorkoutTemplateModal
-              onClose={() => setShowCreateWorkout(false)}
-              onSuccess={() => { setShowCreateWorkout(false); fetchWorkoutTemplates(); }}
+              onClose={() => { setShowCreateWorkout(false); setEditingWorkout(null); }}
+              onSuccess={() => { setShowCreateWorkout(false); setEditingWorkout(null); fetchWorkoutTemplates(); }}
+              editingWorkout={editingWorkout}
             />
           )}
         </div>
@@ -1233,99 +1237,223 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
 
 /* ---- CREATE WORKOUT TEMPLATE MODAL ---- */
 
-function CreateWorkoutTemplateModal({ onClose, onSuccess }) {
-  const [name, setName] = useState('');
-  const [program, setProgram] = useState('No Program');
-  const [folder, setFolder] = useState('');
-  const [notes, setNotes] = useState('');
-  const [exercises, setExercises] = useState([{ name: '', sets: '', reps: '', link: '' }]);
+function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
+  const [name, setName] = useState(editingWorkout?.name || '');
+  const [program, setProgram] = useState(editingWorkout?.program || 'Pitching');
+  const [folder, setFolder] = useState(editingWorkout?.folder || 'No Folder');
+  const [notes, setNotes] = useState(editingWorkout?.notes || '');
+  const [tabs, setTabs] = useState(() => {
+    if (editingWorkout?.exercises?.length > 0) {
+      const exs = editingWorkout.exercises;
+      if (exs[0].tab) {
+        const tabMap = {};
+        exs.forEach(ex => {
+          const tabName = ex.tab || 'Tab 1';
+          if (!tabMap[tabName]) tabMap[tabName] = [];
+          tabMap[tabName].push({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', link: ex.link || '', category: ex.category || 'hitting' });
+        });
+        return Object.entries(tabMap).map(([tabName, exercises]) => ({ tabName, exercises }));
+      }
+      return [{ tabName: 'Tab 1', exercises: exs.map(ex => ({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', link: ex.link || '', category: ex.category || 'hitting' })) }];
+    }
+    return [{ tabName: 'Tab 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+  });
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const addRow = () => setExercises([...exercises, { name: '', sets: '', reps: '', link: '' }]);
-  const removeRow = (index) => setExercises(exercises.filter((_, i) => i !== index));
-  const updateRow = (index, field, value) => {
-    const updated = [...exercises];
-    updated[index] = { ...updated[index], [field]: value };
-    setExercises(updated);
+  const activeTab = tabs[activeTabIndex] || tabs[0];
+
+  const addTab = () => {
+    const newTabs = [...tabs, { tabName: `Tab ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+    setTabs(newTabs);
+    setActiveTabIndex(newTabs.length - 1);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const cloneTab = () => {
+    const cloned = JSON.parse(JSON.stringify(activeTab));
+    cloned.tabName = `${activeTab.tabName} (Copy)`;
+    const newTabs = [...tabs, cloned];
+    setTabs(newTabs);
+    setActiveTabIndex(newTabs.length - 1);
+  };
+
+  const deleteTab = () => {
+    if (tabs.length <= 1) return;
+    const newTabs = tabs.filter((_, i) => i !== activeTabIndex);
+    setTabs(newTabs);
+    setActiveTabIndex(Math.min(activeTabIndex, newTabs.length - 1));
+  };
+
+  const updateExercise = (exIndex, field, value) => {
+    const newTabs = [...tabs];
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: newTabs[activeTabIndex].exercises.map((ex, i) =>
+        i === exIndex ? { ...ex, [field]: value } : ex
+      )
+    };
+    setTabs(newTabs);
+  };
+
+  const addExercise = () => {
+    const newTabs = [...tabs];
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: [...newTabs[activeTabIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+    };
+    setTabs(newTabs);
+  };
+
+  const removeExercise = (exIndex) => {
+    const newTabs = [...tabs];
+    const exercises = newTabs[activeTabIndex].exercises;
+    if (exercises.length <= 1) return;
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: exercises.filter((_, i) => i !== exIndex)
+    };
+    setTabs(newTabs);
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) return;
     setLoading(true);
     setError('');
     const { data: { user } } = await supabase.auth.getUser();
-    const filteredExercises = exercises.filter(ex => ex.name.trim());
-    const { error: insertError } = await supabase.from('workout_templates').insert({
-      name,
-      program: program || null,
-      folder: folder || null,
-      notes: notes || null,
-      exercises: filteredExercises,
-      created_by: user?.id,
-    });
-    if (insertError) { setError(insertError.message); setLoading(false); } else { onSuccess(); }
+    const allExercises = tabs.flatMap(tab =>
+      tab.exercises.filter(ex => ex.name.trim()).map(ex => ({ ...ex, tab: tab.tabName }))
+    );
+
+    if (editingWorkout) {
+      const { error: updateError } = await supabase.from('workout_templates')
+        .update({ name, program: program || null, folder: folder === 'No Folder' ? null : folder, notes: notes || null, exercises: allExercises })
+        .eq('id', editingWorkout.id);
+      if (updateError) { setError(updateError.message); setLoading(false); } else { onSuccess(); }
+    } else {
+      const { error: insertError } = await supabase.from('workout_templates').insert({
+        name, program: program || null, folder: folder === 'No Folder' ? null : folder, notes: notes || null, exercises: allExercises, created_by: user?.id,
+      });
+      if (insertError) { setError(insertError.message); setLoading(false); } else { onSuccess(); }
+    }
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between z-10">
-          <h3 className="text-xl font-bold text-gray-900">Create Workout</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="text-center py-5 border-b border-gray-200">
+          <h3 className="text-2xl font-bold text-gray-900">Workout</h3>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Workout Name *</label>
-            <input type="text" required placeholder="e.g., Upper Body Day" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">{error}</div>}
+
+          {/* Tab Controls */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex space-x-2">
+              <button type="button" onClick={addTab} className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 transition">Add tab</button>
+              <button type="button" onClick={cloneTab} className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 transition">Clone tab</button>
+            </div>
+            <button type="button" onClick={deleteTab} disabled={tabs.length <= 1} className="px-4 py-1.5 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed">Delete tab</button>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+
+          {/* Tab Selector */}
+          {tabs.length > 1 && (
+            <div className="flex space-x-1 mb-4 border-b border-gray-200">
+              {tabs.map((tab, i) => (
+                <button key={i} type="button" onClick={() => setActiveTabIndex(i)}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition ${i === activeTabIndex ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                  {tab.tabName}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Form Fields */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Program</label>
-              <select value={program} onChange={(e) => setProgram(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <label className="block text-sm font-bold text-gray-900 mb-1">Workout Name</label>
+              <input type="text" required placeholder="Workout Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-1">Program:</label>
+              <select value={program} onChange={(e) => setProgram(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                 {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Folder</label>
-              <input type="text" placeholder="No Folder" value={folder} onChange={(e) => setFolder(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label className="block text-sm font-bold text-gray-900 mb-1">Folder</label>
+              <select value={folder} onChange={(e) => setFolder(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                {FOLDER_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-1">Workout Notes</label>
+              <input type="text" placeholder="Workout Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+            </div>
+
+            {/* Exercises Table */}
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-2">Exercises</label>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-semibold text-gray-700 border-b border-gray-300">
+                    <th className="pb-2 w-8"></th>
+                    <th className="pb-2 pr-2">Name</th>
+                    <th className="pb-2 pr-2 w-16 text-center">Sets</th>
+                    <th className="pb-2 pr-2 w-20 text-center">Reps</th>
+                    <th className="pb-2 pr-2 text-center">Link</th>
+                    <th className="pb-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeTab.exercises.map((ex, i) => (
+                    <tr key={i} className="border-b border-gray-100">
+                      <td className="py-2">
+                        <button type="button" onClick={addExercise} className="text-gray-400 hover:text-green-600 transition"><Plus size={16} /></button>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" value={ex.name} onChange={(e) => updateExercise(i, 'name', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="1" value={ex.sets} onChange={(e) => updateExercise(i, 'sets', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="Reps" value={ex.reps} onChange={(e) => updateExercise(i, 'reps', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <div className="flex space-x-1">
+                          <input type="text" placeholder="Link" value={ex.link} onChange={(e) => updateExercise(i, 'link', e.target.value)} className="flex-1 px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                          <select value={ex.category || 'hitting'} onChange={(e) => updateExercise(i, 'category', e.target.value)} className="px-1 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white">
+                            <option value="hitting">Hitting</option>
+                            <option value="pitching">Pitching</option>
+                            <option value="fielding">Fielding</option>
+                            <option value="conditioning">Conditioning</option>
+                            <option value="recovery">Recovery</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                      </td>
+                      <td className="py-2">
+                        <button type="button" onClick={() => removeExercise(i)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={14} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Workout Notes</label>
-            <textarea placeholder="Any special instructions..." value={notes} onChange={(e) => setNotes(e.target.value)} rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
+        </div>
 
-          {/* Exercises Table */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Exercises</label>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
-                  <th className="pb-2 pr-2">Name</th><th className="pb-2 pr-2 w-20">Sets</th><th className="pb-2 pr-2 w-20">Reps</th><th className="pb-2 pr-2">Link</th><th className="pb-2 w-8"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {exercises.map((ex, i) => (
-                  <tr key={i} className="border-b border-gray-100">
-                    <td className="py-2 pr-2"><input type="text" placeholder="Exercise name" value={ex.name} onChange={(e) => updateRow(i, 'name', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-2"><input type="text" placeholder="3" value={ex.sets} onChange={(e) => updateRow(i, 'sets', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-2"><input type="text" placeholder="10" value={ex.reps} onChange={(e) => updateRow(i, 'reps', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2 pr-2"><input type="url" placeholder="https://..." value={ex.link} onChange={(e) => updateRow(i, 'link', e.target.value)} className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                    <td className="py-2"><button type="button" onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button type="button" onClick={addRow} className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center space-x-1"><Plus size={14} /><span>Add Exercise</span></button>
-          </div>
-
-          <div className="flex space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Save Workout'}</button>
-          </div>
-        </form>
+        {/* Footer Buttons */}
+        <div className="border-t border-gray-200 px-6 py-4 flex justify-end space-x-3">
+          <button type="button" onClick={onClose} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm">Close</button>
+          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50">Apply For Calendar</button>
+          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 bg-green-600 text-white rounded font-medium hover:bg-green-700 transition text-sm disabled:opacity-50">
+            {loading ? 'Saving...' : 'Save changes'}
+          </button>
+        </div>
       </div>
     </div>
   );
