@@ -229,7 +229,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
    ROSTER TAB
    ============================================ */
 
-const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'No Program'];
+const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'Meals', 'No Program'];
 const FOLDER_OPTIONS = ['No Folder', 'Warmup', 'In-Season', 'Off-Season', 'Recovery', 'Assessment'];
 const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
 const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
@@ -1484,7 +1484,8 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const activeTab = tabs[activeTabIndex] || tabs[0];
+  const safeIndex = Math.min(activeTabIndex, tabs.length - 1);
+  const activeTab = tabs[safeIndex] || tabs[0];
 
   const addTab = () => {
     const newTabs = [...tabs, { tabName: `Tab ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
@@ -1502,16 +1503,17 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
 
   const deleteTab = () => {
     if (tabs.length <= 1) return;
-    const newTabs = tabs.filter((_, i) => i !== activeTabIndex);
+    const newIndex = safeIndex === 0 ? 0 : safeIndex - 1;
+    const newTabs = tabs.filter((_, i) => i !== safeIndex);
+    setActiveTabIndex(newIndex);
     setTabs(newTabs);
-    setActiveTabIndex(Math.min(activeTabIndex, newTabs.length - 1));
   };
 
   const updateExercise = (exIndex, field, value) => {
     const newTabs = [...tabs];
-    newTabs[activeTabIndex] = {
-      ...newTabs[activeTabIndex],
-      exercises: newTabs[activeTabIndex].exercises.map((ex, i) =>
+    newTabs[safeIndex] = {
+      ...newTabs[safeIndex],
+      exercises: newTabs[safeIndex].exercises.map((ex, i) =>
         i === exIndex ? { ...ex, [field]: value } : ex
       )
     };
@@ -1520,19 +1522,19 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
 
   const addExercise = () => {
     const newTabs = [...tabs];
-    newTabs[activeTabIndex] = {
-      ...newTabs[activeTabIndex],
-      exercises: [...newTabs[activeTabIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+    newTabs[safeIndex] = {
+      ...newTabs[safeIndex],
+      exercises: [...newTabs[safeIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
     };
     setTabs(newTabs);
   };
 
   const removeExercise = (exIndex) => {
     const newTabs = [...tabs];
-    const exercises = newTabs[activeTabIndex].exercises;
+    const exercises = newTabs[safeIndex].exercises;
     if (exercises.length <= 1) return;
-    newTabs[activeTabIndex] = {
-      ...newTabs[activeTabIndex],
+    newTabs[safeIndex] = {
+      ...newTabs[safeIndex],
       exercises: exercises.filter((_, i) => i !== exIndex)
     };
     setTabs(newTabs);
@@ -1585,7 +1587,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
             <div className="flex space-x-1 mb-4 border-b border-gray-200">
               {tabs.map((tab, i) => (
                 <button key={i} type="button" onClick={() => setActiveTabIndex(i)}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 transition ${i === activeTabIndex ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                  className={`px-4 py-2 text-sm font-medium border-b-2 transition ${i === safeIndex ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                   {tab.tabName}
                 </button>
               ))}
