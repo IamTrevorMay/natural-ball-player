@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search } from 'lucide-react';
+import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 
 export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('schedule');
@@ -58,7 +58,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
         <div className="p-6">
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
           {activeTab === 'stats' && <div className="text-gray-600">Coming in next update...</div>}
-          {activeTab === 'benchmarks' && <div className="text-gray-600">Coming in next update...</div>}
+          {activeTab === 'benchmarks' && <AssessmentsTab players={players} userId={userId} />}
           {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
           {activeTab === 'meals' && <MealsTab teams={teams} players={players} />}
           {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
@@ -2171,6 +2171,672 @@ function CreateSlotForm({ onClose, onSave }) {
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
             <button onClick={handleSubmit} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Create Slot'}</button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================
+   ASSESSMENTS TAB
+   ============================================ */
+
+function AssessmentsTab({ players, userId }) {
+  const [subTab, setSubTab] = useState('templates');
+  const [templates, setTemplates] = useState([]);
+  const [submissions, setSubmissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateTemplate, setShowCreateTemplate] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState(null);
+  const [showFillModal, setShowFillModal] = useState(null);
+  const [showViewModal, setShowViewModal] = useState(null);
+
+  useEffect(() => { fetchTemplates(); fetchSubmissions(); }, []);
+
+  const fetchTemplates = async () => {
+    const { data, error } = await supabase
+      .from('assessment_templates')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error) setTemplates(data || []);
+    setLoading(false);
+  };
+
+  const fetchSubmissions = async () => {
+    const { data, error } = await supabase
+      .from('assessment_submissions')
+      .select('*, assessment_templates(name), player:player_id(full_name), assessor:assessed_by(full_name)')
+      .order('created_at', { ascending: false });
+    if (!error) setSubmissions(data || []);
+  };
+
+  const handleDeleteTemplate = async (id) => {
+    if (!window.confirm('Delete this assessment template and all its submissions?')) return;
+    const { error } = await supabase.from('assessment_templates').delete().eq('id', id);
+    if (!error) { fetchTemplates(); fetchSubmissions(); }
+  };
+
+  const handleToggleStatus = async (template) => {
+    const newStatus = template.status === 'active' ? 'hidden' : 'active';
+    const { error } = await supabase.from('assessment_templates').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', template.id);
+    if (!error) fetchTemplates();
+  };
+
+  const handleDeleteSubmission = async (id) => {
+    if (!window.confirm('Delete this completed assessment?')) return;
+    const { error } = await supabase.from('assessment_submissions').delete().eq('id', id);
+    if (!error) fetchSubmissions();
+  };
+
+  if (loading) return <div className="text-gray-600">Loading assessments...</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex space-x-2">
+        <button onClick={() => setSubTab('templates')} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${subTab === 'templates' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+          Assessment Templates ({templates.length})
+        </button>
+        <button onClick={() => setSubTab('completed')} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${subTab === 'completed' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+          Completed Assessments ({submissions.length})
+        </button>
+      </div>
+
+      {subTab === 'templates' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-gray-900">Assessment Templates</h3>
+            <button onClick={() => { setEditingTemplate(null); setShowCreateTemplate(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
+              <Plus size={18} /><span>Create Assessment</span>
+            </button>
+          </div>
+          {templates.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <ClipboardList size={40} className="mx-auto mb-3 text-gray-300" />
+              <p>No assessment templates yet. Create your first assessment to get started!</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {templates.map(t => (
+                <div key={t.id} className="bg-gray-50 rounded-lg p-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3">
+                        <span className="font-semibold text-gray-900">{t.name}</span>
+                        {t.short_name && <span className="text-sm text-gray-500">({t.short_name})</span>}
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {t.status === 'active' ? 'Active' : 'Hidden'}
+                        </span>
+                        {t.show_to_athlete && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">Visible to Athletes</span>}
+                      </div>
+                      <p className="text-sm text-gray-500 mt-1">{(t.schema || []).length} element{(t.schema || []).length !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div className="flex items-center space-x-2 ml-4">
+                      <button onClick={() => handleToggleStatus(t)} className="text-gray-400 hover:text-gray-600 transition" title={t.status === 'active' ? 'Hide' : 'Show'}>
+                        {t.status === 'active' ? <Eye size={16} /> : <EyeOff size={16} />}
+                      </button>
+                      <button onClick={() => setShowFillModal(t)} className="text-gray-400 hover:text-green-600 transition" title="Fill Out">
+                        <FileText size={16} />
+                      </button>
+                      <button onClick={() => { setEditingTemplate(t); setShowCreateTemplate(true); }} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                        <Edit2 size={16} />
+                      </button>
+                      <button onClick={() => handleDeleteTemplate(t.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === 'completed' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-gray-900">Completed Assessments</h3>
+            {templates.filter(t => t.status === 'active').length > 0 && (
+              <button onClick={() => setShowFillModal(templates.find(t => t.status === 'active'))} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
+                <Plus size={18} /><span>New Assessment</span>
+              </button>
+            )}
+          </div>
+          {submissions.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <FileText size={40} className="mx-auto mb-3 text-gray-300" />
+              <p>No completed assessments yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {submissions.map(s => (
+                <div key={s.id} className="bg-gray-50 rounded-lg p-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3">
+                        <span className="font-semibold text-gray-900">{s.player?.full_name || 'Unknown Player'}</span>
+                        <span className="text-sm text-gray-500">—</span>
+                        <span className="text-sm text-gray-700">{s.assessment_templates?.name || 'Unknown Template'}</span>
+                      </div>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {s.assessment_date} &middot; Assessed by {s.assessor?.full_name || 'Unknown'}
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2 ml-4">
+                      <button onClick={() => setShowViewModal(s)} className="text-gray-400 hover:text-blue-600 transition" title="View">
+                        <Eye size={16} />
+                      </button>
+                      <button onClick={() => handleDeleteSubmission(s.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showCreateTemplate && (
+        <CreateAssessmentTemplateModal
+          editingTemplate={editingTemplate}
+          onClose={() => { setShowCreateTemplate(false); setEditingTemplate(null); }}
+          onSuccess={() => { setShowCreateTemplate(false); setEditingTemplate(null); fetchTemplates(); }}
+        />
+      )}
+
+      {showFillModal && (
+        <FillAssessmentModal
+          template={showFillModal}
+          templates={templates.filter(t => t.status === 'active')}
+          players={players}
+          userId={userId}
+          onClose={() => setShowFillModal(null)}
+          onSuccess={() => { setShowFillModal(null); fetchSubmissions(); }}
+        />
+      )}
+
+      {showViewModal && (
+        <ViewAssessmentModal
+          submission={showViewModal}
+          onClose={() => setShowViewModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ============================================
+   CREATE / EDIT ASSESSMENT TEMPLATE MODAL
+   ============================================ */
+
+const ELEMENT_TYPES = [
+  { type: 'table', label: 'Table', icon: '⊞' },
+  { type: 'text_field', label: 'Text Field', icon: '⊟' },
+  { type: 'text_area', label: 'Text Area', icon: '☰' },
+  { type: 'combo_box', label: 'ComboBox', icon: '▾' },
+  { type: 'date', label: 'Date', icon: '◷' },
+  { type: 'notes', label: 'Notes', icon: '✎' },
+];
+
+function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) {
+  const [name, setName] = useState(editingTemplate?.name || '');
+  const [shortName, setShortName] = useState(editingTemplate?.short_name || '');
+  const [showToAthlete, setShowToAthlete] = useState(editingTemplate?.show_to_athlete ?? true);
+  const [elements, setElements] = useState(() => {
+    if (editingTemplate?.schema?.length > 0) return editingTemplate.schema;
+    return [];
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const addElement = (type) => {
+    const id = 'el_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+    const base = { id, type, label: '', sort_order: elements.length };
+    if (type === 'table') {
+      base.columns = ['Column 1'];
+      base.rows = ['Row 1'];
+    }
+    if (type === 'combo_box') {
+      base.options = ['Option 1'];
+    }
+    setElements([...elements, base]);
+  };
+
+  const updateElement = (index, updates) => {
+    setElements(elements.map((el, i) => i === index ? { ...el, ...updates } : el));
+  };
+
+  const removeElement = (index) => {
+    setElements(elements.filter((_, i) => i !== index));
+  };
+
+  const moveElement = (index, direction) => {
+    const newElements = [...elements];
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= newElements.length) return;
+    [newElements[index], newElements[targetIndex]] = [newElements[targetIndex], newElements[index]];
+    newElements.forEach((el, i) => el.sort_order = i);
+    setElements(newElements);
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) { setError('Name is required'); return; }
+    setLoading(true);
+    setError('');
+
+    const payload = {
+      name: name.trim(),
+      short_name: shortName.trim() || null,
+      show_to_athlete: showToAthlete,
+      schema: elements.map((el, i) => ({ ...el, sort_order: i })),
+      updated_at: new Date().toISOString(),
+    };
+
+    let result;
+    if (editingTemplate) {
+      result = await supabase.from('assessment_templates').update(payload).eq('id', editingTemplate.id);
+    } else {
+      result = await supabase.from('assessment_templates').insert({ ...payload, status: 'active' });
+    }
+
+    if (result.error) {
+      setError(result.error.message);
+      setLoading(false);
+    } else {
+      onSuccess();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between shrink-0">
+          <h3 className="text-xl font-bold text-gray-900">{editingTemplate ? 'Edit Assessment Template' : 'Create Assessment Template'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left sidebar - element type buttons */}
+          <div className="w-48 border-r border-gray-200 p-4 space-y-2 shrink-0 bg-gray-50">
+            <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Add Element</p>
+            {ELEMENT_TYPES.map(et => (
+              <button key={et.type} onClick={() => addElement(et.type)}
+                className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition flex items-center space-x-2">
+                <span>{et.icon}</span><span>{et.label}</span>
+              </button>
+            ))}
+          </div>
+          {/* Right side - form */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {error && <div className="bg-red-50 text-red-700 px-4 py-2 rounded-lg text-sm">{error}</div>}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Hitting Assessment"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Short Name</label>
+                <input type="text" value={shortName} onChange={(e) => setShortName(e.target.value)} placeholder="e.g. Hit Assess"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <input type="checkbox" id="showToAthlete" checked={showToAthlete} onChange={(e) => setShowToAthlete(e.target.checked)} className="rounded" />
+              <label htmlFor="showToAthlete" className="text-sm text-gray-700">Show to Athlete</label>
+            </div>
+
+            {/* Elements list */}
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-gray-700">{elements.length === 0 ? 'No elements added yet — click an element type on the left to get started.' : `${elements.length} Element${elements.length !== 1 ? 's' : ''}`}</p>
+              {elements.map((el, i) => (
+                <div key={el.id} className="border border-gray-200 rounded-lg p-4 bg-white space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-medium text-gray-400 uppercase bg-gray-100 px-2 py-0.5 rounded">{ELEMENT_TYPES.find(et => et.type === el.type)?.label || el.type}</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <button onClick={() => moveElement(i, -1)} disabled={i === 0} className="text-gray-400 hover:text-gray-600 disabled:opacity-30 p-1"><ChevronUp size={16} /></button>
+                      <button onClick={() => moveElement(i, 1)} disabled={i === elements.length - 1} className="text-gray-400 hover:text-gray-600 disabled:opacity-30 p-1"><ChevronDown size={16} /></button>
+                      <button onClick={() => removeElement(i)} className="text-gray-400 hover:text-red-600 p-1"><Trash2 size={16} /></button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Label</label>
+                    <input type="text" value={el.label} onChange={(e) => updateElement(i, { label: e.target.value })} placeholder="Element label"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+
+                  {/* Table-specific: columns and rows */}
+                  {el.type === 'table' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Columns</label>
+                        {(el.columns || []).map((col, ci) => (
+                          <div key={ci} className="flex items-center space-x-1 mb-1">
+                            <input type="text" value={col} onChange={(e) => {
+                              const newCols = [...el.columns]; newCols[ci] = e.target.value; updateElement(i, { columns: newCols });
+                            }} className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <button onClick={() => updateElement(i, { columns: el.columns.filter((_, j) => j !== ci) })} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                          </div>
+                        ))}
+                        <button onClick={() => updateElement(i, { columns: [...(el.columns || []), `Column ${(el.columns || []).length + 1}`] })}
+                          className="text-xs text-blue-600 hover:text-blue-800 mt-1">+ Add Column</button>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Rows</label>
+                        {(el.rows || []).map((row, ri) => (
+                          <div key={ri} className="flex items-center space-x-1 mb-1">
+                            <input type="text" value={row} onChange={(e) => {
+                              const newRows = [...el.rows]; newRows[ri] = e.target.value; updateElement(i, { rows: newRows });
+                            }} className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <button onClick={() => updateElement(i, { rows: el.rows.filter((_, j) => j !== ri) })} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                          </div>
+                        ))}
+                        <button onClick={() => updateElement(i, { rows: [...(el.rows || []), `Row ${(el.rows || []).length + 1}`] })}
+                          className="text-xs text-blue-600 hover:text-blue-800 mt-1">+ Add Row</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ComboBox-specific: options */}
+                  {el.type === 'combo_box' && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Options</label>
+                      {(el.options || []).map((opt, oi) => (
+                        <div key={oi} className="flex items-center space-x-1 mb-1">
+                          <input type="text" value={opt} onChange={(e) => {
+                            const newOpts = [...el.options]; newOpts[oi] = e.target.value; updateElement(i, { options: newOpts });
+                          }} className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                          <button onClick={() => updateElement(i, { options: el.options.filter((_, j) => j !== oi) })} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                        </div>
+                      ))}
+                      <button onClick={() => updateElement(i, { options: [...(el.options || []), `Option ${(el.options || []).length + 1}`] })}
+                        className="text-xs text-blue-600 hover:text-blue-800 mt-1">+ Add Option</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="border-t border-gray-200 p-6 flex space-x-3 shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+          <button onClick={handleSave} disabled={loading} className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50">
+            {loading ? 'Saving...' : editingTemplate ? 'Update Template' : 'Create Template'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================
+   FILL ASSESSMENT MODAL
+   ============================================ */
+
+function FillAssessmentModal({ template, templates, players, userId, onClose, onSuccess }) {
+  const [selectedTemplate, setSelectedTemplate] = useState(template);
+  const [playerId, setPlayerId] = useState('');
+  const [assessmentDate, setAssessmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [responses, setResponses] = useState({});
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [playerSearch, setPlayerSearch] = useState('');
+
+  const schema = selectedTemplate?.schema || [];
+
+  const filteredPlayers = players.filter(p =>
+    p.full_name?.toLowerCase().includes(playerSearch.toLowerCase())
+  );
+
+  const updateResponse = (elementId, value) => {
+    setResponses({ ...responses, [elementId]: value });
+  };
+
+  const updateTableCell = (elementId, row, col, value) => {
+    const tableData = responses[elementId] || {};
+    const rowData = tableData[row] || {};
+    setResponses({
+      ...responses,
+      [elementId]: { ...tableData, [row]: { ...rowData, [col]: value } }
+    });
+  };
+
+  const handleSave = async () => {
+    if (!playerId) { setError('Please select a player'); return; }
+    setLoading(true);
+    setError('');
+
+    const { error: saveError } = await supabase.from('assessment_submissions').insert({
+      template_id: selectedTemplate.id,
+      player_id: playerId,
+      assessed_by: userId,
+      assessment_date: assessmentDate,
+      responses,
+      notes: notes.trim() || null,
+    });
+
+    if (saveError) {
+      setError(saveError.message);
+      setLoading(false);
+    } else {
+      onSuccess();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between shrink-0">
+          <h3 className="text-xl font-bold text-gray-900">Fill Out Assessment</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {error && <div className="bg-red-50 text-red-700 px-4 py-2 rounded-lg text-sm">{error}</div>}
+
+          {/* Template selector */}
+          {templates.length > 1 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Assessment Template</label>
+              <select value={selectedTemplate?.id || ''} onChange={(e) => { setSelectedTemplate(templates.find(t => t.id === e.target.value)); setResponses({}); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Player *</label>
+              <input type="text" value={playerSearch} onChange={(e) => setPlayerSearch(e.target.value)} placeholder="Search players..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-1" />
+              <select value={playerId} onChange={(e) => setPlayerId(e.target.value)} size={4}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">-- Select Player --</option>
+                {filteredPlayers.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Assessment Date</label>
+              <input type="date" value={assessmentDate} onChange={(e) => setAssessmentDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          {/* Render schema elements */}
+          {schema.sort((a, b) => a.sort_order - b.sort_order).map(el => (
+            <div key={el.id} className="space-y-1">
+              <label className="block text-sm font-semibold text-gray-800">{el.label || el.type}</label>
+
+              {el.type === 'text_field' && (
+                <input type="text" value={responses[el.id] || ''} onChange={(e) => updateResponse(el.id, e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              )}
+
+              {(el.type === 'text_area' || el.type === 'notes') && (
+                <textarea value={responses[el.id] || ''} onChange={(e) => updateResponse(el.id, e.target.value)} rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              )}
+
+              {el.type === 'combo_box' && (
+                <select value={responses[el.id] || ''} onChange={(e) => updateResponse(el.id, e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">-- Select --</option>
+                  {(el.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              )}
+
+              {el.type === 'date' && (
+                <input type="date" value={responses[el.id] || ''} onChange={(e) => updateResponse(el.id, e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              )}
+
+              {el.type === 'table' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border border-gray-300">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="border border-gray-300 px-3 py-2 text-left text-xs font-medium text-gray-600"></th>
+                        {(el.columns || []).map(col => (
+                          <th key={col} className="border border-gray-300 px-3 py-2 text-left text-xs font-medium text-gray-600">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(el.rows || []).map(row => (
+                        <tr key={row}>
+                          <td className="border border-gray-300 px-3 py-2 font-medium text-gray-700 bg-gray-50">{row}</td>
+                          {(el.columns || []).map(col => (
+                            <td key={col} className="border border-gray-300 px-1 py-1">
+                              <input type="text" value={(responses[el.id]?.[row]?.[col]) || ''} onChange={(e) => updateTableCell(el.id, row, col, e.target.value)}
+                                className="w-full px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 rounded" />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* General notes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Any additional notes..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+        </div>
+        <div className="border-t border-gray-200 p-6 flex space-x-3 shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+          <button onClick={handleSave} disabled={loading} className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition disabled:opacity-50">
+            {loading ? 'Saving...' : 'Save Assessment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================
+   VIEW ASSESSMENT MODAL (Read-only)
+   ============================================ */
+
+function ViewAssessmentModal({ submission, onClose }) {
+  const [template, setTemplate] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTemplate = async () => {
+      if (submission.template_id) {
+        const { data } = await supabase.from('assessment_templates').select('*').eq('id', submission.template_id).single();
+        if (data) setTemplate(data);
+      }
+      setLoading(false);
+    };
+    fetchTemplate();
+  }, [submission.template_id]);
+
+  const schema = template?.schema || [];
+  const responses = submission.responses || {};
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between shrink-0">
+          <div>
+            <h3 className="text-xl font-bold text-gray-900">{template?.name || 'Assessment'}</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              {submission.player?.full_name || 'Unknown Player'} &middot; {submission.assessment_date} &middot; Assessed by {submission.assessor?.full_name || 'Unknown'}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {loading ? (
+            <div className="text-gray-600">Loading...</div>
+          ) : (
+            <>
+              {schema.sort((a, b) => a.sort_order - b.sort_order).map(el => (
+                <div key={el.id} className="space-y-1">
+                  <label className="block text-sm font-semibold text-gray-800">{el.label || el.type}</label>
+
+                  {(el.type === 'text_field' || el.type === 'text_area' || el.type === 'notes') && (
+                    <p className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-lg">{responses[el.id] || <span className="text-gray-400 italic">No response</span>}</p>
+                  )}
+
+                  {el.type === 'combo_box' && (
+                    <p className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-lg">{responses[el.id] || <span className="text-gray-400 italic">No selection</span>}</p>
+                  )}
+
+                  {el.type === 'date' && (
+                    <p className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-lg">{responses[el.id] || <span className="text-gray-400 italic">No date</span>}</p>
+                  )}
+
+                  {el.type === 'table' && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border border-gray-300">
+                        <thead>
+                          <tr className="bg-gray-100">
+                            <th className="border border-gray-300 px-3 py-2 text-left text-xs font-medium text-gray-600"></th>
+                            {(el.columns || []).map(col => (
+                              <th key={col} className="border border-gray-300 px-3 py-2 text-left text-xs font-medium text-gray-600">{col}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(el.rows || []).map(row => (
+                            <tr key={row}>
+                              <td className="border border-gray-300 px-3 py-2 font-medium text-gray-700 bg-gray-50">{row}</td>
+                              {(el.columns || []).map(col => (
+                                <td key={col} className="border border-gray-300 px-3 py-2 text-gray-700">
+                                  {responses[el.id]?.[row]?.[col] || '—'}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {submission.notes && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-800">Additional Notes</label>
+                  <p className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-lg">{submission.notes}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="border-t border-gray-200 p-6 shrink-0">
+          <button onClick={onClose} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
         </div>
       </div>
     </div>
