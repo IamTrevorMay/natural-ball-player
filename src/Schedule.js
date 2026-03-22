@@ -891,6 +891,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
   const [workoutType, setWorkoutType] = useState(null); // 'single-day', 'program'
   const [mealType, setMealType] = useState(null); // 'single-meal', 'plan'
   
+  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
   const [teamEventData, setTeamEventData] = useState({
     event_type: 'practice',
     opponent: '',
@@ -899,7 +900,8 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
     address: '',
     home_away: null,
     is_optional: false,
-    notes: ''
+    notes: '',
+    lanes: []
   });
 
   const [trainingPrograms, setTrainingPrograms] = useState([]);
@@ -1002,7 +1004,8 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             address: teamEventData.address || null,
             home_away: teamEventData.event_type === 'game' ? teamEventData.home_away : null,
             is_optional: teamEventData.is_optional,
-            notes: teamEventData.notes || null
+            notes: teamEventData.notes || null,
+            lanes: teamEventData.lanes.length > 0 ? teamEventData.lanes : null
           });
 
         if (error) throw error;
@@ -1343,6 +1346,21 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                     </select>
                   </div>
                 )}
+
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Reserved Lanes</label>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {LANE_OPTIONS.map(lane => (
+                      <label key={lane} className="flex items-center space-x-2 text-sm">
+                        <input type="checkbox" checked={teamEventData.lanes.includes(lane)} onChange={(e) => {
+                          const updated = e.target.checked ? [...teamEventData.lanes, lane] : teamEventData.lanes.filter(l => l !== lane);
+                          setTeamEventData({...teamEventData, lanes: updated});
+                        }} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                        <span className="text-gray-700">{lane}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -2489,12 +2507,14 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
 // ============================================
 
 function AddFacilityEventPanel({ date, onClose, onSuccess }) {
+  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
   const [title, setTitle] = useState('');
   const [eventDate, setEventDate] = useState(typeof date === 'string' && date !== 'new' ? date : new Date().toISOString().split('T')[0]);
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
   const [location, setLocation] = useState('');
   const [description, setDescription] = useState('');
+  const [lanes, setLanes] = useState([]);
   const [recurrence, setRecurrence] = useState('none');
   const [customRule, setCustomRule] = useState({ freq: 'weekly', interval: 1, byDay: [], endType: 'never', count: 10, until: '' });
   const [loading, setLoading] = useState(false);
@@ -2512,7 +2532,8 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
       const { error } = await supabase.from('facility_events').insert({
         title: title.trim(), description: description || null, event_date: eventDate,
         start_time: startTime || null, end_time: endTime || null, location: location || null,
-        is_recurring: isRecurring, recurrence_rule: recurrenceRule, created_by: user?.id
+        is_recurring: isRecurring, recurrence_rule: recurrenceRule, created_by: user?.id,
+        lanes: lanes.length > 0 ? lanes : null
       });
       if (error) throw error;
       onSuccess();
@@ -2576,9 +2597,22 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
             <MapPin size={20} className="text-gray-400" />
             <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Add location" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
           </div>
-          <div className="flex items-start space-x-3 mb-6">
+          <div className="flex items-start space-x-3 mb-4">
             <AlignLeft size={20} className="text-gray-400 mt-2" />
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Add description" rows="3" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+          </div>
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Reserved Lanes</label>
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {LANE_OPTIONS.map(lane => (
+                <label key={lane} className="flex items-center space-x-2 text-sm">
+                  <input type="checkbox" checked={lanes.includes(lane)} onChange={(e) => {
+                    setLanes(e.target.checked ? [...lanes, lane] : lanes.filter(l => l !== lane));
+                  }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                  <span className="text-gray-700">{lane}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <div className="flex justify-end space-x-3">
             <button onClick={onClose} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition text-sm font-medium">Cancel</button>
