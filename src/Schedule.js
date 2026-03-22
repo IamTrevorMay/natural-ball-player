@@ -95,6 +95,7 @@ export default function Schedule({ userId, userRole }) {
   const [showReserveSlot, setShowReserveSlot] = useState(null);
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
+  const [laneDate, setLaneDate] = useState(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     fetchTeams();
@@ -123,6 +124,16 @@ export default function Schedule({ userId, userRole }) {
       fetchCoaches();
     }
   }, [view, selectedDate]);
+
+  // Sync selectedDate month when laneDate changes to a different month
+  useEffect(() => {
+    if (viewMode === 'lanes' && laneDate) {
+      const ld = new Date(laneDate + 'T12:00:00');
+      if (ld.getMonth() !== selectedDate.getMonth() || ld.getFullYear() !== selectedDate.getFullYear()) {
+        setSelectedDate(new Date(ld.getFullYear(), ld.getMonth(), 1));
+      }
+    }
+  }, [laneDate]);
 
   useEffect(() => {
     if (selectedCoach) {
@@ -434,13 +445,16 @@ export default function Schedule({ userId, userRole }) {
                   <div className="flex items-center space-x-2">
                     <button onClick={() => setViewMode('week')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'week' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Week</button>
                     <button onClick={() => setViewMode('month')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'month' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Month</button>
+                    <button onClick={() => setViewMode('lanes')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'lanes' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Lanes</button>
                   </div>
                 </div>
+                {viewMode !== 'lanes' && (
                 <div className="flex items-center justify-between">
                   <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
                   <h3 className="text-xl font-semibold text-gray-900">{selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
                   <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
                 </div>
+                )}
               </div>
               <div className="p-6">
                 {selectedCoach ? (
@@ -455,6 +469,8 @@ export default function Schedule({ userId, userRole }) {
                     onConfirm={async (reservationId) => { await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId); fetchCoachSlots(selectedCoach.id); }}
                     onDecline={async (reservationId) => { await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId); fetchCoachSlots(selectedCoach.id); }}
                   />
+                ) : viewMode === 'lanes' ? (
+                  <LaneView selectedDate={selectedDate} events={facilityEvents} laneDate={laneDate} setLaneDate={setLaneDate} />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={() => 'bg-teal-100 text-teal-700 border-teal-200'} />
                 ) : (
@@ -878,6 +894,151 @@ function EventCard({ event, compact, eventColorFn }) {
       {!compact && event.location && (
         <div className="text-xs text-gray-500 mt-1">{event.location}</div>
       )}
+    </div>
+  );
+}
+
+// ============================================
+// LANE VIEW (Daily Schedule by Lane)
+// ============================================
+
+function LaneView({ selectedDate, events, laneDate, setLaneDate }) {
+  const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+
+  // Generate 15-minute time slots from 6:00 AM to 10:00 PM
+  const timeSlots = [];
+  for (let h = 6; h <= 22; h++) {
+    for (let m = 0; m < 60; m += 15) {
+      const hour = String(h).padStart(2, '0');
+      const min = String(m).padStart(2, '0');
+      timeSlots.push(`${hour}:${min}`);
+    }
+  }
+
+  const dateStr = laneDate || new Date().toISOString().split('T')[0];
+
+  // Filter events for this date
+  const dayEvents = events.filter(ev => ev.event_date === dateStr);
+
+  // Parse time to slot index
+  const timeToIndex = (timeStr) => {
+    if (!timeStr) return -1;
+    const [h, m] = timeStr.split(':').map(Number);
+    return (h - 6) * 4 + Math.floor(m / 15);
+  };
+
+  // Build a map: lane -> array of {startIdx, endIdx, event}
+  const laneEvents = {};
+  LANES.forEach(lane => { laneEvents[lane] = []; });
+
+  dayEvents.forEach(ev => {
+    const evLanes = ev.lanes || [];
+    const startTime = ev.start_time || ev.event_time;
+    if (!startTime) return;
+    const startIdx = timeToIndex(startTime);
+    if (startIdx < 0) return;
+    const endTime = ev.end_time;
+    const endIdx = endTime ? timeToIndex(endTime) : startIdx + 4; // default 1 hour
+    const span = Math.max(endIdx - startIdx, 1);
+
+    evLanes.forEach(lane => {
+      if (laneEvents[lane]) {
+        laneEvents[lane].push({ startIdx, span, event: ev });
+      }
+    });
+  });
+
+  const formatLabel = (slot) => {
+    const [h, m] = slot.split(':').map(Number);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+  };
+
+  const prevDay = () => {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() - 1);
+    setLaneDate(d.toISOString().split('T')[0]);
+  };
+  const nextDay = () => {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    setLaneDate(d.toISOString().split('T')[0]);
+  };
+
+  // Track which cells are occupied by a span
+  const occupied = {};
+  LANES.forEach(lane => { occupied[lane] = {}; });
+  LANES.forEach(lane => {
+    laneEvents[lane].forEach(({ startIdx, span }) => {
+      for (let i = startIdx; i < startIdx + span; i++) {
+        occupied[lane][i] = true;
+      }
+    });
+  });
+
+  return (
+    <div>
+      <div className="flex items-center justify-center space-x-4 mb-4">
+        <button onClick={prevDay} className="p-1 hover:bg-gray-100 rounded transition"><ChevronLeft size={18} /></button>
+        <div className="flex items-center space-x-2">
+          <input type="date" value={dateStr} onChange={(e) => setLaneDate(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+          <span className="text-sm font-medium text-gray-700">
+            {new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+          </span>
+        </div>
+        <button onClick={nextDay} className="p-1 hover:bg-gray-100 rounded transition"><ChevronRight size={18} /></button>
+      </div>
+      <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <table className="w-full border-collapse text-xs" style={{ minWidth: LANES.length * 90 + 70 }}>
+          <thead className="sticky top-0 z-10 bg-white">
+            <tr>
+              <th className="border border-gray-200 bg-gray-50 px-2 py-2 text-left text-xs font-semibold text-gray-700 sticky left-0 z-20 min-w-[70px]">Time</th>
+              {LANES.map(lane => (
+                <th key={lane} className="border border-gray-200 bg-gray-50 px-1 py-2 text-center text-xs font-semibold text-gray-700 min-w-[90px]">
+                  {lane}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {timeSlots.map((slot, slotIdx) => {
+              const isHour = slot.endsWith(':00');
+              return (
+                <tr key={slot} className={isHour ? 'bg-gray-50' : ''}>
+                  <td className={`border border-gray-200 px-2 py-1 text-xs text-gray-500 font-medium sticky left-0 z-10 ${isHour ? 'bg-gray-50' : 'bg-white'}`}>
+                    {isHour ? formatLabel(slot) : ''}
+                  </td>
+                  {LANES.map(lane => {
+                    // Check if an event starts at this slot
+                    const entry = laneEvents[lane].find(e => e.startIdx === slotIdx);
+                    if (entry) {
+                      return (
+                        <td
+                          key={lane}
+                          rowSpan={entry.span}
+                          className="border border-gray-200 px-1 py-0.5 align-top"
+                        >
+                          <div className="bg-teal-100 border border-teal-300 rounded px-1 py-0.5 h-full text-xs">
+                            <div className="font-semibold text-teal-900 truncate">{entry.event.title || entry.event.opponent}</div>
+                            <div className="text-teal-700 truncate">
+                              {entry.event.start_time || entry.event.event_time}
+                              {entry.event.end_time ? ` - ${entry.event.end_time}` : ''}
+                            </div>
+                          </div>
+                        </td>
+                      );
+                    }
+                    // If this cell is occupied by a rowSpan, skip it
+                    if (occupied[lane][slotIdx]) return null;
+                    return <td key={lane} className="border border-gray-200"></td>;
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
