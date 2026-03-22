@@ -126,6 +126,13 @@ function ScheduleTab({ teams }) {
                 {event.location && ` • ${event.location}`}
               </div>
               {event.teams && <div className="text-xs text-gray-500 mt-1">Team: {event.teams.name}</div>}
+              {event.lanes && event.lanes.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {event.lanes.map(lane => (
+                    <span key={lane} className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">{lane}</span>
+                  ))}
+                </div>
+              )}
             </div>
             <button
               onClick={() => handleDeleteEvent(event.id)}
@@ -143,13 +150,14 @@ function ScheduleTab({ teams }) {
 }
 
 function CreateScheduleModal({ teams, onClose, onSuccess }) {
-  const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '' });
+  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+  const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '', lanes: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
-    const { error: insertError } = await supabase.from('schedule_events').insert({ ...formData, home_away: formData.event_type === 'game' ? formData.home_away : null });
+    const { error: insertError } = await supabase.from('schedule_events').insert({ ...formData, home_away: formData.event_type === 'game' ? formData.home_away : null, lanes: formData.lanes.length > 0 ? formData.lanes : null });
     if (insertError) { setError(insertError.message); setLoading(false); } else { alert('Event created successfully!'); onSuccess(); }
   };
 
@@ -211,6 +219,20 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
               </label>
             </div>
             <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Reserved Lanes</label>
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {LANE_OPTIONS.map(lane => (
+                  <label key={lane} className="flex items-center space-x-2 text-sm">
+                    <input type="checkbox" checked={formData.lanes.includes(lane)} onChange={(e) => {
+                      const updated = e.target.checked ? [...formData.lanes, lane] : formData.lanes.filter(l => l !== lane);
+                      setFormData({...formData, lanes: updated});
+                    }} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                    <span className="text-gray-700">{lane}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
               <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} rows="3" placeholder="Additional information..." className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
@@ -229,9 +251,10 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
    ROSTER TAB
    ============================================ */
 
-const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'Meals', 'No Program'];
-const FOLDER_OPTIONS = ['No Folder', 'Warmup', 'In-Season', 'Off-Season', 'Recovery', 'Assessment'];
-const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
+const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'Meals', 'Throwing', 'Catching', 'Infield', 'Outfield', 'No Program'];
+const FOLDER_OPTIONS = ['No Folder', 'Warmup', 'In-Season', 'Off-Season', 'Recovery', 'Assessment', 'Body Builder', 'Cardio', 'High School', 'Youth', 'Youth Weighted', 'College', 'Pro', 'Submarine', 'Eccentric', 'Football', 'Soccer', 'Basketball', 'Cricket'];
+const SUPER_SET_OPTIONS = ['', ...['A','B','C','D','E','F','G'].flatMap(l => [1,2,3,4,5].map(n => `${l}${n}`))];
+const LEVEL_OPTIONS =['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
 const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 
 const LEVEL_COLORS = {
@@ -727,7 +750,7 @@ function TrainingTab({ teams, players }) {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="text-left text-xs text-gray-500">
-                              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Link</th>
+                              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -737,6 +760,7 @@ function TrainingTab({ teams, players }) {
                                 <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
                                 <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
                                 <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
+                                <td className="py-2 text-gray-600">{ex.superSet || ex.super_set || '—'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1000,10 +1024,10 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
           .map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', link: ex.video_url || '', category: ex.category || 'hitting' }))
           .concat([]).length > 0
           ? (day.training_exercises || []).sort((a, b) => a.sort_order - b.sort_order).map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', link: ex.video_url || '', category: ex.category || 'hitting' }))
-          : [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+          : [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }]
       }));
     }
-    return [{ tabName: 'Day 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+    return [{ tabName: 'Day 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
   });
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -1012,7 +1036,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
   const activeTab = tabs[activeTabIndex] || tabs[0];
 
   const addTab = () => {
-    const newTabs = [...tabs, { tabName: `Day ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+    const newTabs = [...tabs, { tabName: `Day ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
     setTabs(newTabs);
     setActiveTabIndex(newTabs.length - 1);
   };
@@ -1048,7 +1072,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
     const newTabs = [...tabs];
     newTabs[activeTabIndex] = {
       ...newTabs[activeTabIndex],
-      exercises: [...newTabs[activeTabIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+      exercises: [...newTabs[activeTabIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }]
     };
     setTabs(newTabs);
   };
@@ -1088,13 +1112,17 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
         }).select('id').single();
         if (dayErr) { setError(dayErr.message); setLoading(false); return; }
 
-        const exercises = tab.exercises.filter(ex => ex.name.trim());
+        const rawExercises = tab.exercises.filter(ex => ex.name.trim());
+        const withSS = rawExercises.filter(ex => ex.superSet);
+        const withoutSS = rawExercises.filter(ex => !ex.superSet);
+        withSS.sort((a, b) => a.superSet.localeCompare(b.superSet));
+        const exercises = [...withSS, ...withoutSS];
         if (exercises.length > 0) {
           const { error: exErr } = await supabase.from('training_exercises').insert(
             exercises.map((ex, j) => ({
               day_id: dayData.id, category: ex.category || 'hitting', name: ex.name,
               sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null,
-              video_url: ex.link || null, sort_order: j
+              video_url: ex.link || null, sort_order: j, super_set: ex.superSet || null
             }))
           );
           if (exErr) { setError(exErr.message); setLoading(false); return; }
@@ -1116,13 +1144,17 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
         }).select('id').single();
         if (dayErr) { setError(dayErr.message); setLoading(false); return; }
 
-        const exercises = tab.exercises.filter(ex => ex.name.trim());
+        const rawExercises = tab.exercises.filter(ex => ex.name.trim());
+        const withSS = rawExercises.filter(ex => ex.superSet);
+        const withoutSS = rawExercises.filter(ex => !ex.superSet);
+        withSS.sort((a, b) => a.superSet.localeCompare(b.superSet));
+        const exercises = [...withSS, ...withoutSS];
         if (exercises.length > 0) {
           const { error: exErr } = await supabase.from('training_exercises').insert(
             exercises.map((ex, j) => ({
               day_id: dayData.id, category: ex.category || 'hitting', name: ex.name,
               sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null,
-              video_url: ex.link || null, sort_order: j
+              video_url: ex.link || null, sort_order: j, super_set: ex.superSet || null
             }))
           );
           if (exErr) { setError(exErr.message); setLoading(false); return; }
@@ -1198,6 +1230,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
                     <th className="pb-2 pr-2 w-16 text-center">Sets</th>
                     <th className="pb-2 pr-2 w-20 text-center">Reps</th>
                     <th className="pb-2 pr-2 text-center">Link</th>
+                    <th className="pb-2 pr-2 w-20 text-center">Super Set</th>
                     <th className="pb-2 w-8"></th>
                   </tr>
                 </thead>
@@ -1228,6 +1261,13 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
                             <option value="other">Other</option>
                           </select>
                         </div>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <select value={ex.superSet || ''} onChange={(e) => updateExercise(i, 'superSet', e.target.value)} className="w-full px-1 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center">
+                          {SUPER_SET_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt || '—'}</option>
+                          ))}
+                        </select>
                       </td>
                       <td className="py-2">
                         <button type="button" onClick={() => removeExercise(i)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={14} /></button>
@@ -1478,7 +1518,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
       }
       return [{ tabName: 'Tab 1', exercises: exs.map(ex => ({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', link: ex.link || '', category: ex.category || 'hitting' })) }];
     }
-    return [{ tabName: 'Tab 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+    return [{ tabName: 'Tab 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
   });
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -1488,7 +1528,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
   const activeTab = tabs[safeIndex] || tabs[0];
 
   const addTab = () => {
-    const newTabs = [...tabs, { tabName: `Tab ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting' }] }];
+    const newTabs = [...tabs, { tabName: `Tab ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
     setTabs(newTabs);
     setActiveTabIndex(newTabs.length - 1);
   };
@@ -1524,7 +1564,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
     const newTabs = [...tabs];
     newTabs[safeIndex] = {
       ...newTabs[safeIndex],
-      exercises: [...newTabs[safeIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting' }]
+      exercises: [...newTabs[safeIndex].exercises, { name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }]
     };
     setTabs(newTabs);
   };
@@ -1545,9 +1585,14 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
     setLoading(true);
     setError('');
     const { data: { user } } = await supabase.auth.getUser();
-    const allExercises = tabs.flatMap(tab =>
+    const rawExercises = tabs.flatMap(tab =>
       tab.exercises.filter(ex => ex.name.trim()).map(ex => ({ ...ex, tab: tab.tabName }))
     );
+    // Sort exercises: group by super set alphabetically, unassigned exercises keep original order at end
+    const withSuperSet = rawExercises.filter(ex => ex.superSet);
+    const withoutSuperSet = rawExercises.filter(ex => !ex.superSet);
+    withSuperSet.sort((a, b) => a.superSet.localeCompare(b.superSet));
+    const allExercises = [...withSuperSet, ...withoutSuperSet];
 
     if (editingWorkout) {
       const { error: updateError } = await supabase.from('workout_templates')
@@ -1628,6 +1673,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
                     <th className="pb-2 pr-2 w-16 text-center">Sets</th>
                     <th className="pb-2 pr-2 w-20 text-center">Reps</th>
                     <th className="pb-2 pr-2 text-center">Link</th>
+                    <th className="pb-2 pr-2 w-20 text-center">Super Set</th>
                     <th className="pb-2 w-8"></th>
                   </tr>
                 </thead>
@@ -1658,6 +1704,13 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
                             <option value="other">Other</option>
                           </select>
                         </div>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <select value={ex.superSet || ''} onChange={(e) => updateExercise(i, 'superSet', e.target.value)} className="w-full px-1 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center">
+                          {SUPER_SET_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt || '—'}</option>
+                          ))}
+                        </select>
                       </td>
                       <td className="py-2">
                         <button type="button" onClick={() => removeExercise(i)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={14} /></button>
