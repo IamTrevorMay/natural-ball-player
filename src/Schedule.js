@@ -1075,7 +1075,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
   const [selectedMealPlanId, setSelectedMealPlanId] = useState('');
   const [workoutSelectionMode, setWorkoutSelectionMode] = useState(null); // 'existing' or 'create'
   const [mealSelectionMode, setMealSelectionMode] = useState(null); // 'existing' or 'create'
-  const [newWorkoutData, setNewWorkoutData] = useState({ title: '', notes: '', program: 'No Program', folder: '', exercises: [{ name: '', sets: '', reps: '', link: '' }] });
+  const [newWorkoutData, setNewWorkoutData] = useState({ title: '', notes: '', program: 'No Program', folder: '', exercises: [{ name: '', sets: '', reps: '', rest: '', load: '', link: '' }] });
   const [workoutTemplates, setWorkoutTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [newMealData, setNewMealData] = useState({ 
@@ -1710,6 +1710,8 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                           <th className="pb-2 pr-2">Name</th>
                           <th className="pb-2 pr-2 w-16">Sets</th>
                           <th className="pb-2 pr-2 w-16">Reps</th>
+                          <th className="pb-2 pr-2 w-16">Rest</th>
+                          <th className="pb-2 pr-2 w-16">Load</th>
                           <th className="pb-2 pr-2">Link</th>
                           <th className="pb-2 w-8"></th>
                         </tr>
@@ -1748,6 +1750,26 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                               />
                             </td>
                             <td className="py-1.5 pr-2">
+                              <input type="text" placeholder="Rest" value={ex.rest || ''}
+                                onChange={(e) => {
+                                  const updated = [...newWorkoutData.exercises];
+                                  updated[i] = { ...updated[i], rest: e.target.value };
+                                  setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2">
+                              <input type="text" placeholder="Load" value={ex.load || ''}
+                                onChange={(e) => {
+                                  const updated = [...newWorkoutData.exercises];
+                                  updated[i] = { ...updated[i], load: e.target.value };
+                                  setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="py-1.5 pr-2">
                               <input type="url" placeholder="https://..." value={ex.link}
                                 onChange={(e) => {
                                   const updated = [...newWorkoutData.exercises];
@@ -1760,14 +1782,14 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                             <td className="py-1.5">
                               <button type="button" onClick={() => {
                                 const updated = newWorkoutData.exercises.filter((_, idx) => idx !== i);
-                                setNewWorkoutData({ ...newWorkoutData, exercises: updated.length ? updated : [{ name: '', sets: '', reps: '', link: '' }] });
+                                setNewWorkoutData({ ...newWorkoutData, exercises: updated.length ? updated : [{ name: '', sets: '', reps: '', rest: '', load: '', link: '' }] });
                               }} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    <button type="button" onClick={() => setNewWorkoutData({ ...newWorkoutData, exercises: [...newWorkoutData.exercises, { name: '', sets: '', reps: '', link: '' }] })}
+                    <button type="button" onClick={() => setNewWorkoutData({ ...newWorkoutData, exercises: [...newWorkoutData.exercises, { name: '', sets: '', reps: '', rest: '', load: '', link: '' }] })}
                       className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center space-x-1">
                       <Plus size={14} /><span>Add Exercise</span>
                     </button>

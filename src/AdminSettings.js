@@ -28,13 +28,25 @@ export default function AdminSettings({ userId, userRole }) {
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [showAssignRole, setShowAssignRole] = useState(false);
+  const [showCreateProspect, setShowCreateProspect] = useState(false);
+  const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const coaches = users.filter(u => u.role === 'coach');
 
+  const fetchProspects = async () => {
+    const { data, error } = await supabase
+      .from('prospects')
+      .select('*')
+      .order('full_name');
+    if (error) console.error('Error fetching prospects:', error);
+    else setProspects(data || []);
+  };
+
   useEffect(() => {
     fetchTeams();
     fetchUsers();
+    fetchProspects();
   }, []);
 
   const fetchTeams = async () => {
@@ -122,6 +134,16 @@ export default function AdminSettings({ userId, userRole }) {
             >
               Coaches ({coaches.length})
             </button>
+            <button
+              onClick={() => setActiveTab('prospects')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
+                activeTab === 'prospects'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Prospects
+            </button>
           </nav>
         </div>
 
@@ -153,6 +175,15 @@ export default function AdminSettings({ userId, userRole }) {
               showAssignRole={showAssignRole}
               setShowAssignRole={setShowAssignRole}
               refreshUsers={fetchUsers}
+            />
+          )}
+          {activeTab === 'prospects' && (
+            <ProspectsTab
+              prospects={prospects}
+              teams={teams}
+              showCreateProspect={showCreateProspect}
+              setShowCreateProspect={setShowCreateProspect}
+              refreshProspects={fetchProspects}
             />
           )}
         </div>
@@ -1456,6 +1487,15 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
   const memberDropdownRef = useRef(null);
 
+  // Prospects state
+  const [teamProspects, setTeamProspects] = useState([]);
+  const [allProspects, setAllProspects] = useState([]);
+  const [prospectSearch, setProspectSearch] = useState('');
+  const [showProspectDropdown, setShowProspectDropdown] = useState(false);
+  const [addProspectId, setAddProspectId] = useState('');
+  const [addingProspect, setAddingProspect] = useState(false);
+  const prospectDropdownRef = useRef(null);
+
   const fetchMembers = async () => {
     const { data, error } = await supabase
       .from('team_members')
@@ -1470,14 +1510,32 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
     setLoading(false);
   };
 
+  const fetchAllProspects = async () => {
+    const { data } = await supabase.from('prospects').select('*').order('full_name');
+    setAllProspects(data || []);
+  };
+
+  const fetchTeamProspects = async () => {
+    const { data } = await supabase
+      .from('team_prospects')
+      .select('*, prospects(id, full_name, email, position, grade)')
+      .eq('team_id', team.id);
+    setTeamProspects(data || []);
+  };
+
   useEffect(() => {
     fetchMembers();
+    fetchAllProspects();
+    fetchTeamProspects();
   }, [team.id]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (memberDropdownRef.current && !memberDropdownRef.current.contains(e.target)) {
         setShowMemberDropdown(false);
+      }
+      if (prospectDropdownRef.current && !prospectDropdownRef.current.contains(e.target)) {
+        setShowProspectDropdown(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -1547,6 +1605,37 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
     }
   };
 
+  const teamProspectIds = new Set(teamProspects.map(tp => tp.prospect_id));
+  const availableProspects = allProspects.filter(p => !teamProspectIds.has(p.id));
+  const filteredAvailableProspects = availableProspects.filter(p => {
+    const q = prospectSearch.toLowerCase();
+    if (!q) return true;
+    return (p.full_name || '').toLowerCase().includes(q) || (p.email || '').toLowerCase().includes(q);
+  });
+
+  const handleAddProspect = async () => {
+    if (!addProspectId) return;
+    setAddingProspect(true);
+    setError('');
+    const { error: insertError } = await supabase.from('team_prospects').insert({
+      team_id: team.id,
+      prospect_id: addProspectId,
+    });
+    if (insertError) setError(insertError.message);
+    else {
+      setAddProspectId('');
+      setProspectSearch('');
+      fetchTeamProspects();
+    }
+    setAddingProspect(false);
+  };
+
+  const handleRemoveProspect = async (tpId) => {
+    const { error: deleteError } = await supabase.from('team_prospects').delete().eq('id', tpId);
+    if (deleteError) setError(deleteError.message);
+    else fetchTeamProspects();
+  };
+
   const handleDeleteTeam = async () => {
     setSaving(true);
     // Delete team members first, then team
@@ -1567,7 +1656,7 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
           <h3 className="text-xl font-bold text-gray-900">Team Details</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -1638,105 +1727,199 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
             )}
           </div>
 
-          {/* Members List */}
-          <div>
-            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
-              Members ({members.length})
-            </h4>
-            {loading ? (
-              <p className="text-gray-500 text-sm">Loading members...</p>
-            ) : members.length === 0 ? (
-              <p className="text-gray-500 text-sm py-4 text-center">No members yet</p>
-            ) : (
-              <div className="space-y-2">
-                {members.map(member => (
-                  <div key={member.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                        {member.users?.full_name?.charAt(0) || '?'}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Members Column */}
+            <div>
+              {/* Members List */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                  Members ({members.length})
+                </h4>
+                {loading ? (
+                  <p className="text-gray-500 text-sm">Loading members...</p>
+                ) : members.length === 0 ? (
+                  <p className="text-gray-500 text-sm py-4 text-center">No members yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {members.map(member => (
+                      <div key={member.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                            {member.users?.full_name?.charAt(0) || '?'}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">{member.users?.full_name}</p>
+                            <p className="text-xs text-gray-500">{member.users?.email}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
+                            {member.role}
+                          </span>
+                          <button
+                            onClick={() => handleRemoveMember(member.id)}
+                            className="text-gray-400 hover:text-red-600 transition"
+                            title="Remove from team"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{member.users?.full_name}</p>
-                        <p className="text-xs text-gray-500">{member.users?.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
-                        {member.role}
-                      </span>
-                      <button
-                        onClick={() => handleRemoveMember(member.id)}
-                        className="text-gray-400 hover:text-red-600 transition"
-                        title="Remove from team"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Add Member */}
-          <div>
-            <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
-              Add Member
-            </h4>
-            <div className="flex space-x-2">
-              <div className="flex-1 relative" ref={memberDropdownRef}>
-                <input
-                  type="text"
-                  value={memberSearch}
-                  onChange={(e) => {
-                    setMemberSearch(e.target.value);
-                    setAddUserId('');
-                    setShowMemberDropdown(true);
-                  }}
-                  onFocus={() => setShowMemberDropdown(true)}
-                  placeholder="Search users..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                {showMemberDropdown && (
-                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {filteredAvailableUsers.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-gray-500">No users found</div>
-                    ) : (
-                      filteredAvailableUsers.map(u => (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onClick={() => {
-                            setAddUserId(u.id);
-                            setMemberSearch(u.full_name);
-                            setShowMemberDropdown(false);
-                          }}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center justify-between"
-                        >
-                          <span>{u.full_name}</span>
-                          <span className="text-xs text-gray-400">{u.email}</span>
-                        </button>
-                      ))
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
-              <select
-                value={addRole}
-                onChange={(e) => setAddRole(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="player">Player</option>
-                <option value="coach">Coach</option>
-              </select>
-              <button
-                onClick={handleAddMember}
-                disabled={!addUserId || adding}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-1"
-              >
-                <UserPlus size={14} />
-                <span>{adding ? '...' : 'Add'}</span>
-              </button>
+
+              {/* Add Member */}
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                  Add Member
+                </h4>
+                <div className="flex space-x-2">
+                  <div className="flex-1 relative" ref={memberDropdownRef}>
+                    <input
+                      type="text"
+                      value={memberSearch}
+                      onChange={(e) => {
+                        setMemberSearch(e.target.value);
+                        setAddUserId('');
+                        setShowMemberDropdown(true);
+                      }}
+                      onFocus={() => setShowMemberDropdown(true)}
+                      placeholder="Search users..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {showMemberDropdown && (
+                      <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {filteredAvailableUsers.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">No users found</div>
+                        ) : (
+                          filteredAvailableUsers.map(u => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                setAddUserId(u.id);
+                                setMemberSearch(u.full_name);
+                                setShowMemberDropdown(false);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center justify-between"
+                            >
+                              <span>{u.full_name}</span>
+                              <span className="text-xs text-gray-400">{u.email}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <select
+                    value={addRole}
+                    onChange={(e) => setAddRole(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="player">Player</option>
+                    <option value="coach">Coach</option>
+                  </select>
+                  <button
+                    onClick={handleAddMember}
+                    disabled={!addUserId || adding}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-1"
+                  >
+                    <UserPlus size={14} />
+                    <span>{adding ? '...' : 'Add'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Prospects Column */}
+            <div>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                  Prospects ({teamProspects.length})
+                </h4>
+                {teamProspects.length === 0 ? (
+                  <p className="text-gray-500 text-sm py-4 text-center">No prospects yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {teamProspects.map(tp => (
+                      <div key={tp.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                            {tp.prospects?.full_name?.charAt(0) || '?'}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">{tp.prospects?.full_name}</p>
+                            <p className="text-xs text-gray-500">{tp.prospects?.email || tp.prospects?.position || ''}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveProspect(tp.id)}
+                          className="text-gray-400 hover:text-red-600 transition"
+                          title="Remove prospect"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Add Prospect */}
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                  Add Prospect
+                </h4>
+                <div className="flex space-x-2">
+                  <div className="flex-1 relative" ref={prospectDropdownRef}>
+                    <input
+                      type="text"
+                      value={prospectSearch}
+                      onChange={(e) => {
+                        setProspectSearch(e.target.value);
+                        setAddProspectId('');
+                        setShowProspectDropdown(true);
+                      }}
+                      onFocus={() => setShowProspectDropdown(true)}
+                      placeholder="Search prospects..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {showProspectDropdown && (
+                      <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {filteredAvailableProspects.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-500">No prospects found</div>
+                        ) : (
+                          filteredAvailableProspects.map(p => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                setAddProspectId(p.id);
+                                setProspectSearch(p.full_name);
+                                setShowProspectDropdown(false);
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-purple-50 transition flex items-center justify-between"
+                            >
+                              <span>{p.full_name}</span>
+                              <span className="text-xs text-gray-400">{p.email || p.position || ''}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleAddProspect}
+                    disabled={!addProspectId || addingProspect}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition disabled:opacity-50 flex items-center space-x-1"
+                  >
+                    <UserPlus size={14} />
+                    <span>{addingProspect ? '...' : 'Add'}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1772,6 +1955,377 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
                 <span>Delete Team</span>
               </button>
             )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// PROSPECTS TAB
+// ============================================
+
+function ProspectsTab({ prospects, teams, showCreateProspect, setShowCreateProspect, refreshProspects }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editingProspect, setEditingProspect] = useState(null);
+
+  const filteredProspects = prospects.filter(p => {
+    const q = searchQuery.toLowerCase();
+    return (p.full_name || '').toLowerCase().includes(q) || (p.email || '').toLowerCase().includes(q);
+  });
+
+  const handleDeleteProspect = async (id) => {
+    if (!window.confirm('Delete this prospect?')) return;
+    const { error } = await supabase.from('prospects').delete().eq('id', id);
+    if (error) alert('Error deleting prospect: ' + error.message);
+    else refreshProspects();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">All Prospects</h3>
+        <button
+          onClick={() => setShowCreateProspect(true)}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+        >
+          <Plus size={18} />
+          <span>Create Prospect</span>
+        </button>
+      </div>
+
+      <div className="relative">
+        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search prospects by name or email..."
+          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+        />
+      </div>
+
+      {filteredProspects.length === 0 ? (
+        <div className="text-center py-12 text-gray-500">
+          <Users size={48} className="mx-auto mb-4 text-gray-300" />
+          <p>{searchQuery ? 'No prospects match your search.' : 'No prospects yet. Create one to get started.'}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredProspects.map(prospect => (
+            <div key={prospect.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                  {(prospect.full_name || '?').charAt(0)}
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{prospect.full_name}</p>
+                  <p className="text-xs text-gray-500">{prospect.email || 'No email'}</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3">
+                {prospect.position && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">{prospect.position}</span>
+                )}
+                {prospect.grade && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-700">{prospect.grade}</span>
+                )}
+                <button onClick={() => setEditingProspect(prospect)} className="text-gray-400 hover:text-blue-600 transition">
+                  <Edit2 size={14} />
+                </button>
+                <button onClick={() => handleDeleteProspect(prospect.id)} className="text-gray-400 hover:text-red-600 transition">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showCreateProspect && (
+        <CreateProspectModal
+          teams={teams}
+          onClose={() => setShowCreateProspect(false)}
+          onSuccess={() => {
+            setShowCreateProspect(false);
+            refreshProspects();
+          }}
+        />
+      )}
+
+      {editingProspect && (
+        <EditProspectModal
+          prospect={editingProspect}
+          teams={teams}
+          onClose={() => setEditingProspect(null)}
+          onSuccess={() => {
+            setEditingProspect(null);
+            refreshProspects();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateProspectModal({ teams, onClose, onSuccess }) {
+  const [formData, setFormData] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    height: '',
+    weight: '',
+    team_id: '',
+    jersey_number: '',
+    position: '',
+    grade: '',
+    bats: 'Right',
+    throws: 'Right'
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const { error: insertError } = await supabase.from('prospects').insert({
+        full_name: formData.full_name,
+        email: formData.email || null,
+        phone: formData.phone || null,
+        height: formData.height || null,
+        weight: formData.weight || null,
+        team_id: formData.team_id || null,
+        jersey_number: formData.jersey_number || null,
+        position: formData.position || null,
+        grade: formData.grade || null,
+        bats: formData.bats,
+        throws: formData.throws,
+      });
+      if (insertError) throw insertError;
+      onSuccess();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputClass = "w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Create Prospect</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
+              <input type="text" required value={formData.full_name} onChange={(e) => setFormData({...formData, full_name: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
+              <input type="tel" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Height</label>
+              <input type="text" placeholder="e.g., 6'2&quot;, 72 in" value={formData.height} onChange={(e) => setFormData({...formData, height: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Weight</label>
+              <input type="text" placeholder="e.g., 185 lbs" value={formData.weight} onChange={(e) => setFormData({...formData, weight: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Assign to Team</label>
+              <select value={formData.team_id} onChange={(e) => setFormData({...formData, team_id: e.target.value})} className={inputClass}>
+                <option value="">No team</option>
+                {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-gray-200">
+            <h4 className="font-semibold text-gray-900 mb-4">Player Details</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Jersey Number</label>
+                <input type="text" value={formData.jersey_number} onChange={(e) => setFormData({...formData, jersey_number: e.target.value})} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Position</label>
+                <input type="text" placeholder="e.g., SS, P, OF" value={formData.position} onChange={(e) => setFormData({...formData, position: e.target.value})} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Grade</label>
+                <input type="text" placeholder="e.g., 8th, 10th" value={formData.grade} onChange={(e) => setFormData({...formData, grade: e.target.value})} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Bats</label>
+                <select value={formData.bats} onChange={(e) => setFormData({...formData, bats: e.target.value})} className={inputClass}>
+                  <option value="Right">Right</option>
+                  <option value="Left">Left</option>
+                  <option value="Switch">Switch</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Throws</label>
+                <select value={formData.throws} onChange={(e) => setFormData({...formData, throws: e.target.value})} className={inputClass}>
+                  <option value="Right">Right</option>
+                  <option value="Left">Left</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex space-x-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
+            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">
+              {loading ? 'Creating...' : 'Create Prospect'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditProspectModal({ prospect, teams, onClose, onSuccess }) {
+  const [formData, setFormData] = useState({
+    full_name: prospect.full_name || '',
+    email: prospect.email || '',
+    phone: prospect.phone || '',
+    height: prospect.height || '',
+    weight: prospect.weight || '',
+    team_id: prospect.team_id || '',
+    jersey_number: prospect.jersey_number || '',
+    position: prospect.position || '',
+    grade: prospect.grade || '',
+    bats: prospect.bats || 'Right',
+    throws: prospect.throws || 'Right'
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { error: updateError } = await supabase.from('prospects').update({
+        full_name: formData.full_name,
+        email: formData.email || null,
+        phone: formData.phone || null,
+        height: formData.height || null,
+        weight: formData.weight || null,
+        team_id: formData.team_id || null,
+        jersey_number: formData.jersey_number || null,
+        position: formData.position || null,
+        grade: formData.grade || null,
+        bats: formData.bats,
+        throws: formData.throws,
+      }).eq('id', prospect.id);
+      if (updateError) throw updateError;
+      onSuccess();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputClass = "w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Edit Prospect</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
+              <input type="text" required value={formData.full_name} onChange={(e) => setFormData({...formData, full_name: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input type="email" value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
+              <input type="tel" value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Height</label>
+              <input type="text" value={formData.height} onChange={(e) => setFormData({...formData, height: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Weight</label>
+              <input type="text" value={formData.weight} onChange={(e) => setFormData({...formData, weight: e.target.value})} className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Assign to Team</label>
+              <select value={formData.team_id} onChange={(e) => setFormData({...formData, team_id: e.target.value})} className={inputClass}>
+                <option value="">No team</option>
+                {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-gray-200">
+            <h4 className="font-semibold text-gray-900 mb-4">Player Details</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Jersey Number</label>
+                <input type="text" value={formData.jersey_number} onChange={(e) => setFormData({...formData, jersey_number: e.target.value})} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Position</label>
+                <input type="text" value={formData.position} onChange={(e) => setFormData({...formData, position: e.target.value})} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Grade</label>
+                <input type="text" value={formData.grade} onChange={(e) => setFormData({...formData, grade: e.target.value})} className={inputClass} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Bats</label>
+                <select value={formData.bats} onChange={(e) => setFormData({...formData, bats: e.target.value})} className={inputClass}>
+                  <option value="Right">Right</option>
+                  <option value="Left">Left</option>
+                  <option value="Switch">Switch</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Throws</label>
+                <select value={formData.throws} onChange={(e) => setFormData({...formData, throws: e.target.value})} className={inputClass}>
+                  <option value="Right">Right</option>
+                  <option value="Left">Left</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex space-x-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={loading || !formData.full_name.trim()} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">
+              {loading ? 'Saving...' : 'Save Changes'}
+            </button>
           </div>
         </div>
       </div>

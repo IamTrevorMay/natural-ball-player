@@ -750,7 +750,7 @@ function TrainingTab({ teams, players }) {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="text-left text-xs text-gray-500">
-                              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
+                              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -759,6 +759,8 @@ function TrainingTab({ teams, players }) {
                                 <td className="py-2 text-gray-900">{ex.name}</td>
                                 <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
                                 <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
+                                <td className="py-2 text-gray-600">{ex.rest || '—'}</td>
+                                <td className="py-2 text-gray-600">{ex.load || '—'}</td>
                                 <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
                                 <td className="py-2 text-gray-600">{ex.superSet || ex.super_set || '—'}</td>
                               </tr>
@@ -1229,6 +1231,8 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
                     <th className="pb-2 pr-2">Name</th>
                     <th className="pb-2 pr-2 w-16 text-center">Sets</th>
                     <th className="pb-2 pr-2 w-20 text-center">Reps</th>
+                    <th className="pb-2 pr-2 w-16 text-center">Rest</th>
+                    <th className="pb-2 pr-2 w-16 text-center">Load</th>
                     <th className="pb-2 pr-2 text-center">Link</th>
                     <th className="pb-2 pr-2 w-20 text-center">Super Set</th>
                     <th className="pb-2 w-8"></th>
@@ -1248,6 +1252,12 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
                       </td>
                       <td className="py-2 pr-2">
                         <input type="text" placeholder="Reps" value={ex.reps} onChange={(e) => updateExercise(i, 'reps', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="Rest" value={ex.rest || ''} onChange={(e) => updateExercise(i, 'rest', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="Load" value={ex.load || ''} onChange={(e) => updateExercise(i, 'load', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
                       </td>
                       <td className="py-2 pr-2">
                         <div className="flex space-x-1">
@@ -1672,6 +1682,8 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
                     <th className="pb-2 pr-2">Name</th>
                     <th className="pb-2 pr-2 w-16 text-center">Sets</th>
                     <th className="pb-2 pr-2 w-20 text-center">Reps</th>
+                    <th className="pb-2 pr-2 w-16 text-center">Rest</th>
+                    <th className="pb-2 pr-2 w-16 text-center">Load</th>
                     <th className="pb-2 pr-2 text-center">Link</th>
                     <th className="pb-2 pr-2 w-20 text-center">Super Set</th>
                     <th className="pb-2 w-8"></th>
@@ -1691,6 +1703,12 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
                       </td>
                       <td className="py-2 pr-2">
                         <input type="text" placeholder="Reps" value={ex.reps} onChange={(e) => updateExercise(i, 'reps', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="Rest" value={ex.rest || ''} onChange={(e) => updateExercise(i, 'rest', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input type="text" placeholder="Load" value={ex.load || ''} onChange={(e) => updateExercise(i, 'load', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
                       </td>
                       <td className="py-2 pr-2">
                         <div className="flex space-x-1">
