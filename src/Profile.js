@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2 } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -25,7 +25,11 @@ const PROFILE_TABS = [
   { key: 'hittrax', label: 'Hittrax' },
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },
+  { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
 ];
+
+const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
+const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered'];
 
 export default function Profile({ userId, userRole }) {
   const [userData, setUserData] = useState(null);
@@ -37,10 +41,13 @@ export default function Profile({ userId, userRole }) {
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeProfileTab, setActiveProfileTab] = useState('general');
+  const [recruitmentTeams, setRecruitmentTeams] = useState([]);
+  const [savingRecruitment, setSavingRecruitment] = useState({});
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
     fetchUserData();
+    fetchRecruitmentTeams();
   }, [userId]);
 
   const fetchUserData = async () => {
@@ -226,6 +233,68 @@ export default function Profile({ userId, userRole }) {
     }
   };
 
+  const fetchRecruitmentTeams = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('recruitment_teams')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setRecruitmentTeams(data || []);
+    } catch (error) {
+      console.error('Error fetching recruitment teams:', error);
+    }
+  };
+
+  const addRecruitmentTeam = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('recruitment_teams')
+        .insert({ user_id: userId })
+        .select()
+        .single();
+      if (error) throw error;
+      setRecruitmentTeams([...recruitmentTeams, data]);
+    } catch (error) {
+      console.error('Error adding recruitment team:', error);
+      alert('Error adding team: ' + error.message);
+    }
+  };
+
+  const updateRecruitmentTeam = async (teamId, field, value) => {
+    setSavingRecruitment(prev => ({ ...prev, [teamId + field]: true }));
+    try {
+      const { error } = await supabase
+        .from('recruitment_teams')
+        .update({ [field]: value || null, updated_at: new Date().toISOString() })
+        .eq('id', teamId);
+      if (error) throw error;
+      setRecruitmentTeams(prev =>
+        prev.map(t => t.id === teamId ? { ...t, [field]: value } : t)
+      );
+    } catch (error) {
+      console.error('Error updating recruitment team:', error);
+    } finally {
+      setSavingRecruitment(prev => ({ ...prev, [teamId + field]: false }));
+    }
+  };
+
+  const deleteRecruitmentTeam = async (teamId) => {
+    if (!window.confirm('Delete this recruitment entry?')) return;
+    try {
+      const { error } = await supabase
+        .from('recruitment_teams')
+        .delete()
+        .eq('id', teamId);
+      if (error) throw error;
+      setRecruitmentTeams(prev => prev.filter(t => t.id !== teamId));
+    } catch (error) {
+      console.error('Error deleting recruitment team:', error);
+      alert('Error deleting team: ' + error.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -370,7 +439,7 @@ export default function Profile({ userId, userRole }) {
           {/* Tab Bar */}
           <div className="border-b border-gray-200 mb-6">
             <nav className="flex space-x-8 overflow-x-auto">
-              {PROFILE_TABS.map(tab => (
+              {PROFILE_TABS.filter(tab => !tab.roles || tab.roles.includes(userRole)).map(tab => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveProfileTab(tab.key)}
@@ -386,9 +455,125 @@ export default function Profile({ userId, userRole }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
+            </div>
+          )}
+
+          {activeProfileTab === 'recruitment' && (
+            <div>
+              {recruitmentTeams.map((team) => (
+                <div key={team.id} className="border border-gray-200 rounded-lg p-4 mb-4">
+                  <div className="flex justify-between items-start mb-3">
+                    <h4 className="text-sm font-semibold text-gray-700">
+                      {team.organization_name || 'New Team'}
+                    </h4>
+                    <button
+                      onClick={() => deleteRecruitmentTeam(team.id)}
+                      className="text-red-400 hover:text-red-600 transition"
+                      title="Delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Level</label>
+                      <select
+                        value={team.level || ''}
+                        onChange={(e) => updateRecruitmentTeam(team.id, 'level', e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                      >
+                        <option value="">Select Level</option>
+                        {RECRUITMENT_LEVEL_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Organization Name</label>
+                      <input
+                        type="text"
+                        defaultValue={team.organization_name || ''}
+                        onBlur={(e) => updateRecruitmentTeam(team.id, 'organization_name', e.target.value)}
+                        placeholder="Organization name"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Contact Person</label>
+                      <input
+                        type="text"
+                        defaultValue={team.contact_person || ''}
+                        onBlur={(e) => updateRecruitmentTeam(team.id, 'contact_person', e.target.value)}
+                        placeholder="Contact person"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Role / Position</label>
+                      <input
+                        type="text"
+                        defaultValue={team.role_position || ''}
+                        onBlur={(e) => updateRecruitmentTeam(team.id, 'role_position', e.target.value)}
+                        placeholder="Role or position"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Contact Email</label>
+                      <input
+                        type="email"
+                        defaultValue={team.contact_email || ''}
+                        onBlur={(e) => updateRecruitmentTeam(team.id, 'contact_email', e.target.value)}
+                        placeholder="Email address"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Contact Phone</label>
+                      <input
+                        type="text"
+                        defaultValue={team.contact_phone || ''}
+                        onBlur={(e) => updateRecruitmentTeam(team.id, 'contact_phone', e.target.value)}
+                        placeholder="Phone number"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Status</label>
+                      <select
+                        value={team.status || ''}
+                        onChange={(e) => updateRecruitmentTeam(team.id, 'status', e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                      >
+                        <option value="">Select Status</option>
+                        {RECRUITMENT_STATUS_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-4">
+                      <label className="block text-xs text-gray-500 mb-1">Notes</label>
+                      <textarea
+                        defaultValue={team.notes || ''}
+                        onBlur={(e) => updateRecruitmentTeam(team.id, 'notes', e.target.value)}
+                        placeholder="Additional notes..."
+                        rows={2}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-vertical"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <button
+                onClick={addRecruitmentTeam}
+                className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+              >
+                <Plus size={18} />
+                <span>Add a Team</span>
+              </button>
             </div>
           )}
 
