@@ -539,6 +539,8 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [todaySessions, setTodaySessions] = useState([]);
   const [openSlots, setOpenSlots] = useState([]);
+  const [todayFacilityEvents, setTodayFacilityEvents] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(true);
 
   const formatTime = (time) => {
@@ -549,8 +551,61 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
   };
 
   useEffect(() => {
-    if (userId) fetchTrainingSessions();
+    if (userId) {
+      fetchTrainingSessions();
+      fetchTodayFacilityEvents();
+      fetchNotifications();
+    }
   }, [userId]);
+
+  const fetchTodayFacilityEvents = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayDow = new Date().getDay();
+
+    const { data: nonRecurring } = await supabase.from('facility_events').select('*').eq('is_recurring', false).is('recurrence_parent_id', null).eq('event_date', today);
+    const { data: masters } = await supabase.from('facility_events').select('*').eq('is_recurring', true).is('recurrence_parent_id', null);
+
+    const events = [...(nonRecurring || [])];
+    (masters || []).forEach(master => {
+      const masterDate = new Date(master.event_date + 'T00:00:00');
+      const todayDate = new Date(today + 'T00:00:00');
+      if (todayDate >= masterDate) {
+        const masterDow = masterDate.getDay();
+        if (masterDow === todayDow) {
+          if (!master.recurrence_end_date || todayDate <= new Date(master.recurrence_end_date + 'T00:00:00')) {
+            events.push({ ...master, event_date: today });
+          }
+        }
+      }
+    });
+    events.sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+    setTodayFacilityEvents(events);
+  };
+
+  const fetchNotifications = async () => {
+    const notifs = [];
+
+    // Unread messages
+    try {
+      const { data: participantRows } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', userId);
+      const convIds = (participantRows || []).map(p => p.conversation_id);
+      if (convIds.length > 0) {
+        const { data: allMessages } = await supabase.from('messages').select('id, content, created_at, sender_id, users:sender_id(full_name)').in('conversation_id', convIds).neq('sender_id', userId).order('created_at', { ascending: false }).limit(10);
+        const msgIds = (allMessages || []).map(m => m.id);
+        let readIds = new Set();
+        if (msgIds.length > 0) {
+          const { data: reads } = await supabase.from('message_reads').select('message_id').eq('user_id', userId).in('message_id', msgIds);
+          readIds = new Set((reads || []).map(r => r.message_id));
+        }
+        (allMessages || []).filter(m => !readIds.has(m.id)).slice(0, 5).forEach(m => {
+          notifs.push({ id: m.id, type: 'message', text: `${m.users?.full_name || 'Someone'} sent you a message`, detail: m.content?.substring(0, 60) || '', time: m.created_at });
+        });
+      }
+    } catch (err) { console.error('Error fetching message notifications:', err); }
+
+    notifs.sort((a, b) => new Date(b.time) - new Date(a.time));
+    setNotifications(notifs);
+  };
 
   const fetchTrainingSessions = async () => {
     setLoadingSlots(true);
@@ -572,16 +627,13 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
 
     const allReservations = reservations || [];
 
-    // Pending requests (any date)
     const pending = allReservations.filter(r => r.status === 'pending');
-    // Attach slot info to pending
     const pendingWithSlot = pending.map(r => {
       const slot = slots.find(s => s.id === r.slot_id);
       return { ...r, slot };
     });
     setPendingRequests(pendingWithSlot);
 
-    // Determine which slots apply today (direct date match OR weekly recurring match)
     const todaySlots = slots.filter(slot => {
       if (slot.slot_date === today) return true;
       if (slot.repeat_weekly) {
@@ -597,7 +649,6 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
       return false;
     });
 
-    // Today's confirmed sessions
     const confirmed = allReservations.filter(r =>
       r.status === 'confirmed' &&
       todaySlots.some(s => s.id === r.slot_id && (r.slot_date === today || s.slot_date === today || s.repeat_weekly))
@@ -608,7 +659,6 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
     });
     setTodaySessions(confirmedWithSlot);
 
-    // Open slots today (not fully booked)
     const open = todaySlots.filter(slot => {
       const slotRes = allReservations.filter(r => r.slot_id === slot.id && r.status === 'confirmed');
       return slotRes.length < (slot.max_players || 1);
@@ -628,6 +678,36 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
     fetchTrainingSessions();
   };
 
+  const getNotifIcon = (type) => {
+    switch (type) {
+      case 'message': return <MessageSquare size={16} className="text-blue-500" />;
+      case 'pending': return <Clock size={16} className="text-yellow-500" />;
+      default: return <Bell size={16} className="text-green-500" />;
+    }
+  };
+
+  // Build combined today's schedule from facility events + training sessions
+  const todayScheduleItems = [];
+  todayFacilityEvents.forEach(e => {
+    todayScheduleItems.push({ id: e.id, title: e.title || 'Facility Event', time: e.start_time, type: 'facility', location: e.location });
+  });
+  todaySessions.forEach(s => {
+    todayScheduleItems.push({ id: s.id, title: `Session: ${s.users?.full_name || 'Player'}`, time: s.slot?.start_time, type: 'training', duration: s.slot?.duration_minutes });
+  });
+  openSlots.forEach(s => {
+    todayScheduleItems.push({ id: s.id, title: 'Open Slot', time: s.start_time, type: 'open', duration: s.duration_minutes });
+  });
+  todayScheduleItems.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+  const getTypeColor = (type) => {
+    switch (type) {
+      case 'facility': return 'bg-purple-100 text-purple-700';
+      case 'training': return 'bg-green-100 text-green-700';
+      case 'open': return 'bg-blue-100 text-blue-700';
+      default: return 'bg-gray-100 text-gray-700';
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -635,35 +715,7 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
         <p className="text-gray-600 mt-1">Welcome to Natural Ball Player</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-gray-600">Performance</h3>
-            <TrendingUp className="text-blue-600" size={20} />
-          </div>
-          <p className="text-2xl font-bold text-gray-900">Connected</p>
-          <p className="text-sm text-gray-600 mt-1">Database is live</p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-gray-600">Status</h3>
-            <Activity className="text-green-600" size={20} />
-          </div>
-          <p className="text-2xl font-bold text-gray-900">Active</p>
-          <p className="text-sm text-gray-600 mt-1">System operational</p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-gray-600">Progress</h3>
-            <Target className="text-orange-600" size={20} />
-          </div>
-          <p className="text-2xl font-bold text-gray-900">MVP Complete</p>
-          <p className="text-sm text-gray-600 mt-1">Data entry ready</p>
-        </div>
-      </div>
-
+      {/* Quick Actions */}
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -678,74 +730,120 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
         </div>
       </div>
 
-      {/* Training Sessions Section */}
-      {!loadingSlots && (pendingRequests.length > 0 || todaySessions.length > 0 || openSlots.length > 0) && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-900">Training Sessions</h3>
-
-          {pendingRequests.length > 0 && (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="bg-yellow-500 px-6 py-3">
-                <h4 className="text-sm font-semibold text-white">Slot Requests ({pendingRequests.length})</h4>
+      {/* Pending Slot Requests */}
+      {pendingRequests.length > 0 && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="bg-yellow-500 px-6 py-3">
+            <h4 className="text-sm font-semibold text-white">Slot Requests ({pendingRequests.length})</h4>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {pendingRequests.map(req => (
+              <div key={req.id} className="px-6 py-3 flex items-center justify-between">
+                <div>
+                  <span className="font-medium text-gray-900">{req.users?.full_name || 'Unknown'}</span>
+                  <span className="text-sm text-gray-500 ml-2">
+                    {req.slot?.slot_date && new Date(req.slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {req.slot?.start_time && ` at ${formatTime(req.slot.start_time)}`}
+                  </span>
+                  {req.player_note && <span className="text-xs text-gray-400 ml-2">"{req.player_note}"</span>}
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button onClick={() => handleConfirm(req.id)} className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-sm font-medium hover:bg-green-200 transition">Confirm</button>
+                  <button onClick={() => handleDecline(req.id)} className="px-3 py-1 bg-red-100 text-red-700 rounded-lg text-sm font-medium hover:bg-red-200 transition">Decline</button>
+                </div>
               </div>
-              <div className="divide-y divide-gray-100">
-                {pendingRequests.map(req => (
-                  <div key={req.id} className="px-6 py-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-gray-900">{req.users?.full_name || 'Unknown'}</span>
-                      <span className="text-sm text-gray-500 ml-2">
-                        {req.slot?.slot_date && new Date(req.slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        {req.slot?.start_time && ` at ${formatTime(req.slot.start_time)}`}
-                      </span>
-                      {req.player_note && <span className="text-xs text-gray-400 ml-2">"{req.player_note}"</span>}
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <button onClick={() => handleConfirm(req.id)} className="px-3 py-1 bg-green-100 text-green-700 rounded-lg text-sm font-medium hover:bg-green-200 transition">Confirm</button>
-                      <button onClick={() => handleDecline(req.id)} className="px-3 py-1 bg-red-100 text-red-700 rounded-lg text-sm font-medium hover:bg-red-200 transition">Decline</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {todaySessions.length > 0 && (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="bg-green-500 px-6 py-3">
-                <h4 className="text-sm font-semibold text-white">Today's Sessions ({todaySessions.length})</h4>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {todaySessions.map(session => (
-                  <div key={session.id} className="px-6 py-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-gray-900">{session.users?.full_name || 'Unknown'}</span>
-                      <span className="text-sm text-gray-500 ml-2">{session.slot?.start_time && formatTime(session.slot.start_time)} - {session.slot?.duration_minutes} min</span>
-                    </div>
-                    <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">Confirmed</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {openSlots.length > 0 && (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="bg-blue-500 px-6 py-3">
-                <h4 className="text-sm font-semibold text-white">Open Slots Today ({openSlots.length})</h4>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {openSlots.map(slot => (
-                  <div key={slot.id} className="px-6 py-3">
-                    <span className="font-medium text-gray-900">{formatTime(slot.start_time)}</span>
-                    <span className="text-sm text-gray-500 ml-2">{slot.duration_minutes} min</span>
-                    {slot.notes && <span className="text-sm text-gray-400 ml-2">- {slot.notes}</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Today's Schedule */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="flex items-center space-x-2 p-6 pb-4 border-b border-gray-100">
+            <Calendar size={20} className="text-blue-600" />
+            <h3 className="text-lg font-semibold text-gray-900">Today's Schedule</h3>
+          </div>
+          <div className="p-6 pt-4">
+            {todayScheduleItems.length > 0 ? (
+              <div className="space-y-3">
+                {todayScheduleItems.map((item, idx) => (
+                  <div key={item.id || idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="text-sm font-semibold text-gray-700 min-w-[70px]">
+                        {item.time ? formatTime(item.time) : 'TBD'}
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{item.title}</p>
+                        {item.location && <p className="text-xs text-gray-500">{item.location}</p>}
+                        {item.duration && <p className="text-xs text-gray-500">{item.duration} min</p>}
+                      </div>
+                    </div>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${getTypeColor(item.type)}`}>
+                      {item.type}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Calendar className="mx-auto text-gray-300 mb-3" size={36} />
+                <p className="text-gray-500">No events scheduled for today</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Notifications */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="flex items-center space-x-2 p-6 pb-4 border-b border-gray-100">
+            <Bell size={20} className="text-orange-500" />
+            <h3 className="text-lg font-semibold text-gray-900">Notifications</h3>
+            {notifications.length > 0 && (
+              <span className="bg-orange-100 text-orange-700 text-xs font-medium px-2 py-0.5 rounded-full">{notifications.length}</span>
+            )}
+          </div>
+          <div className="p-6 pt-4">
+            {notifications.length > 0 ? (
+              <div className="space-y-3">
+                {notifications.map((notif, idx) => (
+                  <div key={notif.id || idx} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
+                    <div className="mt-0.5">{getNotifIcon(notif.type)}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900">{notif.text}</p>
+                      {notif.detail && <p className="text-xs text-gray-500 mt-0.5 truncate">{notif.detail}</p>}
+                      <p className="text-xs text-gray-400 mt-1">
+                        {new Date(notif.time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at{' '}
+                        {new Date(notif.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Bell className="mx-auto text-gray-300 mb-3" size={36} />
+                <p className="text-gray-500">No new notifications</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Placeholder */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="flex items-center space-x-2 p-6 pb-4 border-b border-gray-100">
+          <BarChart3 size={20} className="text-green-600" />
+          <h3 className="text-lg font-semibold text-gray-900">Stats</h3>
+        </div>
+        <div className="p-6 pt-4">
+          <div className="text-center py-12">
+            <BarChart3 className="mx-auto text-gray-300 mb-4" size={48} />
+            <h4 className="text-lg font-semibold text-gray-900 mb-2">Coming Soon</h4>
+            <p className="text-gray-500">Team and player performance stats will appear here.</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
