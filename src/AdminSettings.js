@@ -21,7 +21,7 @@ async function deleteAuthUser(userId) {
   return result;
 }
 
-export default function AdminSettings({ userId, userRole }) {
+export default function AdminSettings({ userId, userRole, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('users');
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
@@ -144,6 +144,16 @@ export default function AdminSettings({ userId, userRole }) {
             >
               Prospects
             </button>
+            <button
+              onClick={() => setActiveTab('codes')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
+                activeTab === 'codes'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Codes
+            </button>
           </nav>
         </div>
 
@@ -156,6 +166,7 @@ export default function AdminSettings({ userId, userRole }) {
               setShowCreateUser={setShowCreateUser}
               refreshUsers={fetchUsers}
               userId={userId}
+              onNavigateToProfile={onNavigateToProfile}
             />
           )}
           {activeTab === 'teams' && (
@@ -185,6 +196,9 @@ export default function AdminSettings({ userId, userRole }) {
               setShowCreateProspect={setShowCreateProspect}
               refreshProspects={fetchProspects}
             />
+          )}
+          {activeTab === 'codes' && (
+            <CodesTab />
           )}
         </div>
       </div>
@@ -536,7 +550,7 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 // USERS TAB
 // ============================================
 
-function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId }) {
+function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId, onNavigateToProfile }) {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredUsers = users.filter(u => {
@@ -570,7 +584,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
 
       <div className="grid grid-cols-1 gap-4">
         {filteredUsers.map(user => (
-          <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} />
+          <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
         ))}
       </div>
 
@@ -588,7 +602,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   );
 }
 
-function UserCard({ user, teams, refreshUsers, userId }) {
+function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
   const [showEdit, setShowEdit] = useState(false);
 
   const getRoleBadgeColor = (role) => {
@@ -612,7 +626,12 @@ function UserCard({ user, teams, refreshUsers, userId }) {
               {user.full_name.charAt(0)}
             </div>
             <div>
-              <h4 className="font-semibold text-gray-900">{user.full_name}</h4>
+              <h4
+                className="font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                onClick={(e) => { e.stopPropagation(); onNavigateToProfile && onNavigateToProfile(user.id); }}
+              >
+                {user.full_name}
+              </h4>
               <p className="text-sm text-gray-600">{user.email}</p>
               {user.team_members && user.team_members.length > 0 && (
                 <p className="text-xs text-gray-500 mt-1">
@@ -2420,6 +2439,113 @@ function CreateTeamModal({ onClose, onSuccess }) {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// CODES TAB
+// ============================================
+
+function CodesTab() {
+  const [codes, setCodes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { fetchCodes(); }, []);
+
+  const fetchCodes = async () => {
+    const { data, error } = await supabase
+      .from('discount_codes')
+      .select('*')
+      .order('created_at', { ascending: true });
+    if (error) console.error('Error fetching codes:', error);
+    else setCodes(data || []);
+    setLoading(false);
+  };
+
+  const addCode = async () => {
+    const { data, error } = await supabase
+      .from('discount_codes')
+      .insert({ vendor: '', code: '' })
+      .select()
+      .single();
+    if (error) { alert('Error adding code: ' + error.message); return; }
+    setCodes([...codes, data]);
+  };
+
+  const updateCode = async (id, field, value) => {
+    const { error } = await supabase
+      .from('discount_codes')
+      .update({ [field]: value, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) { console.error('Error updating code:', error); return; }
+    setCodes(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c));
+  };
+
+  const deleteCode = async (id) => {
+    const { error } = await supabase.from('discount_codes').delete().eq('id', id);
+    if (error) { console.error('Error deleting code:', error); return; }
+    setCodes(prev => prev.filter(c => c.id !== id));
+  };
+
+  if (loading) return <div className="text-gray-600">Loading codes...</div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">Discount Codes</h3>
+        <button
+          onClick={addCode}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+        >
+          <Plus size={18} />
+          <span>Add Code</span>
+        </button>
+      </div>
+
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-gray-200">
+            <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Vendor</th>
+            <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Code</th>
+            <th className="py-3 px-4 w-12"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {codes.map(c => (
+            <tr key={c.id} className="border-b border-gray-100">
+              <td className="py-2 px-4">
+                <input
+                  type="text"
+                  defaultValue={c.vendor}
+                  onBlur={(e) => updateCode(c.id, 'vendor', e.target.value)}
+                  placeholder="Vendor name"
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </td>
+              <td className="py-2 px-4">
+                <input
+                  type="text"
+                  defaultValue={c.code}
+                  onBlur={(e) => updateCode(c.id, 'code', e.target.value)}
+                  placeholder="Discount code"
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </td>
+              <td className="py-2 px-4 text-center">
+                <button onClick={() => deleteCode(c.id)} className="text-red-400 hover:text-red-600 transition">
+                  <Trash2 size={16} />
+                </button>
+              </td>
+            </tr>
+          ))}
+          {codes.length === 0 && (
+            <tr>
+              <td colSpan={3} className="py-8 text-center text-gray-500">No codes yet. Click "Add Code" to create one.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

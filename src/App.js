@@ -373,7 +373,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
               )
             )}
             {currentView === 'profile' && <Profile userId={userId} userRole={userRole} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} onBack={() => setCurrentView('settings')} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
@@ -381,7 +381,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
             {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} />}
+            {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
           </div>
         </div>
       </div>

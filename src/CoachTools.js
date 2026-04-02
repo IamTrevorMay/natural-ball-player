@@ -1023,9 +1023,9 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
         notes: day.notes || '',
         exercises: (day.training_exercises || [])
           .sort((a, b) => a.sort_order - b.sort_order)
-          .map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', link: ex.video_url || '', category: ex.category || 'hitting' }))
+          .map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', rest: ex.rest || '', load: ex.load || '', link: ex.video_url || '', category: ex.category || 'hitting', superSet: ex.super_set || '' }))
           .concat([]).length > 0
-          ? (day.training_exercises || []).sort((a, b) => a.sort_order - b.sort_order).map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', link: ex.video_url || '', category: ex.category || 'hitting' }))
+          ? (day.training_exercises || []).sort((a, b) => a.sort_order - b.sort_order).map(ex => ({ name: ex.name || '', sets: ex.sets ? String(ex.sets) : '', reps: ex.reps || '', rest: ex.rest || '', load: ex.load || '', link: ex.video_url || '', category: ex.category || 'hitting', superSet: ex.super_set || '' }))
           : [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }]
       }));
     }
@@ -1123,7 +1123,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
           const { error: exErr } = await supabase.from('training_exercises').insert(
             exercises.map((ex, j) => ({
               day_id: dayData.id, category: ex.category || 'hitting', name: ex.name,
-              sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null,
+              sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null, rest: ex.rest || null, load: ex.load || null,
               video_url: ex.link || null, sort_order: j, super_set: ex.superSet || null
             }))
           );
@@ -1155,7 +1155,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
           const { error: exErr } = await supabase.from('training_exercises').insert(
             exercises.map((ex, j) => ({
               day_id: dayData.id, category: ex.category || 'hitting', name: ex.name,
-              sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null,
+              sets: ex.sets ? parseInt(ex.sets) : null, reps: ex.reps || null, rest: ex.rest || null, load: ex.load || null,
               video_url: ex.link || null, sort_order: j, super_set: ex.superSet || null
             }))
           );
@@ -1522,11 +1522,11 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
         exs.forEach(ex => {
           const tabName = ex.tab || 'Tab 1';
           if (!tabMap[tabName]) tabMap[tabName] = [];
-          tabMap[tabName].push({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', link: ex.link || '', category: ex.category || 'hitting' });
+          tabMap[tabName].push({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', rest: ex.rest || '', load: ex.load || '', link: ex.link || '', category: ex.category || 'hitting', superSet: ex.superSet || '' });
         });
         return Object.entries(tabMap).map(([tabName, exercises]) => ({ tabName, exercises }));
       }
-      return [{ tabName: 'Tab 1', exercises: exs.map(ex => ({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', link: ex.link || '', category: ex.category || 'hitting' })) }];
+      return [{ tabName: 'Tab 1', exercises: exs.map(ex => ({ name: ex.name || '', sets: ex.sets || '', reps: ex.reps || '', rest: ex.rest || '', load: ex.load || '', link: ex.link || '', category: ex.category || 'hitting', superSet: ex.superSet || '' })) }];
     }
     return [{ tabName: 'Tab 1', exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
   });

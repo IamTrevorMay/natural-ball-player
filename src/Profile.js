@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2 } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -26,12 +26,13 @@ const PROFILE_TABS = [
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
+  { key: 'codes', label: 'Codes' },
 ];
 
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
 const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered'];
 
-export default function Profile({ userId, userRole }) {
+export default function Profile({ userId, userRole, onBack }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -43,11 +44,13 @@ export default function Profile({ userId, userRole }) {
   const [activeProfileTab, setActiveProfileTab] = useState('general');
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
+  const [discountCodes, setDiscountCodes] = useState([]);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
     fetchUserData();
     fetchRecruitmentTeams();
+    fetchDiscountCodes();
   }, [userId]);
 
   const fetchUserData = async () => {
@@ -81,6 +84,9 @@ export default function Profile({ userId, userRole }) {
         height: data.height || '',
         weight: data.weight || '',
         sport: profile?.sport || '',
+        instagram: data.instagram || '',
+        twitter: data.twitter || '',
+        organization: data.organization || '',
       });
 
       // Fetch equipment sizes
@@ -121,6 +127,9 @@ export default function Profile({ userId, userRole }) {
           phone: editForm.phone || null,
           height: editForm.height || null,
           weight: editForm.weight || null,
+          instagram: editForm.instagram || null,
+          twitter: editForm.twitter || null,
+          organization: editForm.organization || null,
         })
         .eq('id', userId);
 
@@ -176,6 +185,9 @@ export default function Profile({ userId, userRole }) {
       height: userData.height || '',
       weight: userData.weight || '',
       sport: profile?.sport || '',
+      instagram: userData.instagram || '',
+      twitter: userData.twitter || '',
+      organization: userData.organization || '',
     });
     setEditEquipment({
       shirt: equipmentSizes.shirt || '',
@@ -244,6 +256,19 @@ export default function Profile({ userId, userRole }) {
       setRecruitmentTeams(data || []);
     } catch (error) {
       console.error('Error fetching recruitment teams:', error);
+    }
+  };
+
+  const fetchDiscountCodes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('discount_codes')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setDiscountCodes(data || []);
+    } catch (error) {
+      console.error('Error fetching discount codes:', error);
     }
   };
 
@@ -319,9 +344,16 @@ export default function Profile({ userId, userRole }) {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900">My Profile</h2>
-          <p className="text-gray-600 mt-1">Manage your personal information</p>
+        <div className="flex items-center space-x-3">
+          {onBack && (
+            <button onClick={onBack} className="text-gray-500 hover:text-gray-700 transition">
+              <ArrowLeft size={24} />
+            </button>
+          )}
+          <div>
+            <h2 className="text-3xl font-bold text-gray-900">{onBack ? `${userData.full_name}'s Profile` : 'My Profile'}</h2>
+            <p className="text-gray-600 mt-1">{onBack ? 'Viewing player profile' : 'Manage your personal information'}</p>
+          </div>
         </div>
         {!editing && (
           <button
@@ -455,7 +487,7 @@ export default function Profile({ userId, userRole }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -577,6 +609,33 @@ export default function Profile({ userId, userRole }) {
             </div>
           )}
 
+          {activeProfileTab === 'codes' && (
+            <div>
+              <h4 className="text-lg font-semibold text-gray-900 mb-4">Discount Codes</h4>
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Vendor</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Code</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discountCodes.map(c => (
+                    <tr key={c.id} className="border-b border-gray-100">
+                      <td className="py-3 px-4 text-sm text-gray-900">{c.vendor || '—'}</td>
+                      <td className="py-3 px-4 text-sm text-gray-900 font-mono">{c.code || '—'}</td>
+                    </tr>
+                  ))}
+                  {discountCodes.length === 0 && (
+                    <tr>
+                      <td colSpan={2} className="py-8 text-center text-gray-500">No discount codes available.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {activeProfileTab === 'general' && (
           <>
           {/* Contact Information */}
@@ -605,6 +664,60 @@ export default function Profile({ userId, userRole }) {
                     />
                   ) : (
                     <p className="text-gray-900">{userData.phone || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Instagram className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Instagram</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.instagram}
+                      onChange={(e) => setEditForm({...editForm, instagram: e.target.value})}
+                      placeholder="@username"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.instagram || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Twitter className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Twitter</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.twitter}
+                      onChange={(e) => setEditForm({...editForm, twitter: e.target.value})}
+                      placeholder="@username"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.twitter || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Building2 className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Organization</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.organization}
+                      onChange={(e) => setEditForm({...editForm, organization: e.target.value})}
+                      placeholder="Enter organization"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.organization || 'Not set'}</p>
                   )}
                 </div>
               </div>
