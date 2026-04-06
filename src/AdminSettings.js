@@ -154,6 +154,16 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
             >
               Codes
             </button>
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
+                activeTab === 'inventory'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Inventory
+            </button>
           </nav>
         </div>
 
@@ -199,6 +209,9 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
           )}
           {activeTab === 'codes' && (
             <CodesTab />
+          )}
+          {activeTab === 'inventory' && (
+            <InventoryTab />
           )}
         </div>
       </div>
@@ -2546,6 +2559,254 @@ function CodesTab() {
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ============================================
+// INVENTORY TAB
+// ============================================
+
+const INVENTORY_CATEGORIES = ['Socks', 'Belts', 'Hats', 'Shorts', 'Shirts', 'Jerseys', 'Sweatshirts', 'Long Sleeve', 'Pants'];
+
+function InventoryTab() {
+  const [items, setItems] = useState([]);
+  const [threshold, setThreshold] = useState(5);
+  const [settingsId, setSettingsId] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { fetchInventory(); }, []);
+
+  const fetchInventory = async () => {
+    const [{ data: itemData }, { data: settingsData }] = await Promise.all([
+      supabase.from('inventory_items').select('*').order('category').order('item').order('color').order('size'),
+      supabase.from('inventory_settings').select('*').limit(1).single(),
+    ]);
+    setItems(itemData || []);
+    if (settingsData) {
+      setThreshold(settingsData.low_stock_threshold);
+      setSettingsId(settingsData.id);
+    }
+    setLoading(false);
+  };
+
+  const addRow = async () => {
+    const { data, error } = await supabase
+      .from('inventory_items')
+      .insert({ category: '', item: '', color: '', size: '', qty_in_stock: 0, on_order: 0 })
+      .select()
+      .single();
+    if (error) { alert('Error adding row: ' + error.message); return; }
+    setItems([...items, data]);
+  };
+
+  const updateItem = async (id, field, value) => {
+    const isNumber = field === 'qty_in_stock' || field === 'on_order';
+    const val = isNumber ? (parseInt(value) || 0) : value;
+    const { error } = await supabase
+      .from('inventory_items')
+      .update({ [field]: val, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) { console.error('Error updating item:', error); return; }
+    setItems(prev => prev.map(i => i.id === id ? { ...i, [field]: val } : i));
+  };
+
+  const deleteItem = async (id) => {
+    const { error } = await supabase.from('inventory_items').delete().eq('id', id);
+    if (error) { console.error('Error deleting item:', error); return; }
+    setItems(prev => prev.filter(i => i.id !== id));
+  };
+
+  const updateThreshold = async (value) => {
+    const val = parseInt(value) || 0;
+    setThreshold(val);
+    if (settingsId) {
+      await supabase.from('inventory_settings').update({ low_stock_threshold: val }).eq('id', settingsId);
+    }
+  };
+
+  const getStatus = (qty) => {
+    if (qty <= 0) return { label: 'OUT OF STOCK', color: 'bg-red-100 text-red-700' };
+    if (qty <= threshold) return { label: 'LOW STOCK', color: 'bg-yellow-100 text-yellow-700' };
+    return { label: 'OK', color: 'bg-green-100 text-green-700' };
+  };
+
+  // Summary metrics
+  const totalSKUs = items.length;
+  const totalInStock = items.reduce((sum, i) => sum + (i.qty_in_stock || 0), 0);
+  const totalOnOrder = items.reduce((sum, i) => sum + (i.on_order || 0), 0);
+  const totalExpected = totalInStock + totalOnOrder;
+  const outOfStockCount = items.filter(i => (i.qty_in_stock || 0) <= 0).length;
+  const lowStockCount = items.filter(i => (i.qty_in_stock || 0) > 0 && (i.qty_in_stock || 0) <= threshold).length;
+  const okCount = items.filter(i => (i.qty_in_stock || 0) > threshold).length;
+
+  // Stock by category
+  const categoryStats = {};
+  items.forEach(i => {
+    const cat = i.category || 'Uncategorized';
+    if (!categoryStats[cat]) categoryStats[cat] = { inStock: 0, onOrder: 0 };
+    categoryStats[cat].inStock += i.qty_in_stock || 0;
+    categoryStats[cat].onOrder += i.on_order || 0;
+  });
+
+  if (loading) return <div className="text-gray-600">Loading inventory...</div>;
+
+  return (
+    <div className="space-y-6">
+      {/* Dashboard Summary */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Key Metrics */}
+        <div className="bg-gray-50 rounded-lg p-5">
+          <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Key Metrics</h4>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <span className="text-gray-600">Total SKUs</span><span className="font-semibold text-gray-900">{totalSKUs}</span>
+            <span className="text-gray-600">Total Units in Stock</span><span className="font-semibold text-gray-900">{totalInStock}</span>
+            <span className="text-gray-600">Total Units On Order</span><span className="font-semibold text-gray-900">{totalOnOrder}</span>
+            <span className="text-gray-600">Total Expected Stock</span><span className="font-semibold text-gray-900">{totalExpected}</span>
+          </div>
+          <div className="mt-4 space-y-1.5">
+            <div className="flex items-center space-x-2">
+              <span className="inline-block w-3 h-3 rounded bg-red-400"></span>
+              <span className="text-sm text-gray-700">Out of Stock: <strong>{outOfStockCount}</strong></span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="inline-block w-3 h-3 rounded bg-yellow-400"></span>
+              <span className="text-sm text-gray-700">Low Stock: <strong>{lowStockCount}</strong></span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="inline-block w-3 h-3 rounded bg-green-400"></span>
+              <span className="text-sm text-gray-700">OK: <strong>{okCount}</strong></span>
+            </div>
+          </div>
+          <div className="mt-4 pt-3 border-t border-gray-200">
+            <label className="block text-xs text-gray-500 mb-1">Low Stock Threshold</label>
+            <input
+              type="number"
+              min="0"
+              value={threshold}
+              onChange={(e) => updateThreshold(e.target.value)}
+              className="w-20 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Stock by Category */}
+        <div className="bg-gray-50 rounded-lg p-5">
+          <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Stock by Category</h4>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="text-left py-1.5 font-semibold text-gray-700">Category</th>
+                <th className="text-right py-1.5 font-semibold text-gray-700">In Stock</th>
+                <th className="text-right py-1.5 font-semibold text-gray-700">On Order</th>
+                <th className="text-right py-1.5 font-semibold text-gray-700">Expected</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(categoryStats).sort(([a], [b]) => a.localeCompare(b)).map(([cat, stats]) => (
+                <tr key={cat} className="border-b border-gray-100">
+                  <td className="py-1.5 text-gray-900">{cat}</td>
+                  <td className="py-1.5 text-right text-gray-700">{stats.inStock}</td>
+                  <td className="py-1.5 text-right text-gray-700">{stats.onOrder}</td>
+                  <td className="py-1.5 text-right font-medium text-gray-900">{stats.inStock + stats.onOrder}</td>
+                </tr>
+              ))}
+              {Object.keys(categoryStats).length === 0 && (
+                <tr><td colSpan={4} className="py-4 text-center text-gray-500">No data yet</td></tr>
+              )}
+              {Object.keys(categoryStats).length > 0 && (
+                <tr className="font-semibold">
+                  <td className="py-1.5 text-gray-900">TOTAL</td>
+                  <td className="py-1.5 text-right text-gray-900">{totalInStock}</td>
+                  <td className="py-1.5 text-right text-gray-900">{totalOnOrder}</td>
+                  <td className="py-1.5 text-right text-gray-900">{totalExpected}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Inventory Table */}
+      <div>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">All Items</h3>
+          <button
+            onClick={addRow}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+          >
+            <Plus size={18} />
+            <span>Add Row</span>
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="text-left py-3 px-3 text-sm font-semibold text-gray-700">Category</th>
+                <th className="text-left py-3 px-3 text-sm font-semibold text-gray-700">Item</th>
+                <th className="text-left py-3 px-3 text-sm font-semibold text-gray-700">Color</th>
+                <th className="text-left py-3 px-3 text-sm font-semibold text-gray-700">Size</th>
+                <th className="text-right py-3 px-3 text-sm font-semibold text-gray-700">Qty in Stock</th>
+                <th className="text-right py-3 px-3 text-sm font-semibold text-gray-700">On Order</th>
+                <th className="text-right py-3 px-3 text-sm font-semibold text-gray-700">Expected Stock</th>
+                <th className="text-center py-3 px-3 text-sm font-semibold text-gray-700">Status</th>
+                <th className="py-3 px-3 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(item => {
+                const expected = (item.qty_in_stock || 0) + (item.on_order || 0);
+                const status = getStatus(item.qty_in_stock || 0);
+                return (
+                  <tr key={item.id} className="border-b border-gray-100">
+                    <td className="py-2 px-3">
+                      <select
+                        defaultValue={item.category}
+                        onChange={(e) => updateItem(item.id, 'category', e.target.value)}
+                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                      >
+                        <option value="">Select</option>
+                        {INVENTORY_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      </select>
+                    </td>
+                    <td className="py-2 px-3">
+                      <input type="text" defaultValue={item.item} onBlur={(e) => updateItem(item.id, 'item', e.target.value)} placeholder="Item name" className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </td>
+                    <td className="py-2 px-3">
+                      <input type="text" defaultValue={item.color} onBlur={(e) => updateItem(item.id, 'color', e.target.value)} placeholder="Color" className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </td>
+                    <td className="py-2 px-3">
+                      <input type="text" defaultValue={item.size} onBlur={(e) => updateItem(item.id, 'size', e.target.value)} placeholder="Size" className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </td>
+                    <td className="py-2 px-3">
+                      <input type="number" min="0" defaultValue={item.qty_in_stock} onBlur={(e) => updateItem(item.id, 'qty_in_stock', e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 text-right" />
+                    </td>
+                    <td className="py-2 px-3">
+                      <input type="number" min="0" defaultValue={item.on_order} onBlur={(e) => updateItem(item.id, 'on_order', e.target.value)} className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 text-right" />
+                    </td>
+                    <td className="py-2 px-3 text-right text-sm font-medium text-gray-900">{expected}</td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${status.color}`}>{status.label}</span>
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      <button onClick={() => deleteItem(item.id)} className="text-red-400 hover:text-red-600 transition">
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="py-8 text-center text-gray-500">No inventory items yet. Click "Add Row" to create one.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
