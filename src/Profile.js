@@ -30,7 +30,7 @@ const PROFILE_TABS = [
 ];
 
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
-const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered'];
+const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered', 'Committed'];
 
 export default function Profile({ userId, userRole, onBack }) {
   const [userData, setUserData] = useState(null);
