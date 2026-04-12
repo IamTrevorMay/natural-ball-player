@@ -10,7 +10,8 @@ import MyTeam from './MyTeam';
 import KnowledgeBase from './KnowledgeBase';
 import ManageAthletes from './ManageAthletes';
 import ManageCoaches from './ManageCoaches';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog } from 'lucide-react';
+import WaiverPage from './WaiverPage';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -19,6 +20,16 @@ export default function App() {
   const [userRole, setUserRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
+  const [waiverSigned, setWaiverSigned] = useState(null);
+
+  const checkWaiverStatus = async (uid) => {
+    const { data } = await supabase
+      .from('waiver_signatures')
+      .select('id')
+      .eq('user_id', uid)
+      .maybeSingle();
+    setWaiverSigned(!!data);
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -26,6 +37,7 @@ export default function App() {
       if (session) {
         setUserId(session.user.id);
         fetchUserRole(session.user.id);
+        checkWaiverStatus(session.user.id);
       }
       setLoading(false);
     });
@@ -37,9 +49,11 @@ export default function App() {
       if (session) {
         setUserId(session.user.id);
         fetchUserRole(session.user.id);
+        checkWaiverStatus(session.user.id);
       } else {
         setUserRole(null);
         setUserId(null);
+        setWaiverSigned(null);
       }
     });
 
@@ -106,6 +120,8 @@ export default function App() {
         onLogout={handleLogout}
         currentView={currentView}
         setCurrentView={setCurrentView}
+        waiverSigned={waiverSigned}
+        setWaiverSigned={setWaiverSigned}
       />
     </div>
   );
@@ -168,7 +184,7 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView }) {
+function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, waiverSigned, setWaiverSigned }) {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [pendingSlotCount, setPendingSlotCount] = useState(0);
   const [pendingSlotDetails, setPendingSlotDetails] = useState([]);
@@ -299,6 +315,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         onLogout={onLogout}
         unreadMessageCount={unreadMessageCount}
         pendingSlotCount={pendingSlotCount}
+        waiverSigned={waiverSigned}
       />
       <div className="flex-1 ml-64">
         {/* Sticky header with notification bell */}
@@ -367,7 +384,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && (
               userRole === 'player' ? (
-                <PlayerDashboard userId={userId} />
+                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} />
               ) : (
                 <AdminDashboard userId={userId} userRole={userRole} setCurrentView={setCurrentView} />
               )
@@ -381,6 +398,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
             {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'waiver' && <WaiverPage userId={userId} userRole={userRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
           </div>
         </div>
@@ -389,7 +407,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0 }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned }) {
   return (
     <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-6 flex flex-col">
       <div className="mb-8">
@@ -423,7 +441,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           )}
         </button>
 
-        <button 
+        <button
           onClick={() => setCurrentView('profile')}
           className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
             currentView === 'profile' ? 'bg-blue-600' : 'hover:bg-gray-800'
@@ -433,7 +451,20 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <span>Profile</span>
         </button>
 
-        <button 
+        <button
+          onClick={() => setCurrentView('waiver')}
+          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+            currentView === 'waiver' ? 'bg-blue-600' : 'hover:bg-gray-800'
+          }`}
+        >
+          <FileText size={20} />
+          <span className="flex-1 text-left">Waiver</span>
+          {waiverSigned === false && (
+            <span className="w-2.5 h-2.5 bg-red-500 rounded-full flex-shrink-0"></span>
+          )}
+        </button>
+
+        <button
           onClick={() => setCurrentView('team')}
           className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
             currentView === 'team' ? 'bg-blue-600' : 'hover:bg-gray-800'

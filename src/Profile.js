@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -26,6 +26,7 @@ const PROFILE_TABS = [
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
+  { key: 'waiver', label: 'Waiver' },
   { key: 'codes', label: 'Codes' },
 ];
 
@@ -45,12 +46,14 @@ export default function Profile({ userId, userRole, onBack }) {
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
   const [discountCodes, setDiscountCodes] = useState([]);
+  const [waiverData, setWaiverData] = useState(null);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
     fetchUserData();
     fetchRecruitmentTeams();
     fetchDiscountCodes();
+    fetchWaiverData();
   }, [userId]);
 
   const fetchUserData = async () => {
@@ -272,6 +275,20 @@ export default function Profile({ userId, userRole, onBack }) {
     }
   };
 
+  const fetchWaiverData = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('waiver_signatures')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      setWaiverData(data);
+    } catch (error) {
+      console.error('Error fetching waiver data:', error);
+    }
+  };
+
   const addRecruitmentTeam = async () => {
     try {
       const { data, error } = await supabase
@@ -487,7 +504,7 @@ export default function Profile({ userId, userRole, onBack }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -633,6 +650,65 @@ export default function Profile({ userId, userRole, onBack }) {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {activeProfileTab === 'waiver' && (
+            <div>
+              {waiverData ? (
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2 mb-4">
+                    <CheckCircle className="text-green-600" size={20} />
+                    <span className="font-semibold text-green-700">Waiver Signed</span>
+                    <span className="text-sm text-gray-500 ml-2">
+                      on {new Date(waiverData.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-600">Participant Name</p>
+                      <p className="text-gray-900 font-medium">{waiverData.participant_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 mb-1">Participant Signature</p>
+                      <img src={waiverData.participant_signature_url} alt="Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                    </div>
+                  </div>
+                  {waiverData.is_minor && (
+                    <div className="border-t border-gray-200 pt-4 mt-4">
+                      <p className="text-sm font-semibold text-gray-700 mb-3">Parent / Guardian</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <p className="text-sm text-gray-600">Guardian Name</p>
+                          <p className="text-gray-900 font-medium">{waiverData.guardian_name}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Relationship</p>
+                          <p className="text-gray-900 font-medium">{waiverData.guardian_relationship}</p>
+                        </div>
+                        {waiverData.emergency_phone && (
+                          <div>
+                            <p className="text-sm text-gray-600">Emergency Phone</p>
+                            <p className="text-gray-900 font-medium">{waiverData.emergency_phone}</p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-3">
+                        <p className="text-sm text-gray-600 mb-1">Guardian Signature</p>
+                        <img src={waiverData.guardian_signature_url} alt="Guardian Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <XCircle className="mx-auto text-gray-300 mb-3" size={36} />
+                  <p className="text-gray-500">Waiver not yet signed</p>
+                  {!onBack && (
+                    <p className="text-sm text-gray-400 mt-1">Go to the Waiver page from the sidebar to sign.</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

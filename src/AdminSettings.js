@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle } from 'lucide-react';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -31,8 +31,10 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
   const [showCreateProspect, setShowCreateProspect] = useState(false);
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [waiverSignatures, setWaiverSignatures] = useState([]);
 
   const coaches = users.filter(u => u.role === 'coach');
+  const players = users.filter(u => u.role === 'player');
 
   const fetchProspects = async () => {
     const { data, error } = await supabase
@@ -43,10 +45,19 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
     else setProspects(data || []);
   };
 
+  const fetchWaiverSignatures = async () => {
+    const { data, error } = await supabase
+      .from('waiver_signatures')
+      .select('*');
+    if (error) console.error('Error fetching waiver signatures:', error);
+    else setWaiverSignatures(data || []);
+  };
+
   useEffect(() => {
     fetchTeams();
     fetchUsers();
     fetchProspects();
+    fetchWaiverSignatures();
   }, []);
 
   const fetchTeams = async () => {
@@ -164,6 +175,16 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
             >
               Inventory
             </button>
+            <button
+              onClick={() => setActiveTab('waivers')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
+                activeTab === 'waivers'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Waivers ({waiverSignatures.length}/{players.length} signed)
+            </button>
           </nav>
         </div>
 
@@ -212,6 +233,9 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
           )}
           {activeTab === 'inventory' && (
             <InventoryTab />
+          )}
+          {activeTab === 'waivers' && (
+            <WaiversTab players={players} waiverSignatures={waiverSignatures} />
           )}
         </div>
       </div>
@@ -2806,6 +2830,71 @@ function InventoryTab() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// WAIVERS TAB
+// ============================================
+function WaiversTab({ players, waiverSignatures }) {
+  const waiverMap = {};
+  waiverSignatures.forEach(w => { waiverMap[w.user_id] = w; });
+
+  const sorted = [...players].sort((a, b) => {
+    const aHas = waiverMap[a.id] ? 1 : 0;
+    const bHas = waiverMap[b.id] ? 1 : 0;
+    if (aHas !== bHas) return aHas - bHas; // unsigned first
+    return (a.full_name || '').localeCompare(b.full_name || '');
+  });
+
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">Player Waiver Status</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Player Name</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Email</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Status</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Date Signed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(player => {
+              const waiver = waiverMap[player.id];
+              return (
+                <tr key={player.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-4 text-sm text-gray-900 font-medium">{player.full_name}</td>
+                  <td className="py-3 px-4 text-sm text-gray-600">{player.email}</td>
+                  <td className="py-3 px-4">
+                    {waiver ? (
+                      <span className="inline-flex items-center space-x-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                        <CheckCircle size={12} />
+                        <span>Signed</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center space-x-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">
+                        <XCircle size={12} />
+                        <span>Unsigned</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-gray-600">
+                    {waiver ? new Date(waiver.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={4} className="py-8 text-center text-gray-500">No players found.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

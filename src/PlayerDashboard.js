@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle } from 'lucide-react';
+import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTriangle } from 'lucide-react';
 
-export default function PlayerDashboard({ userId }) {
+export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }) {
   const [loading, setLoading] = useState(true);
   const [playerData, setPlayerData] = useState(null);
   const [todaySchedule, setTodaySchedule] = useState([]);
@@ -247,6 +247,22 @@ export default function PlayerDashboard({ userId }) {
 
   return (
     <div className="space-y-6">
+      {/* Waiver Banner */}
+      {waiverSigned === false && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <AlertTriangle className="text-amber-600 flex-shrink-0" size={20} />
+            <p className="text-sm font-medium text-amber-800">Action Required: Please sign your waiver to continue.</p>
+          </div>
+          <button
+            onClick={() => setCurrentView('waiver')}
+            className="bg-amber-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-amber-700 transition"
+          >
+            Sign Now
+          </button>
+        </div>
+      )}
+
       {/* Welcome Header */}
       <div>
         <h2 className="text-3xl font-bold text-gray-900">
