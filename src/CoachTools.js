@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
+import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 
 export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('schedule');
@@ -653,6 +653,8 @@ function TrainingTab({ teams, players }) {
   const [expandedWorkout, setExpandedWorkout] = useState(null);
   const [editingWorkout, setEditingWorkout] = useState(null);
   const [editingProgram, setEditingProgram] = useState(null);
+  const [workoutViewMode, setWorkoutViewMode] = useState('list');
+  const [expandedPrograms, setExpandedPrograms] = useState(new Set());
 
   useEffect(() => { fetchPrograms(); fetchWorkoutTemplates(); }, []);
 
@@ -708,7 +710,13 @@ function TrainingTab({ teams, players }) {
       {trainingSubTab === 'workouts' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold text-gray-900">Individual Workouts</h3>
+            <div className="flex items-center space-x-3">
+              <h3 className="text-lg font-semibold text-gray-900">Individual Workouts</h3>
+              <div className="flex bg-gray-100 rounded-full p-0.5">
+                <button onClick={() => setWorkoutViewMode('list')} className={`px-3 py-1 rounded-full text-xs font-medium transition ${workoutViewMode === 'list' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}>List</button>
+                <button onClick={() => setWorkoutViewMode('byProgram')} className={`px-3 py-1 rounded-full text-xs font-medium transition ${workoutViewMode === 'byProgram' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900'}`}>By Program</button>
+              </div>
+            </div>
             <button onClick={() => setShowCreateWorkout(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
               <Plus size={18} /><span>Create Workout</span>
             </button>
@@ -719,7 +727,7 @@ function TrainingTab({ teams, players }) {
               <Dumbbell size={40} className="mx-auto mb-3 text-gray-300" />
               <p>No workout templates yet. Create your first workout to get started!</p>
             </div>
-          ) : (
+          ) : workoutViewMode === 'list' ? (
             <div className="space-y-3">
               {workoutTemplates.map(wt => {
                 const exercises = wt.exercises || [];
@@ -772,6 +780,92 @@ function TrainingTab({ teams, players }) {
                   </div>
                 );
               })}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {Object.entries(
+                workoutTemplates.reduce((groups, wt) => {
+                  const program = (!wt.program || wt.program === 'No Program') ? 'Uncategorized' : wt.program;
+                  if (!groups[program]) groups[program] = [];
+                  groups[program].push(wt);
+                  return groups;
+                }, {})
+              )
+                .sort(([a], [b]) => a === 'Uncategorized' ? 1 : b === 'Uncategorized' ? -1 : a.localeCompare(b))
+                .map(([program, workouts]) => {
+                  const sorted = [...workouts].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                  const isExpanded = expandedPrograms.has(program);
+                  return (
+                    <div key={program} className="border border-gray-200 rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => setExpandedPrograms(prev => {
+                          const next = new Set(prev);
+                          if (next.has(program)) next.delete(program); else next.add(program);
+                          return next;
+                        })}
+                        className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition"
+                      >
+                        <div className="flex items-center space-x-2">
+                          {isExpanded ? <ChevronDown size={18} className="text-gray-500" /> : <ChevronRight size={18} className="text-gray-500" />}
+                          <span className="font-semibold text-gray-900">{program}</span>
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-600">{sorted.length}</span>
+                        </div>
+                      </button>
+                      {isExpanded && (
+                        <div className="border-t border-gray-200 bg-gray-50/50 p-3 space-y-3">
+                          {sorted.map(wt => {
+                            const exercises = wt.exercises || [];
+                            return (
+                              <div key={wt.id} className="bg-gray-50 rounded-lg p-4">
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <div className="flex items-center space-x-3">
+                                      <span className="font-semibold text-gray-900">{wt.name}</span>
+                                      {wt.folder && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-600">{wt.folder}</span>}
+                                    </div>
+                                    <p className="text-sm text-gray-500 mt-1">{exercises.length} exercise{exercises.length !== 1 ? 's' : ''}</p>
+                                    {wt.notes && <p className="text-xs text-gray-400 mt-1">{wt.notes}</p>}
+                                  </div>
+                                  <div className="flex items-center space-x-2 ml-4">
+                                    <button onClick={() => setEditingWorkout(wt)} className="text-gray-400 hover:text-blue-600 transition" title="Edit"><Edit2 size={16} /></button>
+                                    <button onClick={() => setExpandedWorkout(expandedWorkout === wt.id ? null : wt.id)} className="text-gray-400 hover:text-gray-600 transition">
+                                      {expandedWorkout === wt.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                                    </button>
+                                    <button onClick={() => handleDeleteWorkout(wt.id)} className="text-gray-400 hover:text-red-600 transition"><Trash2 size={16} /></button>
+                                  </div>
+                                </div>
+                                {expandedWorkout === wt.id && exercises.length > 0 && (
+                                  <div className="mt-3 pt-3 border-t border-gray-200">
+                                    <table className="w-full text-sm">
+                                      <thead>
+                                        <tr className="text-left text-xs text-gray-500">
+                                          <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {exercises.map((ex, i) => (
+                                          <tr key={i} className="border-t border-gray-100">
+                                            <td className="py-2 text-gray-900">{ex.name}</td>
+                                            <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
+                                            <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
+                                            <td className="py-2 text-gray-600">{ex.rest || '—'}</td>
+                                            <td className="py-2 text-gray-600">{ex.load || '—'}</td>
+                                            <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
+                                            <td className="py-2 text-gray-600">{ex.superSet || ex.super_set || '—'}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           )}
 
