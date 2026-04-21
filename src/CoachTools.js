@@ -122,8 +122,9 @@ function ScheduleTab({ teams }) {
               </div>
               <div className="text-sm text-gray-600 mt-1">
                 {new Date(event.event_date).toLocaleDateString()}
-                {event.event_time && ` • ${event.event_time}`}
+                {event.event_time && ` • ${event.event_time}${event.event_end_time ? `–${event.event_end_time}` : ''}`}
                 {event.location && ` • ${event.location}`}
+                {event.recurrence_rule && ` • ${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}`}
               </div>
               {event.teams && <div className="text-xs text-gray-500 mt-1">Team: {event.teams.name}</div>}
               {event.lanes && event.lanes.length > 0 && (
@@ -149,17 +150,111 @@ function ScheduleTab({ teams }) {
   );
 }
 
+function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit) {
+  const dates = [];
+  const start = new Date(startDate + 'T00:00:00');
+  const end = new Date(endDate + 'T00:00:00');
+  if (isNaN(start) || isNaN(end) || end < start) return [startDate];
+  const step = (d) => {
+    if (rule === 'daily') d.setDate(d.getDate() + 1);
+    else if (rule === 'weekly') d.setDate(d.getDate() + 7);
+    else if (rule === 'biweekly') d.setDate(d.getDate() + 14);
+    else if (rule === 'monthly') d.setMonth(d.getMonth() + 1);
+    else if (rule === 'custom') {
+      const n = Math.max(1, parseInt(interval) || 1);
+      if (customUnit === 'weeks') d.setDate(d.getDate() + 7 * n);
+      else if (customUnit === 'months') d.setMonth(d.getMonth() + n);
+      else d.setDate(d.getDate() + n);
+    }
+  };
+  let cur = new Date(start);
+  let safety = 0;
+  while (cur <= end && safety < 2000) {
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth() + 1).padStart(2, '0');
+    const d = String(cur.getDate()).padStart(2, '0');
+    dates.push(`${y}-${m}-${d}`);
+    step(cur);
+    safety++;
+  }
+  return dates;
+}
+
 function CreateScheduleModal({ teams, onClose, onSuccess }) {
   const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
-  const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '', lanes: [] });
+  const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', event_end_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '', lanes: [] });
+  const [recurrence, setRecurrence] = useState('none');
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState('');
+  const [customInterval, setCustomInterval] = useState(1);
+  const [customUnit, setCustomUnit] = useState('weeks');
+  const [locationSuggestions, setLocationSuggestions] = useState([]);
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      const { data } = await supabase.from('schedule_events').select('location, address');
+      if (!data) return;
+      const locs = [...new Set(data.map(r => r.location).filter(Boolean))].sort();
+      const addrs = [...new Set(data.map(r => r.address).filter(Boolean))].sort();
+      setLocationSuggestions(locs);
+      setAddressSuggestions(addrs);
+    };
+    fetchSuggestions();
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
-    const { error: insertError } = await supabase.from('schedule_events').insert({ ...formData, home_away: formData.event_type === 'game' ? formData.home_away : null, lanes: formData.lanes.length > 0 ? formData.lanes : null });
-    if (insertError) { setError(insertError.message); setLoading(false); } else { alert('Event created successfully!'); onSuccess(); }
+    const baseRow = {
+      ...formData,
+      event_end_time: formData.event_end_time || null,
+      home_away: formData.event_type === 'game' ? formData.home_away : null,
+      lanes: formData.lanes.length > 0 ? formData.lanes : null,
+    };
+
+    if (recurrence === 'none') {
+      const { error: insertError } = await supabase.from('schedule_events').insert(baseRow);
+      if (insertError) { setError(insertError.message); setLoading(false); return; }
+      alert('Event created successfully!'); onSuccess();
+      return;
+    }
+
+    if (!recurrenceEndDate) {
+      setError('Please select an end date for the recurring event.');
+      setLoading(false);
+      return;
+    }
+
+    const dates = generateRecurrenceDates(formData.event_date, recurrence, customInterval, recurrenceEndDate, customUnit);
+    if (dates.length === 0) { setError('No occurrences generated.'); setLoading(false); return; }
+
+    const parentRow = {
+      ...baseRow,
+      event_date: dates[0],
+      recurrence_rule: recurrence,
+      recurrence_interval: recurrence === 'custom' ? parseInt(customInterval) || 1 : null,
+      recurrence_end_date: recurrenceEndDate,
+    };
+    const { data: parent, error: parentErr } = await supabase.from('schedule_events').insert(parentRow).select('id').single();
+    if (parentErr) { setError(parentErr.message); setLoading(false); return; }
+
+    if (dates.length > 1) {
+      const children = dates.slice(1).map(d => ({
+        ...baseRow,
+        event_date: d,
+        recurrence_parent_id: parent.id,
+      }));
+      const { error: childErr } = await supabase.from('schedule_events').insert(children);
+      if (childErr) { setError(childErr.message); setLoading(false); return; }
+    }
+
+    alert(`Created ${dates.length} event${dates.length !== 1 ? 's' : ''}!`);
+    onSuccess();
   };
+
+  const recurrenceNeedsEnd = recurrence !== 'none';
+  const customUnitLabel = customUnit === 'days' ? 'day' : customUnit === 'weeks' ? 'week' : 'month';
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -170,6 +265,12 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
+          <datalist id="schedule-location-suggestions">
+            {locationSuggestions.map(l => <option key={l} value={l} />)}
+          </datalist>
+          <datalist id="schedule-address-suggestions">
+            {addressSuggestions.map(a => <option key={a} value={a} />)}
+          </datalist>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Team *</label>
@@ -193,16 +294,53 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
               <input type="date" required value={formData.event_date} onChange={(e) => setFormData({...formData, event_date: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Time *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Start Time *</label>
               <input type="time" required value={formData.event_time} onChange={(e) => setFormData({...formData, event_time: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">End Time</label>
+              <input type="time" value={formData.event_end_time} onChange={(e) => setFormData({...formData, event_end_time: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Repeats</label>
+              <select value={recurrence} onChange={(e) => setRecurrence(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="none">Does not repeat</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="biweekly">Biweekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            {recurrence === 'custom' && (
+              <div className="col-span-2 grid grid-cols-2 gap-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Repeat every</label>
+                  <div className="flex items-center space-x-2">
+                    <input type="number" min="1" value={customInterval} onChange={(e) => setCustomInterval(e.target.value)} className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <select value={customUnit} onChange={(e) => setCustomUnit(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="days">day{customInterval > 1 ? 's' : ''}</option>
+                      <option value="weeks">week{customInterval > 1 ? 's' : ''}</option>
+                      <option value="months">month{customInterval > 1 ? 's' : ''}</option>
+                    </select>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Every {customInterval} {customUnitLabel}{customInterval > 1 ? 's' : ''}</p>
+                </div>
+              </div>
+            )}
+            {recurrenceNeedsEnd && (
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Ends On *</label>
+                <input type="date" required value={recurrenceEndDate} onChange={(e) => setRecurrenceEndDate(e.target.value)} min={formData.event_date || undefined} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            )}
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Location *</label>
-              <input type="text" required placeholder="e.g., Home Field" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" required list="schedule-location-suggestions" autoComplete="off" placeholder="e.g., Home Field" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
-              <input type="text" placeholder="Full address" value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" list="schedule-address-suggestions" autoComplete="off" placeholder="Full address" value={formData.address} onChange={(e) => setFormData({...formData, address: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             {formData.event_type === 'game' && (
               <div>
@@ -251,7 +389,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
    ROSTER TAB
    ============================================ */
 
-const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'Meals', 'Throwing', 'Catching', 'Infield', 'Outfield', 'No Program'];
+const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Meals', 'Rehab', 'Throwing', 'Catching', 'Infield', 'Outfield', 'No Program'];
 const FOLDER_OPTIONS = ['No Folder', 'Warmup', 'In-Season', 'Off-Season', 'Recovery', 'Assessment', 'Body Builder', 'Cardio', 'High School', 'Youth', 'Youth Weighted', 'College', 'Pro', 'Submarine', 'Eccentric', 'Football', 'Soccer', 'Basketball', 'Cricket'];
 const SUPER_SET_OPTIONS = ['', ...['A','B','C','D','E','F','G'].flatMap(l => [1,2,3,4,5].map(n => `${l}${n}`))];
 const LEVEL_OPTIONS =['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];

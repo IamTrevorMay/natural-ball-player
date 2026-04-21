@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -90,6 +90,10 @@ export default function Profile({ userId, userRole, onBack }) {
         instagram: data.instagram || '',
         twitter: data.twitter || '',
         organization: data.organization || '',
+        parent1_name: data.parent1_name || '',
+        parent1_email: data.parent1_email || '',
+        parent2_name: data.parent2_name || '',
+        parent2_email: data.parent2_email || '',
       });
 
       // Fetch equipment sizes
@@ -133,6 +137,10 @@ export default function Profile({ userId, userRole, onBack }) {
           instagram: editForm.instagram || null,
           twitter: editForm.twitter || null,
           organization: editForm.organization || null,
+          parent1_name: editForm.parent1_name || null,
+          parent1_email: editForm.parent1_email || null,
+          parent2_name: editForm.parent2_name || null,
+          parent2_email: editForm.parent2_email || null,
         })
         .eq('id', userId);
 
@@ -191,6 +199,10 @@ export default function Profile({ userId, userRole, onBack }) {
       instagram: userData.instagram || '',
       twitter: userData.twitter || '',
       organization: userData.organization || '',
+      parent1_name: userData.parent1_name || '',
+      parent1_email: userData.parent1_email || '',
+      parent2_name: userData.parent2_name || '',
+      parent2_email: userData.parent2_email || '',
     });
     setEditEquipment({
       shirt: equipmentSizes.shirt || '',
@@ -727,6 +739,78 @@ export default function Profile({ userId, userRole, onBack }) {
               </div>
 
               <div className="flex items-center space-x-3">
+                <Users className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Parent 1 Name</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.parent1_name}
+                      onChange={(e) => setEditForm({...editForm, parent1_name: e.target.value})}
+                      placeholder="Enter parent name"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.parent1_name || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Mail className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Parent 1 Email</p>
+                  {editing ? (
+                    <input
+                      type="email"
+                      value={editForm.parent1_email}
+                      onChange={(e) => setEditForm({...editForm, parent1_email: e.target.value})}
+                      placeholder="Enter parent email"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.parent1_email || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Users className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Parent 2 Name</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.parent2_name}
+                      onChange={(e) => setEditForm({...editForm, parent2_name: e.target.value})}
+                      placeholder="Enter parent name"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.parent2_name || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Mail className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Parent 2 Email</p>
+                  {editing ? (
+                    <input
+                      type="email"
+                      value={editForm.parent2_email}
+                      onChange={(e) => setEditForm({...editForm, parent2_email: e.target.value})}
+                      placeholder="Enter parent email"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.parent2_email || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
                 <Phone className="text-gray-400" size={20} />
                 <div className="flex-1">
                   <p className="text-sm text-gray-600">Phone</p>
@@ -904,6 +988,34 @@ export default function Profile({ userId, userRole, onBack }) {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Gear Stores */}
+          <div className="mb-6">
+            <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+              <ShoppingBag className="text-gray-400" size={20} />
+              <span>Gear Stores</span>
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <a
+                href="https://naturalballplayer.myshopify.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between bg-blue-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+              >
+                <span>Natural Ballplayer Store</span>
+                <ExternalLink size={18} />
+              </a>
+              <a
+                href="https://www.dudesbaseball.club/product/gear/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between bg-gray-900 text-white px-4 py-3 rounded-lg font-medium hover:bg-gray-800 transition"
+              >
+                <span>NBP Dudes Store</span>
+                <ExternalLink size={18} />
+              </a>
             </div>
           </div>
 
