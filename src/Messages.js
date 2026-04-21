@@ -1129,10 +1129,15 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
       const participants = [];
 
       if (messageType === 'team_announcement') {
-        const { data: teamMembers } = await supabase
+        const { data: teamMembers, error: tmError } = await supabase
           .from('team_members')
           .select('user_id')
           .eq('team_id', formData.teamId);
+
+        if (tmError) throw tmError;
+        if (!teamMembers || teamMembers.length === 0) {
+          throw new Error('No members found for the selected team.');
+        }
 
         participants.push(...teamMembers.map(tm => ({
           conversation_id: conversation.id,
@@ -1174,6 +1179,7 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
 
       if (messageError) throw messageError;
 
+      setLoading(false);
       onSuccess();
     } catch (err) {
       setError(err.message);

@@ -216,6 +216,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
     if (recurrence === 'none') {
       const { error: insertError } = await supabase.from('schedule_events').insert(baseRow);
       if (insertError) { setError(insertError.message); setLoading(false); return; }
+      setLoading(false);
       alert('Event created successfully!'); onSuccess();
       return;
     }
@@ -249,6 +250,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
       if (childErr) { setError(childErr.message); setLoading(false); return; }
     }
 
+    setLoading(false);
     alert(`Created ${dates.length} event${dates.length !== 1 ? 's' : ''}!`);
     onSuccess();
   };

@@ -481,8 +481,16 @@ export default function Schedule({ userId, userRole }) {
                     userId={userId}
                     userRole={userRole}
                     onReserve={(slot) => setShowReserveSlot(slot)}
-                    onConfirm={async (reservationId) => { await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId); fetchCoachSlots(selectedCoach.id); }}
-                    onDecline={async (reservationId) => { await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId); fetchCoachSlots(selectedCoach.id); }}
+                    onConfirm={async (reservationId) => {
+                      const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
+                      if (error) { alert('Failed to confirm reservation: ' + error.message); return; }
+                      fetchCoachSlots(selectedCoach.id);
+                    }}
+                    onDecline={async (reservationId) => {
+                      const { error } = await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId);
+                      if (error) { alert('Failed to decline reservation: ' + error.message); return; }
+                      fetchCoachSlots(selectedCoach.id);
+                    }}
                   />
                 ) : viewMode === 'lanes' ? (
                   <LaneView
@@ -1038,6 +1046,28 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     });
   });
 
+  // Assign each lane's events to non-overlapping tracks so overlapping events render as stacked rows
+  const assignTracks = (entries) => {
+    const sorted = [...entries].sort((a, b) => a.startIdx - b.startIdx);
+    const tracks = [];
+    for (const entry of sorted) {
+      let placed = false;
+      for (const track of tracks) {
+        const last = track[track.length - 1];
+        if (last.startIdx + last.span <= entry.startIdx) {
+          track.push(entry);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) tracks.push([entry]);
+    }
+    return tracks;
+  };
+
+  const laneTracks = {};
+  LANES.forEach(lane => { laneTracks[lane] = assignTracks(laneEvents[lane]); });
+
   const formatLabel = (slot) => {
     const [h, m] = slot.split(':').map(Number);
     const ampm = h >= 12 ? 'PM' : 'AM';
@@ -1055,17 +1085,6 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     d.setDate(d.getDate() + 1);
     setLaneDate(d.toISOString().split('T')[0]);
   };
-
-  // Track which slots are occupied so we don't render empty cells inside a span
-  const occupied = {};
-  LANES.forEach(lane => { occupied[lane] = {}; });
-  LANES.forEach(lane => {
-    laneEvents[lane].forEach(({ startIdx, span }) => {
-      for (let i = startIdx; i < startIdx + span; i++) {
-        occupied[lane][i] = true;
-      }
-    });
-  });
 
   const handleEmptyClick = (lane, slot) => {
     if (!canManage || !onCellClick) return;
@@ -1112,49 +1131,61 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
             </tr>
           </thead>
           <tbody>
-            {LANES.map((lane) => (
-              <tr key={lane}>
-                <td className="border border-gray-200 bg-gray-50 px-2 py-2 text-xs font-semibold text-gray-700 sticky left-0 z-10" style={{ width: 130, minWidth: 130 }}>
-                  {lane}
-                </td>
-                {timeSlots.map((slot, slotIdx) => {
-                  const entry = laneEvents[lane].find(e => e.startIdx === slotIdx);
-                  if (entry) {
-                    const colorClasses = getFacilityColorClasses(entry.event.color, 'lane');
+            {LANES.flatMap((lane) => {
+              const tracks = laneTracks[lane];
+              const renderTracks = tracks.length === 0 ? [[]] : tracks;
+              return renderTracks.map((track, trackIdx) => (
+                <tr key={`${lane}-${trackIdx}`}>
+                  {trackIdx === 0 && (
+                    <td
+                      rowSpan={renderTracks.length}
+                      className="border border-gray-200 bg-gray-50 px-2 py-2 text-xs font-semibold text-gray-700 sticky left-0 z-10"
+                      style={{ width: 130, minWidth: 130 }}
+                    >
+                      {lane}
+                    </td>
+                  )}
+                  {timeSlots.map((slot, slotIdx) => {
+                    const entry = track.find(e => e.startIdx === slotIdx);
+                    if (entry) {
+                      const colorClasses = getFacilityColorClasses(entry.event.color, 'lane');
+                      return (
+                        <td
+                          key={slot}
+                          colSpan={entry.span}
+                          className="border border-gray-200 p-0.5 align-top"
+                          style={{ width: SLOT_WIDTH * entry.span }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => onEventClick && onEventClick(entry.event)}
+                            className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
+                          >
+                            <div className="font-semibold truncate text-xs">{entry.event.title || entry.event.opponent}</div>
+                            <div className="truncate text-[10px] opacity-80">
+                              {entry.event.start_time || entry.event.event_time}
+                              {entry.event.end_time ? `–${entry.event.end_time}` : ''}
+                            </div>
+                          </button>
+                        </td>
+                      );
+                    }
+                    // Skip cells consumed by the colSpan of an earlier event in this track
+                    const covered = track.some(e => slotIdx > e.startIdx && slotIdx < e.startIdx + e.span);
+                    if (covered) return null;
+                    const isHour = slot.endsWith(':00');
                     return (
                       <td
                         key={slot}
-                        colSpan={entry.span}
-                        className="border border-gray-200 p-0.5 align-top"
-                        style={{ width: SLOT_WIDTH * entry.span }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => onEventClick && onEventClick(entry.event)}
-                          className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
-                        >
-                          <div className="font-semibold truncate text-xs">{entry.event.title || entry.event.opponent}</div>
-                          <div className="truncate text-[10px] opacity-80">
-                            {entry.event.start_time || entry.event.event_time}
-                            {entry.event.end_time ? `–${entry.event.end_time}` : ''}
-                          </div>
-                        </button>
-                      </td>
+                        onClick={() => handleEmptyClick(lane, slot)}
+                        className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
+                        style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                      />
                     );
-                  }
-                  if (occupied[lane][slotIdx]) return null;
-                  const isHour = slot.endsWith(':00');
-                  return (
-                    <td
-                      key={slot}
-                      onClick={() => handleEmptyClick(lane, slot)}
-                      className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
-                      style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
-                    />
-                  );
-                })}
-              </tr>
-            ))}
+                  })}
+                </tr>
+              ));
+            })}
           </tbody>
         </table>
       </div>
@@ -2809,15 +2840,15 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
 // ============================================
 
 const FACILITY_EVENT_COLORS = [
-  { key: 'teal',   label: 'Teal',   month: 'bg-teal-100 text-teal-700 border-teal-200',     week: 'border-l-4 border-teal-500 bg-teal-50',     lane: 'bg-teal-100 border border-teal-300 text-teal-900',     dot: 'bg-teal-500' },
-  { key: 'blue',   label: 'Blue',   month: 'bg-blue-100 text-blue-700 border-blue-200',     week: 'border-l-4 border-blue-500 bg-blue-50',     lane: 'bg-blue-100 border border-blue-300 text-blue-900',     dot: 'bg-blue-500' },
-  { key: 'purple', label: 'Purple', month: 'bg-purple-100 text-purple-700 border-purple-200', week: 'border-l-4 border-purple-500 bg-purple-50', lane: 'bg-purple-100 border border-purple-300 text-purple-900', dot: 'bg-purple-500' },
-  { key: 'pink',   label: 'Pink',   month: 'bg-pink-100 text-pink-700 border-pink-200',     week: 'border-l-4 border-pink-500 bg-pink-50',     lane: 'bg-pink-100 border border-pink-300 text-pink-900',     dot: 'bg-pink-500' },
-  { key: 'red',    label: 'Red',    month: 'bg-red-100 text-red-700 border-red-200',        week: 'border-l-4 border-red-500 bg-red-50',       lane: 'bg-red-100 border border-red-300 text-red-900',        dot: 'bg-red-500' },
-  { key: 'orange', label: 'Orange', month: 'bg-orange-100 text-orange-700 border-orange-200', week: 'border-l-4 border-orange-500 bg-orange-50', lane: 'bg-orange-100 border border-orange-300 text-orange-900', dot: 'bg-orange-500' },
-  { key: 'yellow', label: 'Yellow', month: 'bg-yellow-100 text-yellow-700 border-yellow-200', week: 'border-l-4 border-yellow-500 bg-yellow-50', lane: 'bg-yellow-100 border border-yellow-300 text-yellow-900', dot: 'bg-yellow-500' },
-  { key: 'green',  label: 'Green',  month: 'bg-green-100 text-green-700 border-green-200',  week: 'border-l-4 border-green-500 bg-green-50',   lane: 'bg-green-100 border border-green-300 text-green-900',  dot: 'bg-green-500' },
-  { key: 'gray',   label: 'Gray',   month: 'bg-gray-100 text-gray-700 border-gray-200',     week: 'border-l-4 border-gray-500 bg-gray-50',     lane: 'bg-gray-100 border border-gray-300 text-gray-900',     dot: 'bg-gray-500' },
+  { key: 'teal',   label: 'Teal',   month: 'bg-teal-100 text-teal-700 border-teal-200',     week: 'border-l-4 border-teal-500 bg-teal-50',     lane: 'bg-teal-100 border border-teal-300 text-teal-900',     detail: 'bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200',     dot: 'bg-teal-500' },
+  { key: 'blue',   label: 'Blue',   month: 'bg-blue-100 text-blue-700 border-blue-200',     week: 'border-l-4 border-blue-500 bg-blue-50',     lane: 'bg-blue-100 border border-blue-300 text-blue-900',     detail: 'bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200',     dot: 'bg-blue-500' },
+  { key: 'purple', label: 'Purple', month: 'bg-purple-100 text-purple-700 border-purple-200', week: 'border-l-4 border-purple-500 bg-purple-50', lane: 'bg-purple-100 border border-purple-300 text-purple-900', detail: 'bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200', dot: 'bg-purple-500' },
+  { key: 'pink',   label: 'Pink',   month: 'bg-pink-100 text-pink-700 border-pink-200',     week: 'border-l-4 border-pink-500 bg-pink-50',     lane: 'bg-pink-100 border border-pink-300 text-pink-900',     detail: 'bg-gradient-to-br from-pink-50 to-pink-100 border-2 border-pink-200',     dot: 'bg-pink-500' },
+  { key: 'red',    label: 'Red',    month: 'bg-red-100 text-red-700 border-red-200',        week: 'border-l-4 border-red-500 bg-red-50',       lane: 'bg-red-100 border border-red-300 text-red-900',        detail: 'bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200',        dot: 'bg-red-500' },
+  { key: 'orange', label: 'Orange', month: 'bg-orange-100 text-orange-700 border-orange-200', week: 'border-l-4 border-orange-500 bg-orange-50', lane: 'bg-orange-100 border border-orange-300 text-orange-900', detail: 'bg-gradient-to-br from-orange-50 to-orange-100 border-2 border-orange-200', dot: 'bg-orange-500' },
+  { key: 'yellow', label: 'Yellow', month: 'bg-yellow-100 text-yellow-700 border-yellow-200', week: 'border-l-4 border-yellow-500 bg-yellow-50', lane: 'bg-yellow-100 border border-yellow-300 text-yellow-900', detail: 'bg-gradient-to-br from-yellow-50 to-yellow-100 border-2 border-yellow-200', dot: 'bg-yellow-500' },
+  { key: 'green',  label: 'Green',  month: 'bg-green-100 text-green-700 border-green-200',  week: 'border-l-4 border-green-500 bg-green-50',   lane: 'bg-green-100 border border-green-300 text-green-900',  detail: 'bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200',  dot: 'bg-green-500' },
+  { key: 'gray',   label: 'Gray',   month: 'bg-gray-100 text-gray-700 border-gray-200',     week: 'border-l-4 border-gray-500 bg-gray-50',     lane: 'bg-gray-100 border border-gray-300 text-gray-900',     detail: 'bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200',     dot: 'bg-gray-500' },
 ];
 
 function getFacilityColorClasses(colorKey, variant = 'month') {
@@ -3018,14 +3049,21 @@ function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
     } catch (err) { alert('Error: ' + err.message); }
   };
 
+  const headerColorKey = (editing ? formData.color : event.color) || 'teal';
+  const headerPalette = FACILITY_EVENT_COLORS.find(c => c.key === headerColorKey) || FACILITY_EVENT_COLORS[0];
+  const headerBg = headerPalette.detail;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200 p-6 rounded-t-lg">
+        <div className={`${headerBg} p-6 rounded-t-lg`}>
           <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-teal-600 mb-1">Facility Event</div>
-              <h3 className="text-xl font-bold text-gray-900">{event.title}</h3>
+            <div className="flex items-start space-x-3">
+              <span className={`w-3 h-3 rounded-full ${headerPalette.dot} mt-1.5 flex-shrink-0`} />
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-700 mb-1">Facility Event</div>
+                <h3 className="text-xl font-bold text-gray-900">{event.title}</h3>
+              </div>
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
           </div>
