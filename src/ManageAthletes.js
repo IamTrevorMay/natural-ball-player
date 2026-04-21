@@ -3,15 +3,30 @@ import { supabase } from './supabaseClient';
 import { Users, Search, Edit2, X } from 'lucide-react';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
 
-const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo'];
-const LEVEL_OPTIONS = ['Varsity', 'JV', 'Freshman', 'Travel', 'Rec'];
+const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo', 'Base Running', 'Physical Therapy', 'Recovery', 'Mobility', 'Meal Planning', 'Stretching'];
+const LEVEL_OPTIONS = ['8u', '9u', '10u', '11u', '12u', '13u', '14u', '15u', '16u', '17u', '18u', 'A', 'A+', 'AA', 'AAA', 'MLB', 'KBO', 'MEX', 'NPB'];
+const SUB_STATUS_OPTIONS = ['Catcher', 'Infielder', 'Outfielder', 'Pitcher'];
 
 const LEVEL_COLORS = {
-  'Varsity': 'bg-purple-600 text-white',
-  'JV': 'bg-indigo-500 text-white',
-  'Freshman': 'bg-blue-500 text-white',
-  'Travel': 'bg-amber-500 text-white',
-  'Rec': 'bg-teal-500 text-white',
+  '8u': 'bg-sky-400 text-white',
+  '9u': 'bg-sky-500 text-white',
+  '10u': 'bg-blue-400 text-white',
+  '11u': 'bg-blue-500 text-white',
+  '12u': 'bg-blue-600 text-white',
+  '13u': 'bg-indigo-400 text-white',
+  '14u': 'bg-indigo-500 text-white',
+  '15u': 'bg-indigo-600 text-white',
+  '16u': 'bg-violet-500 text-white',
+  '17u': 'bg-violet-600 text-white',
+  '18u': 'bg-purple-600 text-white',
+  'A': 'bg-teal-500 text-white',
+  'A+': 'bg-teal-600 text-white',
+  'AA': 'bg-amber-500 text-white',
+  'AAA': 'bg-orange-500 text-white',
+  'MLB': 'bg-red-600 text-white',
+  'KBO': 'bg-emerald-600 text-white',
+  'MEX': 'bg-green-600 text-white',
+  'NPB': 'bg-rose-600 text-white',
 };
 
 const STATUS_COLORS = {
@@ -37,7 +52,6 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const [teamCoachMap, setTeamCoachMap] = useState({});
 
   const { options: statusOptions, addOption: addStatusOption } = useStatusOptions('status');
-  const { options: subStatusOptions, addOption: addSubStatusOption } = useStatusOptions('sub_status');
   const isAdmin = userRole === 'admin';
 
   useEffect(() => { fetchRosterPlayers(); fetchTeamCoaches(); }, []);
@@ -215,7 +229,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                 <th className="px-2 py-2">
                   <select value={filterSubStatus} onChange={(e) => setFilterSubStatus(e.target.value)} className={filterSelectClass}>
                     <option value="All">All</option>
-                    {subStatusOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                    {SUB_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </th>
                 <th className="px-2 py-2"></th>
@@ -282,14 +296,14 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                       />
                     </td>
                     <td className="py-3 px-3">
-                      <StatusBadgeSelect
-                        value={profile.sub_status}
-                        options={subStatusOptions}
-                        colors={STATUS_COLORS}
-                        onChange={(val) => handleInlineUpdate(player.id, 'sub_status', val)}
-                        onAddOption={addSubStatusOption}
-                        isAdmin={isAdmin}
-                      />
+                      <select
+                        value={profile.sub_status || ''}
+                        onChange={(e) => handleInlineUpdate(player.id, 'sub_status', e.target.value)}
+                        className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                      >
+                        <option value="">—</option>
+                        {SUB_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
                     </td>
                     <td className="py-3 px-2">
                       <button
