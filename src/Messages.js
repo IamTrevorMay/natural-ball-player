@@ -1096,6 +1096,7 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
     recipientIds: [],
     content: ''
   });
+  const [recipientSearch, setRecipientSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1271,8 +1272,22 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Recipient * (select one)
               </label>
+              <input
+                type="text"
+                value={recipientSearch}
+                onChange={(e) => setRecipientSearch(e.target.value)}
+                placeholder="Search by name or role..."
+                className="w-full px-3 py-2 mb-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              />
               <div className="border border-gray-300 rounded-lg p-3 max-h-48 overflow-y-auto space-y-2">
-                {users.filter(u => u.id !== userId).map(user => (
+                {users
+                  .filter(u => u.id !== userId)
+                  .filter(u => {
+                    const q = recipientSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return (u.full_name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q);
+                  })
+                  .map(user => (
                   <label
                     key={user.id}
                     className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
@@ -1356,6 +1371,7 @@ function NewChatRoomModal({ users, userId, onClose, onSuccess }) {
     recipientIds: [],
     content: ''
   });
+  const [recipientSearch, setRecipientSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -1458,8 +1474,22 @@ function NewChatRoomModal({ users, userId, onClose, onSuccess }) {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Invite Members *
             </label>
+            <input
+              type="text"
+              value={recipientSearch}
+              onChange={(e) => setRecipientSearch(e.target.value)}
+              placeholder="Search by name or role..."
+              className="w-full px-3 py-2 mb-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            />
             <div className="border border-gray-300 rounded-lg p-3 max-h-48 overflow-y-auto space-y-2">
-              {users.filter(u => u.id !== userId).map(user => (
+              {users
+                .filter(u => u.id !== userId)
+                .filter(u => {
+                  const q = recipientSearch.trim().toLowerCase();
+                  if (!q) return true;
+                  return (u.full_name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q);
+                })
+                .map(user => (
                 <label
                   key={user.id}
                   className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-2 rounded"

@@ -79,6 +79,8 @@ export default function Schedule({ userId, userRole }) {
   const [players, setPlayers] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
+  const [selectedPlayers, setSelectedPlayers] = useState([]);
+  const [playerDropdownOpen, setPlayerDropdownOpen] = useState(false);
   const [events, setEvents] = useState([]);
   const [showAddPanel, setShowAddPanel] = useState(null);
   const [hoveredDate, setHoveredDate] = useState(null);
@@ -96,6 +98,7 @@ export default function Schedule({ userId, userRole }) {
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
   const [laneDate, setLaneDate] = useState(new Date().toISOString().split('T')[0]);
+  const [coachesCollapsed, setCoachesCollapsed] = useState(false);
 
   useEffect(() => {
     fetchTeams();
@@ -107,10 +110,10 @@ export default function Schedule({ userId, userRole }) {
   useEffect(() => {
     if (view === 'team' && selectedTeam) {
       fetchTeamEvents();
-    } else if (view === 'player' && selectedPlayer) {
+    } else if (view === 'player' && (selectedPlayers.length > 0 || selectedPlayer)) {
       fetchPlayerEvents();
     }
-  }, [view, selectedTeam, selectedPlayer, selectedDate]);
+  }, [view, selectedTeam, selectedPlayer, selectedPlayers, selectedDate]);
 
   useEffect(() => {
     if (view === 'my-schedule') {
@@ -203,7 +206,8 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const fetchPlayerEvents = async () => {
-    if (!selectedPlayer) return;
+    const ids = selectedPlayers.length > 0 ? selectedPlayers : (selectedPlayer ? [selectedPlayer] : []);
+    if (ids.length === 0) { setEvents([]); return; }
 
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
@@ -211,7 +215,7 @@ export default function Schedule({ userId, userRole }) {
     const { data } = await supabase
       .from('schedule_events')
       .select('*')
-      .eq('player_id', selectedPlayer)
+      .in('player_id', ids)
       .gte('event_date', startOfMonth.toISOString().split('T')[0])
       .lte('event_date', endOfMonth.toISOString().split('T')[0]);
 
@@ -395,33 +399,44 @@ export default function Schedule({ userId, userRole }) {
         <div className="bg-white rounded-lg shadow">
           <div className="flex">
             {/* Coach Sidebar */}
-            <div className="w-72 border-r border-gray-200 bg-gray-50 flex-shrink-0">
-              <div className="p-4 border-b border-gray-200">
-                <h3 className="font-semibold text-gray-900 text-sm">Coaches</h3>
-                <p className="text-xs text-gray-500 mt-1">Select a coach to view training slots</p>
-              </div>
-              <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
-                {selectedCoach && (
-                  <button onClick={() => setSelectedCoach(null)} className="w-full px-4 py-3 text-left text-sm text-teal-600 hover:bg-teal-50 border-b border-gray-200 font-medium">
-                    &larr; Back to Facility Events
-                  </button>
-                )}
-                {coaches.map(coach => (
-                  <button
-                    key={coach.id}
-                    onClick={() => setSelectedCoach(selectedCoach?.id === coach.id ? null : coach)}
-                    className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition border-b border-gray-100 ${selectedCoach?.id === coach.id ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">{coach.full_name.charAt(0)}</div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">{coach.full_name}</div>
-                        {coach.title && <div className="text-xs text-gray-500">{coach.title}</div>}
+            <div className={`border-r border-gray-200 bg-gray-50 flex-shrink-0 transition-all ${coachesCollapsed ? 'w-12' : 'w-72'}`}>
+              <button
+                onClick={() => setCoachesCollapsed(!coachesCollapsed)}
+                className="w-full p-4 border-b border-gray-200 flex items-center justify-between hover:bg-gray-100 transition"
+                title={coachesCollapsed ? 'Expand coaches' : 'Collapse coaches'}
+              >
+                {!coachesCollapsed ? (
+                  <div className="text-left">
+                    <h3 className="font-semibold text-gray-900 text-sm">Coaches</h3>
+                    <p className="text-xs text-gray-500 mt-1">Select a coach to view training slots</p>
+                  </div>
+                ) : <Users size={18} className="text-gray-600 mx-auto" />}
+                {!coachesCollapsed && <ChevronLeft size={18} className="text-gray-500 flex-shrink-0" />}
+              </button>
+              {!coachesCollapsed && (
+                <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
+                  {selectedCoach && (
+                    <button onClick={() => setSelectedCoach(null)} className="w-full px-4 py-3 text-left text-sm text-teal-600 hover:bg-teal-50 border-b border-gray-200 font-medium">
+                      &larr; Back to Facility Events
+                    </button>
+                  )}
+                  {coaches.map(coach => (
+                    <button
+                      key={coach.id}
+                      onClick={() => setSelectedCoach(selectedCoach?.id === coach.id ? null : coach)}
+                      className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition border-b border-gray-100 ${selectedCoach?.id === coach.id ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">{coach.full_name.charAt(0)}</div>
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">{coach.full_name}</div>
+                          {coach.title && <div className="text-xs text-gray-500">{coach.title}</div>}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Main Calendar Area */}
             <div className="flex-1">
@@ -470,11 +485,19 @@ export default function Schedule({ userId, userRole }) {
                     onDecline={async (reservationId) => { await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId); fetchCoachSlots(selectedCoach.id); }}
                   />
                 ) : viewMode === 'lanes' ? (
-                  <LaneView selectedDate={selectedDate} events={facilityEvents} laneDate={laneDate} setLaneDate={setLaneDate} />
+                  <LaneView
+                    selectedDate={selectedDate}
+                    events={facilityEvents}
+                    laneDate={laneDate}
+                    setLaneDate={setLaneDate}
+                    canManage={canManageCalendar()}
+                    onCellClick={(prefill) => canManageCalendar() && setShowAddFacilityEvent(prefill)}
+                    onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
+                  />
                 ) : viewMode === 'month' ? (
-                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={() => 'bg-teal-100 text-teal-700 border-teal-200'} />
+                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} />
                 ) : (
-                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} eventColorFn={() => 'border-l-4 border-teal-500 bg-teal-50'} />
+                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} />
                 )}
               </div>
             </div>
@@ -500,16 +523,60 @@ export default function Schedule({ userId, userRole }) {
                   ))}
                 </select>
               ) : (
-                <select
-                  value={selectedPlayer || ''}
-                  onChange={(e) => setSelectedPlayer(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select a player...</option>
-                  {players.map(player => (
-                    <option key={player.id} value={player.id}>{player.full_name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setPlayerDropdownOpen(!playerDropdownOpen)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[240px] text-left flex items-center justify-between"
+                  >
+                    <span className="text-sm truncate">
+                      {selectedPlayers.length === 0
+                        ? (selectedPlayer ? (players.find(p => p.id === selectedPlayer)?.full_name || 'Select players...') : 'Select players...')
+                        : selectedPlayers.length === 1
+                          ? (players.find(p => p.id === selectedPlayers[0])?.full_name || '1 player')
+                          : `${selectedPlayers.length} players selected`}
+                    </span>
+                    <ChevronRight size={16} className={`transition-transform ${playerDropdownOpen ? 'rotate-90' : ''}`} />
+                  </button>
+                  {playerDropdownOpen && (
+                    <div className="absolute z-20 mt-1 w-72 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                      <div className="p-2 flex items-center justify-between border-b border-gray-200">
+                        <span className="text-xs text-gray-500">{selectedPlayers.length} selected</span>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedPlayers([]); setSelectedPlayer(null); }}
+                          className="text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                      {players.map((player) => {
+                        const checked = selectedPlayers.includes(player.id);
+                        const paletteIdx = selectedPlayers.indexOf(player.id);
+                        return (
+                          <label key={player.id} className="flex items-center space-x-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setSelectedPlayers(prev => {
+                                  const next = prev.includes(player.id) ? prev.filter(id => id !== player.id) : [...prev, player.id];
+                                  setSelectedPlayer(next[0] || null);
+                                  return next;
+                                });
+                              }}
+                              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            />
+                            {checked && paletteIdx >= 0 && (
+                              <span className={`inline-block w-3 h-3 rounded-full ${PLAYER_OVERLAY_PALETTE[paletteIdx % PLAYER_OVERLAY_PALETTE.length].dot}`} />
+                            )}
+                            <span className="text-sm text-gray-900">{player.full_name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -556,6 +623,21 @@ export default function Schedule({ userId, userRole }) {
 
         {/* Calendar Grid */}
         <div className="p-6">
+          {view === 'player' && selectedPlayers.length > 1 && (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {selectedPlayers.map((pid, idx) => {
+                const player = players.find(p => p.id === pid);
+                if (!player) return null;
+                const c = PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length];
+                return (
+                  <span key={pid} className="inline-flex items-center space-x-2 px-2 py-1 rounded-full bg-gray-100 text-xs">
+                    <span className={`w-2.5 h-2.5 rounded-full ${c.dot}`} />
+                    <span className="text-gray-800">{player.full_name}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {viewMode === 'month' ? (
             <MonthView
               selectedDate={selectedDate}
@@ -566,6 +648,10 @@ export default function Schedule({ userId, userRole }) {
               canManage={canManageCalendar()}
               setSelectedEvent={setSelectedEvent}
               setShowEventDetail={setShowEventDetail}
+              eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
+                const idx = selectedPlayers.indexOf(ev.player_id);
+                return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].month : undefined;
+              } : undefined}
             />
           ) : (
             <WeekView
@@ -573,6 +659,10 @@ export default function Schedule({ userId, userRole }) {
               events={events}
               onDateClick={(date) => canManageCalendar() && setShowAddPanel(date)}
               canManage={canManageCalendar()}
+              eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
+                const idx = selectedPlayers.indexOf(ev.player_id);
+                return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].week : undefined;
+              } : undefined}
             />
           )}
         </div>
@@ -765,7 +855,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                         console.log('❌ User cannot manage events');
                       }
                     }}
-                    className={`text-xs px-2 py-1 rounded border truncate ${eventColorFn ? eventColorFn(event.event_type) : getEventColor(event.event_type)} ${canManage ? 'cursor-pointer hover:opacity-75' : ''}`}
+                    className={`text-xs px-2 py-1 rounded border truncate ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${canManage ? 'cursor-pointer hover:opacity-75' : ''}`}
                     title={event.title || event.opponent || event.event_type}
                   >
                     {event.title || event.opponent || event.event_type}
@@ -884,7 +974,7 @@ function EventCard({ event, compact, eventColorFn }) {
   const displayText = event.title || event.opponent || event.event_type;
 
   return (
-    <div className={`p-2 rounded ${eventColorFn ? eventColorFn(event.event_type) : getEventColor(event.event_type)}`}>
+    <div className={`p-2 rounded ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)}`}>
       <div className="text-xs font-semibold text-gray-900">
         {displayText}
       </div>
@@ -902,7 +992,7 @@ function EventCard({ event, compact, eventColorFn }) {
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick }) {
   const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
   // Generate 15-minute time slots from 6:00 AM to 10:00 PM
@@ -927,7 +1017,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate }) {
     return (h - 6) * 4 + Math.floor(m / 15);
   };
 
-  // Build a map: lane -> array of {startIdx, endIdx, event}
+  // Build a map: lane -> array of {startIdx, span, event}
   const laneEvents = {};
   LANES.forEach(lane => { laneEvents[lane] = []; });
 
@@ -966,7 +1056,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate }) {
     setLaneDate(d.toISOString().split('T')[0]);
   };
 
-  // Track which cells are occupied by a span
+  // Track which slots are occupied so we don't render empty cells inside a span
   const occupied = {};
   LANES.forEach(lane => { occupied[lane] = {}; });
   LANES.forEach(lane => {
@@ -976,6 +1066,17 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate }) {
       }
     });
   });
+
+  const handleEmptyClick = (lane, slot) => {
+    if (!canManage || !onCellClick) return;
+    const [h, m] = slot.split(':').map(Number);
+    const endH = m + 60 >= 60 ? h + 1 : h;
+    const endM = (m + 60) % 60;
+    const endSlot = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+    onCellClick({ date: dateStr, lane, startTime: slot, endTime: endSlot });
+  };
+
+  const SLOT_WIDTH = 48; // px per 15-min slot
 
   return (
     <div>
@@ -989,53 +1090,71 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate }) {
         </div>
         <button onClick={nextDay} className="p-1 hover:bg-gray-100 rounded transition"><ChevronRight size={18} /></button>
       </div>
-      <div className="overflow-x-auto border border-gray-200 rounded-lg">
-        <table className="w-full border-collapse text-xs" style={{ minWidth: LANES.length * 90 + 70 }}>
-          <thead className="sticky top-0 z-10 bg-white">
+      <div className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
+          <thead className="sticky top-0 z-20 bg-white">
             <tr>
-              <th className="border border-gray-200 bg-gray-50 px-2 py-2 text-left text-xs font-semibold text-gray-700 sticky left-0 z-20 min-w-[70px]">Time</th>
-              {LANES.map(lane => (
-                <th key={lane} className="border border-gray-200 bg-gray-50 px-1 py-2 text-center text-xs font-semibold text-gray-700 min-w-[90px]">
-                  {lane}
-                </th>
-              ))}
+              <th className="border border-gray-200 bg-gray-50 px-2 py-2 text-left text-xs font-semibold text-gray-700 sticky left-0 z-30" style={{ width: 130, minWidth: 130 }}>
+                Lane
+              </th>
+              {timeSlots.map((slot) => {
+                const isHour = slot.endsWith(':00');
+                return (
+                  <th
+                    key={slot}
+                    className={`border border-gray-200 px-0 py-1 text-center text-[10px] font-medium text-gray-600 ${isHour ? 'bg-gray-100' : 'bg-gray-50'}`}
+                    style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH }}
+                  >
+                    {isHour ? formatLabel(slot) : ''}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {timeSlots.map((slot, slotIdx) => {
-              const isHour = slot.endsWith(':00');
-              return (
-                <tr key={slot} className={isHour ? 'bg-gray-50' : ''}>
-                  <td className={`border border-gray-200 px-2 py-1 text-xs text-gray-500 font-medium sticky left-0 z-10 ${isHour ? 'bg-gray-50' : 'bg-white'}`}>
-                    {isHour ? formatLabel(slot) : ''}
-                  </td>
-                  {LANES.map(lane => {
-                    // Check if an event starts at this slot
-                    const entry = laneEvents[lane].find(e => e.startIdx === slotIdx);
-                    if (entry) {
-                      return (
-                        <td
-                          key={lane}
-                          rowSpan={entry.span}
-                          className="border border-gray-200 px-1 py-0.5 align-top"
+            {LANES.map((lane) => (
+              <tr key={lane}>
+                <td className="border border-gray-200 bg-gray-50 px-2 py-2 text-xs font-semibold text-gray-700 sticky left-0 z-10" style={{ width: 130, minWidth: 130 }}>
+                  {lane}
+                </td>
+                {timeSlots.map((slot, slotIdx) => {
+                  const entry = laneEvents[lane].find(e => e.startIdx === slotIdx);
+                  if (entry) {
+                    const colorClasses = getFacilityColorClasses(entry.event.color, 'lane');
+                    return (
+                      <td
+                        key={slot}
+                        colSpan={entry.span}
+                        className="border border-gray-200 p-0.5 align-top"
+                        style={{ width: SLOT_WIDTH * entry.span }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onEventClick && onEventClick(entry.event)}
+                          className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
                         >
-                          <div className="bg-teal-100 border border-teal-300 rounded px-1 py-0.5 h-full text-xs">
-                            <div className="font-semibold text-teal-900 truncate">{entry.event.title || entry.event.opponent}</div>
-                            <div className="text-teal-700 truncate">
-                              {entry.event.start_time || entry.event.event_time}
-                              {entry.event.end_time ? ` - ${entry.event.end_time}` : ''}
-                            </div>
+                          <div className="font-semibold truncate text-xs">{entry.event.title || entry.event.opponent}</div>
+                          <div className="truncate text-[10px] opacity-80">
+                            {entry.event.start_time || entry.event.event_time}
+                            {entry.event.end_time ? `–${entry.event.end_time}` : ''}
                           </div>
-                        </td>
-                      );
-                    }
-                    // If this cell is occupied by a rowSpan, skip it
-                    if (occupied[lane][slotIdx]) return null;
-                    return <td key={lane} className="border border-gray-200"></td>;
-                  })}
-                </tr>
-              );
-            })}
+                        </button>
+                      </td>
+                    );
+                  }
+                  if (occupied[lane][slotIdx]) return null;
+                  const isHour = slot.endsWith(':00');
+                  return (
+                    <td
+                      key={slot}
+                      onClick={() => handleEmptyClick(lane, slot)}
+                      className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
+                      style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                    />
+                  );
+                })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -2686,20 +2805,68 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
 }
 
 // ============================================
+// FACILITY EVENT COLOR PALETTE
+// ============================================
+
+const FACILITY_EVENT_COLORS = [
+  { key: 'teal',   label: 'Teal',   month: 'bg-teal-100 text-teal-700 border-teal-200',     week: 'border-l-4 border-teal-500 bg-teal-50',     lane: 'bg-teal-100 border border-teal-300 text-teal-900',     dot: 'bg-teal-500' },
+  { key: 'blue',   label: 'Blue',   month: 'bg-blue-100 text-blue-700 border-blue-200',     week: 'border-l-4 border-blue-500 bg-blue-50',     lane: 'bg-blue-100 border border-blue-300 text-blue-900',     dot: 'bg-blue-500' },
+  { key: 'purple', label: 'Purple', month: 'bg-purple-100 text-purple-700 border-purple-200', week: 'border-l-4 border-purple-500 bg-purple-50', lane: 'bg-purple-100 border border-purple-300 text-purple-900', dot: 'bg-purple-500' },
+  { key: 'pink',   label: 'Pink',   month: 'bg-pink-100 text-pink-700 border-pink-200',     week: 'border-l-4 border-pink-500 bg-pink-50',     lane: 'bg-pink-100 border border-pink-300 text-pink-900',     dot: 'bg-pink-500' },
+  { key: 'red',    label: 'Red',    month: 'bg-red-100 text-red-700 border-red-200',        week: 'border-l-4 border-red-500 bg-red-50',       lane: 'bg-red-100 border border-red-300 text-red-900',        dot: 'bg-red-500' },
+  { key: 'orange', label: 'Orange', month: 'bg-orange-100 text-orange-700 border-orange-200', week: 'border-l-4 border-orange-500 bg-orange-50', lane: 'bg-orange-100 border border-orange-300 text-orange-900', dot: 'bg-orange-500' },
+  { key: 'yellow', label: 'Yellow', month: 'bg-yellow-100 text-yellow-700 border-yellow-200', week: 'border-l-4 border-yellow-500 bg-yellow-50', lane: 'bg-yellow-100 border border-yellow-300 text-yellow-900', dot: 'bg-yellow-500' },
+  { key: 'green',  label: 'Green',  month: 'bg-green-100 text-green-700 border-green-200',  week: 'border-l-4 border-green-500 bg-green-50',   lane: 'bg-green-100 border border-green-300 text-green-900',  dot: 'bg-green-500' },
+  { key: 'gray',   label: 'Gray',   month: 'bg-gray-100 text-gray-700 border-gray-200',     week: 'border-l-4 border-gray-500 bg-gray-50',     lane: 'bg-gray-100 border border-gray-300 text-gray-900',     dot: 'bg-gray-500' },
+];
+
+function getFacilityColorClasses(colorKey, variant = 'month') {
+  const c = FACILITY_EVENT_COLORS.find(x => x.key === colorKey) || FACILITY_EVENT_COLORS[0];
+  return c[variant];
+}
+
+const PLAYER_OVERLAY_PALETTE = [
+  { month: 'bg-blue-100 text-blue-700 border-blue-300',     week: 'border-l-4 border-blue-500 bg-blue-50',     dot: 'bg-blue-500' },
+  { month: 'bg-rose-100 text-rose-700 border-rose-300',     week: 'border-l-4 border-rose-500 bg-rose-50',     dot: 'bg-rose-500' },
+  { month: 'bg-amber-100 text-amber-800 border-amber-300',  week: 'border-l-4 border-amber-500 bg-amber-50',   dot: 'bg-amber-500' },
+  { month: 'bg-violet-100 text-violet-700 border-violet-300', week: 'border-l-4 border-violet-500 bg-violet-50', dot: 'bg-violet-500' },
+  { month: 'bg-emerald-100 text-emerald-700 border-emerald-300', week: 'border-l-4 border-emerald-500 bg-emerald-50', dot: 'bg-emerald-500' },
+  { month: 'bg-pink-100 text-pink-700 border-pink-300',     week: 'border-l-4 border-pink-500 bg-pink-50',     dot: 'bg-pink-500' },
+  { month: 'bg-cyan-100 text-cyan-700 border-cyan-300',     week: 'border-l-4 border-cyan-500 bg-cyan-50',     dot: 'bg-cyan-500' },
+  { month: 'bg-orange-100 text-orange-700 border-orange-300', week: 'border-l-4 border-orange-500 bg-orange-50', dot: 'bg-orange-500' },
+];
+
+// ============================================
 // ADD FACILITY EVENT PANEL
 // ============================================
 
 function AddFacilityEventPanel({ date, onClose, onSuccess }) {
   const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+
+  const prefill = (() => {
+    if (date && typeof date === 'object' && !(date instanceof Date)) {
+      return { date: date.date, startTime: date.startTime, endTime: date.endTime, lane: date.lane };
+    }
+    if (date instanceof Date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return { date: `${y}-${m}-${d}` };
+    }
+    if (typeof date === 'string' && date !== 'new') return { date };
+    return {};
+  })();
+
   const [title, setTitle] = useState('');
-  const [eventDate, setEventDate] = useState(typeof date === 'string' && date !== 'new' ? date : new Date().toISOString().split('T')[0]);
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('10:00');
+  const [eventDate, setEventDate] = useState(prefill.date || new Date().toISOString().split('T')[0]);
+  const [startTime, setStartTime] = useState(prefill.startTime || '09:00');
+  const [endTime, setEndTime] = useState(prefill.endTime || '10:00');
   const [location, setLocation] = useState('');
   const [description, setDescription] = useState('');
-  const [lanes, setLanes] = useState([]);
+  const [lanes, setLanes] = useState(prefill.lane ? [prefill.lane] : []);
   const [recurrence, setRecurrence] = useState('none');
   const [customRule, setCustomRule] = useState({ freq: 'weekly', interval: 1, byDay: [], endType: 'never', count: 10, until: '' });
+  const [color, setColor] = useState('teal');
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
@@ -2716,7 +2883,8 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
         title: title.trim(), description: description || null, event_date: eventDate,
         start_time: startTime || null, end_time: endTime || null, location: location || null,
         is_recurring: isRecurring, recurrence_rule: recurrenceRule, created_by: user?.id,
-        lanes: lanes.length > 0 ? lanes : null
+        lanes: lanes.length > 0 ? lanes : null,
+        color,
       });
       if (error) throw error;
       onSuccess();
@@ -2797,6 +2965,20 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
               ))}
             </div>
           </div>
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Event Color</label>
+            <div className="flex flex-wrap gap-2">
+              {FACILITY_EVENT_COLORS.map(c => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setColor(c.key)}
+                  title={c.label}
+                  className={`w-8 h-8 rounded-full ${c.dot} ${color === c.key ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
+                />
+              ))}
+            </div>
+          </div>
           <div className="flex justify-end space-x-3">
             <button onClick={onClose} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition text-sm font-medium">Cancel</button>
             <button onClick={handleSave} disabled={loading} className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition text-sm font-medium disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
@@ -2814,13 +2996,13 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '' });
+  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal' });
 
   const handleSave = async () => {
     setLoading(true);
     try {
       const eventId = event._master_id || event.id;
-      const { error } = await supabase.from('facility_events').update({ title: formData.title, description: formData.description || null, start_time: formData.start_time || null, end_time: formData.end_time || null, location: formData.location || null }).eq('id', eventId);
+      const { error } = await supabase.from('facility_events').update({ title: formData.title, description: formData.description || null, start_time: formData.start_time || null, end_time: formData.end_time || null, location: formData.location || null, color: formData.color || null }).eq('id', eventId);
       if (error) throw error;
       onUpdate();
     } catch (err) { alert('Error: ' + err.message); } finally { setLoading(false); }
@@ -2858,6 +3040,20 @@ function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Location</label><input type="text" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Description</label><textarea value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                <div className="flex flex-wrap gap-2">
+                  {FACILITY_EVENT_COLORS.map(c => (
+                    <button
+                      key={c.key}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, color: c.key })}
+                      title={c.label}
+                      className={`w-8 h-8 rounded-full ${c.dot} ${formData.color === c.key ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
+                    />
+                  ))}
+                </div>
+              </div>
               <div className="flex space-x-3 pt-2">
                 <button onClick={() => setEditing(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
                 <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>

@@ -47,6 +47,10 @@ export default function Profile({ userId, userRole, onBack }) {
   const [savingRecruitment, setSavingRecruitment] = useState({});
   const [discountCodes, setDiscountCodes] = useState([]);
   const [waiverData, setWaiverData] = useState(null);
+  const [armCareRoutines, setArmCareRoutines] = useState([]);
+  const [editingRoutineId, setEditingRoutineId] = useState(null);
+  const [routineDraft, setRoutineDraft] = useState({ title: '', content: '' });
+  const [savingRoutine, setSavingRoutine] = useState(false);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -54,6 +58,7 @@ export default function Profile({ userId, userRole, onBack }) {
     fetchRecruitmentTeams();
     fetchDiscountCodes();
     fetchWaiverData();
+    fetchArmCareRoutines();
   }, [userId]);
 
   const fetchUserData = async () => {
@@ -287,6 +292,81 @@ export default function Profile({ userId, userRole, onBack }) {
     }
   };
 
+  const fetchArmCareRoutines = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('arm_care_routines')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setArmCareRoutines(data || []);
+    } catch (error) {
+      console.error('Error fetching arm care routines:', error);
+    }
+  };
+
+  const addArmCareRoutine = (routineType) => {
+    setEditingRoutineId('new');
+    setRoutineDraft({ title: `${routineType} Routine`, content: '', routine_type: routineType });
+  };
+
+  const startEditRoutine = (routine) => {
+    setEditingRoutineId(routine.id);
+    setRoutineDraft({ title: routine.title || '', content: routine.content || '', routine_type: routine.routine_type });
+  };
+
+  const cancelEditRoutine = () => {
+    setEditingRoutineId(null);
+    setRoutineDraft({ title: '', content: '' });
+  };
+
+  const saveRoutine = async () => {
+    setSavingRoutine(true);
+    try {
+      if (editingRoutineId === 'new') {
+        const { error } = await supabase
+          .from('arm_care_routines')
+          .insert({
+            user_id: userId,
+            routine_type: routineDraft.routine_type,
+            title: routineDraft.title || null,
+            content: routineDraft.content || null,
+          });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('arm_care_routines')
+          .update({
+            title: routineDraft.title || null,
+            content: routineDraft.content || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editingRoutineId);
+        if (error) throw error;
+      }
+      await fetchArmCareRoutines();
+      cancelEditRoutine();
+    } catch (error) {
+      console.error('Error saving routine:', error);
+      alert('Error saving routine: ' + error.message);
+    } finally {
+      setSavingRoutine(false);
+    }
+  };
+
+  const deleteRoutine = async (id) => {
+    if (!window.confirm('Delete this routine?')) return;
+    try {
+      const { error } = await supabase.from('arm_care_routines').delete().eq('id', id);
+      if (error) throw error;
+      await fetchArmCareRoutines();
+    } catch (error) {
+      console.error('Error deleting routine:', error);
+      alert('Error deleting routine: ' + error.message);
+    }
+  };
+
   const fetchWaiverData = async () => {
     try {
       const { data, error } = await supabase
@@ -516,9 +596,121 @@ export default function Profile({ userId, userRole, onBack }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
+            </div>
+          )}
+
+          {activeProfileTab === 'armcare' && (
+            <div>
+              <div className="flex flex-wrap gap-2 mb-6">
+                {['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder'].map(type => (
+                  <button
+                    key={type}
+                    onClick={() => addArmCareRoutine(type)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2 text-sm"
+                  >
+                    <Plus size={16} />
+                    <span>{type} Routine</span>
+                  </button>
+                ))}
+              </div>
+
+              {editingRoutineId === 'new' && (
+                <div className="border border-blue-300 rounded-lg p-4 mb-4 bg-blue-50">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-semibold text-blue-900">New {routineDraft.routine_type} Routine</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={routineDraft.title}
+                    onChange={(e) => setRoutineDraft({ ...routineDraft, title: e.target.value })}
+                    placeholder="Routine title"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                  <textarea
+                    value={routineDraft.content}
+                    onChange={(e) => setRoutineDraft({ ...routineDraft, content: e.target.value })}
+                    placeholder="Describe the routine in detail..."
+                    rows={8}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                  <div className="flex justify-end space-x-2 mt-3">
+                    <button
+                      onClick={cancelEditRoutine}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveRoutine}
+                      disabled={savingRoutine}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm"
+                    >
+                      {savingRoutine ? 'Saving...' : 'Save Routine'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {armCareRoutines.length === 0 && editingRoutineId !== 'new' && (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No routines yet. Click a button above to add one.</p>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {armCareRoutines.map(routine => (
+                  <div key={routine.id} className="border border-gray-200 rounded-lg p-4">
+                    {editingRoutineId === routine.id ? (
+                      <>
+                        <span className="text-xs font-semibold text-blue-700 bg-blue-100 rounded px-2 py-0.5">{routine.routine_type}</span>
+                        <input
+                          type="text"
+                          value={routineDraft.title}
+                          onChange={(e) => setRoutineDraft({ ...routineDraft, title: e.target.value })}
+                          placeholder="Routine title"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 mt-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                        <textarea
+                          value={routineDraft.content}
+                          onChange={(e) => setRoutineDraft({ ...routineDraft, content: e.target.value })}
+                          placeholder="Describe the routine in detail..."
+                          rows={8}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                        <div className="flex justify-end space-x-2 mt-3">
+                          <button onClick={cancelEditRoutine} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                          <button onClick={saveRoutine} disabled={savingRoutine} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                            {savingRoutine ? 'Saving...' : 'Save'}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-semibold text-blue-700 bg-blue-100 rounded px-2 py-0.5">{routine.routine_type}</span>
+                            {routine.title && <span className="text-sm font-semibold text-gray-900">{routine.title}</span>}
+                          </div>
+                          <div className="flex items-center space-x-1">
+                            <button onClick={() => startEditRoutine(routine)} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                              <Edit2 size={16} />
+                            </button>
+                            <button onClick={() => deleteRoutine(routine.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        {routine.content && (
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{routine.content}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -739,6 +931,24 @@ export default function Profile({ userId, userRole, onBack }) {
               </div>
 
               <div className="flex items-center space-x-3">
+                <Phone className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Phone</p>
+                  {editing ? (
+                    <input
+                      type="tel"
+                      value={editForm.phone}
+                      onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                      placeholder="Enter phone number"
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">{userData.phone || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
                 <Users className="text-gray-400" size={20} />
                 <div className="flex-1">
                   <p className="text-sm text-gray-600">Parent 1 Name</p>
@@ -806,24 +1016,6 @@ export default function Profile({ userId, userRole, onBack }) {
                     />
                   ) : (
                     <p className="text-gray-900">{userData.parent2_email || 'Not set'}</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                <Phone className="text-gray-400" size={20} />
-                <div className="flex-1">
-                  <p className="text-sm text-gray-600">Phone</p>
-                  {editing ? (
-                    <input
-                      type="tel"
-                      value={editForm.phone}
-                      onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
-                      placeholder="Enter phone number"
-                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : (
-                    <p className="text-gray-900">{userData.phone || 'Not set'}</p>
                   )}
                 </div>
               </div>
