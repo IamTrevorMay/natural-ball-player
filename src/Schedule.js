@@ -505,7 +505,7 @@ export default function Schedule({ userId, userRole }) {
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} />
                 ) : (
-                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} />
+                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} />
                 )}
               </div>
             </div>
@@ -667,6 +667,7 @@ export default function Schedule({ userId, userRole }) {
               events={events}
               onDateClick={(date) => canManageCalendar() && setShowAddPanel(date)}
               canManage={canManageCalendar()}
+              onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
               eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
                 const idx = selectedPlayers.indexOf(ev.player_id);
                 return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].week : undefined;
@@ -855,20 +856,17 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                   <div
                     key={event.id}
                     onClick={(e) => {
-                      console.log('🟢 Event clicked in calendar:', event);
                       e.stopPropagation();
                       if (canManage) {
-                        console.log('✅ User can manage, opening modal');
                         setSelectedEvent(event);
                         setShowEventDetail(true);
-                      } else {
-                        console.log('❌ User cannot manage events');
                       }
                     }}
-                    className={`text-xs px-2 py-1 rounded border truncate ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${canManage ? 'cursor-pointer hover:opacity-75' : ''}`}
-                    title={event.title || event.opponent || event.event_type}
+                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${canManage ? 'cursor-pointer hover:opacity-75' : ''}`}
+                    title={canManage ? `Edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
-                    {event.title || event.opponent || event.event_type}
+                    <span className="truncate">{event.title || event.opponent || event.event_type}</span>
+                    {canManage && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
                   </div>
                 ))}
                 {dayEvents.length > 3 && (
@@ -900,7 +898,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
 // WEEK VIEW
 // ============================================
 
-function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn }) {
+function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick }) {
   // Get the week containing selectedDate
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
@@ -950,7 +948,13 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn }
               {/* Events */}
               <div className="p-2 space-y-2">
                 {dayEvents.map(event => (
-                  <EventCard key={event.id} event={event} compact eventColorFn={eventColorFn} />
+                  <EventCard
+                    key={event.id}
+                    event={event}
+                    compact
+                    eventColorFn={eventColorFn}
+                    onClick={canManage && onEventClick ? onEventClick : undefined}
+                  />
                 ))}
 
                 {/* Add button */}
@@ -972,7 +976,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn }
   );
 }
 
-function EventCard({ event, compact, eventColorFn }) {
+function EventCard({ event, compact, eventColorFn, onClick }) {
   const getEventColor = (eventType) => {
     switch(eventType) {
       case 'game': return 'border-l-4 border-blue-500 bg-blue-50';
@@ -984,10 +988,18 @@ function EventCard({ event, compact, eventColorFn }) {
   };
 
   const displayText = event.title || event.opponent || event.event_type;
+  const clickable = typeof onClick === 'function';
 
   return (
-    <div className={`p-2 rounded ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)}`}>
-      <div className="text-xs font-semibold text-gray-900">
+    <div
+      className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''}`}
+      onClick={clickable ? (e) => { e.stopPropagation(); onClick(event); } : undefined}
+      title={clickable ? 'Click to edit' : undefined}
+    >
+      {clickable && (
+        <Edit2 size={12} className="absolute top-1.5 right-1.5 text-gray-500 opacity-0 group-hover:opacity-100 transition" />
+      )}
+      <div className="text-xs font-semibold text-gray-900 pr-4">
         {displayText}
       </div>
       {event.event_time && (
