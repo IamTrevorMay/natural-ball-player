@@ -503,9 +503,21 @@ export default function Schedule({ userId, userRole }) {
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
                   />
                 ) : viewMode === 'month' ? (
-                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} />
+                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} onEventDrop={async (eventId, newDate) => {
+                    const ev = facilityEvents.find(e => String(e.id) === String(eventId));
+                    if (!ev || ev._is_virtual || ev.event_date === newDate) return;
+                    const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
+                    if (error) { alert('Failed to move event: ' + error.message); return; }
+                    fetchFacilityEvents();
+                  }} />
                 ) : (
-                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} />
+                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} onEventDrop={async (eventId, newDate) => {
+                    const ev = facilityEvents.find(e => String(e.id) === String(eventId));
+                    if (!ev || ev._is_virtual || ev.event_date === newDate) return;
+                    const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
+                    if (error) { alert('Failed to move event: ' + error.message); return; }
+                    fetchFacilityEvents();
+                  }} />
                 )}
               </div>
             </div>
@@ -656,6 +668,13 @@ export default function Schedule({ userId, userRole }) {
               canManage={canManageCalendar()}
               setSelectedEvent={setSelectedEvent}
               setShowEventDetail={setShowEventDetail}
+              onEventDrop={async (eventId, newDate) => {
+                const ev = events.find(e => String(e.id) === String(eventId));
+                if (!ev || ev.event_date === newDate) return;
+                const { error } = await supabase.from('schedule_events').update({ event_date: newDate }).eq('id', eventId);
+                if (error) { alert('Failed to move event: ' + error.message); return; }
+                if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
+              }}
               eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
                 const idx = selectedPlayers.indexOf(ev.player_id);
                 return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].month : undefined;
@@ -668,6 +687,13 @@ export default function Schedule({ userId, userRole }) {
               onDateClick={(date) => canManageCalendar() && setShowAddPanel(date)}
               canManage={canManageCalendar()}
               onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
+              onEventDrop={async (eventId, newDate) => {
+                const ev = events.find(e => String(e.id) === String(eventId));
+                if (!ev || ev.event_date === newDate) return;
+                const { error } = await supabase.from('schedule_events').update({ event_date: newDate }).eq('id', eventId);
+                if (error) { alert('Failed to move event: ' + error.message); return; }
+                if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
+              }}
               eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
                 const idx = selectedPlayers.indexOf(ev.player_id);
                 return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].week : undefined;
@@ -757,7 +783,7 @@ export default function Schedule({ userId, userRole }) {
 // MONTH VIEW
 // ============================================
 
-function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn }) {
+function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop }) {
   const year = selectedDate.getFullYear();
   const month = selectedDate.getMonth();
 
@@ -841,10 +867,22 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
               onClick={() => day.isCurrentMonth && onDateClick(dateStr)}
               onMouseEnter={() => setHoveredDate(dateStr)}
               onMouseLeave={() => setHoveredDate(null)}
+              onDragOver={(e) => {
+                if (canManage && onEventDrop && day.isCurrentMonth) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }
+              }}
+              onDrop={(e) => {
+                if (!canManage || !onEventDrop || !day.isCurrentMonth) return;
+                e.preventDefault();
+                const eventId = e.dataTransfer.getData('application/x-event-id');
+                if (eventId) onEventDrop(eventId, dateStr);
+              }}
             >
               {/* Date number */}
               <div className={`text-sm font-medium mb-1 ${
-                !day.isCurrentMonth ? 'text-gray-400' : 
+                !day.isCurrentMonth ? 'text-gray-400' :
                 isToday ? 'text-blue-600 font-bold' : 'text-gray-900'
               }`}>
                 {day.date.getDate()}
@@ -855,6 +893,12 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                 {dayEvents.slice(0, 3).map(event => (
                   <div
                     key={event.id}
+                    draggable={canManage && !event._is_virtual && !!onEventDrop}
+                    onDragStart={(e) => {
+                      e.stopPropagation();
+                      e.dataTransfer.setData('application/x-event-id', String(event.id));
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (canManage) {
@@ -863,7 +907,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                       }
                     }}
                     className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${canManage ? 'cursor-pointer hover:opacity-75' : ''}`}
-                    title={canManage ? `Edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
+                    title={canManage ? `Drag to reschedule, click to edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
                     <span className="truncate">{event.title || event.opponent || event.event_type}</span>
                     {canManage && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
@@ -898,7 +942,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
 // WEEK VIEW
 // ============================================
 
-function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick }) {
+function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop }) {
   // Get the week containing selectedDate
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
@@ -930,7 +974,22 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
           const isToday = date.getTime() === today.getTime();
 
           return (
-            <div key={idx} className="min-h-[400px] bg-white">
+            <div
+              key={idx}
+              className="min-h-[400px] bg-white"
+              onDragOver={(e) => {
+                if (canManage && onEventDrop) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }
+              }}
+              onDrop={(e) => {
+                if (!canManage || !onEventDrop) return;
+                e.preventDefault();
+                const eventId = e.dataTransfer.getData('application/x-event-id');
+                if (eventId) onEventDrop(eventId, dateStr);
+              }}
+            >
               {/* Day header */}
               <div className={`p-3 border-b border-gray-200 text-center ${
                 isToday ? 'bg-blue-50' : 'bg-gray-50'
@@ -954,6 +1013,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
                     compact
                     eventColorFn={eventColorFn}
                     onClick={canManage && onEventClick ? onEventClick : undefined}
+                    draggable={canManage && !event._is_virtual && !!onEventDrop}
                   />
                 ))}
 
@@ -976,7 +1036,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
   );
 }
 
-function EventCard({ event, compact, eventColorFn, onClick }) {
+function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
   const getEventColor = (eventType) => {
     switch(eventType) {
       case 'game': return 'border-l-4 border-blue-500 bg-blue-50';
@@ -994,7 +1054,13 @@ function EventCard({ event, compact, eventColorFn, onClick }) {
     <div
       className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''}`}
       onClick={clickable ? (e) => { e.stopPropagation(); onClick(event); } : undefined}
-      title={clickable ? 'Click to edit' : undefined}
+      draggable={!!draggable}
+      onDragStart={draggable ? (e) => {
+        e.stopPropagation();
+        e.dataTransfer.setData('application/x-event-id', String(event.id));
+        e.dataTransfer.effectAllowed = 'move';
+      } : undefined}
+      title={clickable ? (draggable ? 'Drag to reschedule, click to edit' : 'Click to edit') : undefined}
     >
       {clickable && (
         <Edit2 size={12} className="absolute top-1.5 right-1.5 text-gray-500 opacity-0 group-hover:opacity-100 transition" />
