@@ -150,11 +150,39 @@ function ScheduleTab({ teams }) {
   );
 }
 
-function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit) {
+function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit, customDays) {
   const dates = [];
   const start = new Date(startDate + 'T00:00:00');
   const end = new Date(endDate + 'T00:00:00');
   if (isNaN(start) || isNaN(end) || end < start) return [startDate];
+
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // Custom + weekly + specific weekdays: walk day-by-day, push days that match the selected weekdays,
+  // and skip ahead by (interval - 1) weeks at the end of each week.
+  const weekdayPicker = rule === 'custom' && customUnit === 'weeks' && Array.isArray(customDays) && customDays.length > 0;
+  if (weekdayPicker) {
+    const n = Math.max(1, parseInt(interval) || 1);
+    const dayCodes = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+    const allowed = new Set(customDays);
+    let cur = new Date(start);
+    // Anchor "week 0" at the week containing the start date (Sunday-aligned)
+    const weekAnchor = new Date(cur);
+    weekAnchor.setDate(weekAnchor.getDate() - weekAnchor.getDay());
+    let safety = 0;
+    while (cur <= end && safety < 2000) {
+      if (allowed.has(dayCodes[cur.getDay()])) {
+        // Determine which week index this date belongs to relative to the anchor
+        const diffDays = Math.floor((cur - weekAnchor) / 86400000);
+        const weekIdx = Math.floor(diffDays / 7);
+        if (weekIdx % n === 0) dates.push(fmt(cur));
+      }
+      cur.setDate(cur.getDate() + 1);
+      safety++;
+    }
+    return dates;
+  }
+
   const step = (d) => {
     if (rule === 'daily') d.setDate(d.getDate() + 1);
     else if (rule === 'weekly') d.setDate(d.getDate() + 7);
@@ -170,10 +198,7 @@ function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit)
   let cur = new Date(start);
   let safety = 0;
   while (cur <= end && safety < 2000) {
-    const y = cur.getFullYear();
-    const m = String(cur.getMonth() + 1).padStart(2, '0');
-    const d = String(cur.getDate()).padStart(2, '0');
-    dates.push(`${y}-${m}-${d}`);
+    dates.push(fmt(cur));
     step(cur);
     safety++;
   }
@@ -187,6 +212,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
   const [recurrenceEndDate, setRecurrenceEndDate] = useState('');
   const [customInterval, setCustomInterval] = useState(1);
   const [customUnit, setCustomUnit] = useState('weeks');
+  const [customDays, setCustomDays] = useState([]);
   const [locationSuggestions, setLocationSuggestions] = useState([]);
   const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -227,7 +253,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
       return;
     }
 
-    const dates = generateRecurrenceDates(formData.event_date, recurrence, customInterval, recurrenceEndDate, customUnit);
+    const dates = generateRecurrenceDates(formData.event_date, recurrence, customInterval, recurrenceEndDate, customUnit, customDays);
     if (dates.length === 0) { setError('No occurrences generated.'); setLoading(false); return; }
 
     const parentRow = {
@@ -315,7 +341,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
               </select>
             </div>
             {recurrence === 'custom' && (
-              <div className="col-span-2 grid grid-cols-2 gap-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div className="col-span-2 bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Repeat every</label>
                   <div className="flex items-center space-x-2">
@@ -328,6 +354,36 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
                   </div>
                   <p className="text-xs text-gray-500 mt-1">Every {customInterval} {customUnitLabel}{customInterval > 1 ? 's' : ''}</p>
                 </div>
+                {customUnit === 'weeks' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Repeat on</label>
+                    <div className="flex space-x-2">
+                      {[
+                        { code: 'SU', label: 'S' },
+                        { code: 'MO', label: 'M' },
+                        { code: 'TU', label: 'T' },
+                        { code: 'WE', label: 'W' },
+                        { code: 'TH', label: 'T' },
+                        { code: 'FR', label: 'F' },
+                        { code: 'SA', label: 'S' },
+                      ].map(d => {
+                        const active = customDays.includes(d.code);
+                        return (
+                          <button
+                            key={d.code}
+                            type="button"
+                            onClick={() => setCustomDays(active ? customDays.filter(c => c !== d.code) : [...customDays, d.code])}
+                            className={`w-9 h-9 rounded-full text-xs font-semibold transition ${active ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                            title={d.code}
+                          >
+                            {d.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">Leave empty to repeat on the same weekday as the start date.</p>
+                  </div>
+                )}
               </div>
             )}
             {recurrenceNeedsEnd && (
