@@ -262,8 +262,8 @@ export default function Schedule({ userId, userRole }) {
     const expandedSlots = [];
     (slots || []).forEach(slot => {
       if (slot.repeat_weekly && !slot.recurrence_parent_id) {
-        const slotStart = new Date(slot.slot_date);
-        const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date) : endOfMonth;
+        const slotStart = new Date(slot.slot_date + 'T00:00:00');
+        const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : endOfMonth;
         let current = new Date(slotStart);
         let index = 0;
         while (current <= endDate && current <= endOfMonth) {
@@ -795,8 +795,10 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
     });
   }
 
+  const formatLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
   const getEventsForDate = (date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = formatLocal(date);
     return events.filter(e => e.event_date === dateStr);
   };
 
@@ -824,7 +826,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
       {/* Calendar days */}
       <div className="grid grid-cols-7">
         {days.map((day, idx) => {
-          const dateStr = day.date.toISOString().split('T')[0];
+          const dateStr = formatLocal(day.date);
           const dayEvents = getEventsForDate(day.date);
           const isToday = day.date.getTime() === today.getTime();
           const isHovered = hoveredDate === dateStr;
@@ -911,8 +913,10 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn }
     weekDays.push(date);
   }
 
+  const formatLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
   const getEventsForDate = (date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = formatLocal(date);
     return events.filter(e => e.event_date === dateStr);
   };
 
@@ -923,7 +927,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn }
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       <div className="grid grid-cols-7 divide-x divide-gray-200">
         {weekDays.map((date, idx) => {
-          const dateStr = date.toISOString().split('T')[0];
+          const dateStr = formatLocal(date);
           const dayEvents = getEventsForDate(date);
           const isToday = date.getTime() === today.getTime();
 
@@ -1300,6 +1304,16 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
   const handleSubmit = async () => {
     setLoading(true);
 
+    // Normalize the date prop (Date object or string) to a local YYYY-MM-DD string
+    // to avoid the toISOString UTC drift that shifts dates by a day.
+    const dateStr = (() => {
+      if (typeof date === 'string') return date;
+      if (date instanceof Date) {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      }
+      return date;
+    })();
+
     try {
       if (eventType === 'team-event') {
         // Create team event
@@ -1309,7 +1323,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             team_id: teamId,
             event_type: teamEventData.event_type,
             opponent: teamEventData.opponent,
-            event_date: date,
+            event_date: dateStr,
             event_time: teamEventData.event_time,
             location: teamEventData.location,
             address: teamEventData.address || null,
@@ -1338,7 +1352,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               .insert({
                 player_id: playerId,
                 event_type: 'workout',
-                event_date: date,
+                event_date: dateStr,
                 title: newWorkoutData.title,
                 notes: notesWithExercises || null
               });
@@ -1364,7 +1378,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                 .insert({
                   player_id: playerId,
                   event_type: 'workout',
-                  event_date: date,
+                  event_date: dateStr,
                   title: template.name,
                   notes: notesWithExercises || null
                 });
@@ -1378,7 +1392,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               .insert({
                 player_id: playerId,
                 event_type: 'workout',
-                event_date: date,
+                event_date: dateStr,
                 title: day?.title || `Day ${day?.day_number}`,
                 training_day_id: selectedDayId
               });
@@ -1434,7 +1448,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               .insert({
                 player_id: playerId,
                 event_type: 'meal',
-                event_date: date,
+                event_date: dateStr,
                 title: newMeal.name,
                 meal_id: newMeal.id
               });
@@ -1451,7 +1465,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               .insert({
                 player_id: playerId,
                 event_type: 'meal',
-                event_date: date,
+                event_date: dateStr,
                 title: meal?.name,
                 meal_id: selectedMealId
               });
@@ -2690,11 +2704,11 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
               <div className="flex items-center space-x-3 text-sm">
                 <CalendarIcon size={16} className="text-gray-400" />
                 <span className="text-gray-900">
-                  {new Date(event.event_date).toLocaleDateString('en-US', { 
-                    weekday: 'long', 
-                    month: 'long', 
-                    day: 'numeric', 
-                    year: 'numeric' 
+                  {new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric'
                   })}
                 </span>
               </div>
@@ -3099,7 +3113,7 @@ function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex items-center space-x-3 text-sm"><CalendarIcon size={16} className="text-gray-400" /><span>{new Date(event.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span></div>
+              <div className="flex items-center space-x-3 text-sm"><CalendarIcon size={16} className="text-gray-400" /><span>{new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span></div>
               {(event.start_time || event.end_time) && <div className="flex items-center space-x-3 text-sm"><Clock size={16} className="text-gray-400" /><span>{event.start_time}{event.end_time ? ` - ${event.end_time}` : ''}</span></div>}
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
@@ -3129,6 +3143,7 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
   for (let i = 0; i < 7; i++) { const d = new Date(startOfWeek); d.setDate(startOfWeek.getDate() + i); weekDays.push(d); }
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isOwnSlots = coach.id === userId;
+  const formatLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -3147,7 +3162,7 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       <div className="grid grid-cols-7 divide-x divide-gray-200">
         {weekDays.map((date, idx) => {
-          const dateStr = date.toISOString().split('T')[0];
+          const dateStr = formatLocal(date);
           const daySlots = slots.filter(s => s.slot_date === dateStr);
           const isToday = date.getTime() === today.getTime();
           return (
@@ -3296,7 +3311,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             <div className="text-sm font-semibold text-teal-900">{coach?.full_name}</div>
             {coach?.title && <div className="text-xs text-teal-600">{coach.title}</div>}
             <div className="mt-2 text-sm text-gray-700">
-              <div>{new Date(slot.slot_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+              <div>{new Date(slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
               <div>{formatTime(slot.start_time)} - {slot.duration_minutes} min</div>
             </div>
             {slot.notes && <div className="mt-2 text-xs text-gray-500">{slot.notes}</div>}

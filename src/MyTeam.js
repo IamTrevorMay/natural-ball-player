@@ -425,7 +425,7 @@ function ScheduleTab({ events }) {
 }
 
 function EventCard({ event }) {
-  const eventDate = new Date(event.event_date);
+  const eventDate = new Date(event.event_date + 'T00:00:00');
   
   return (
     <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">

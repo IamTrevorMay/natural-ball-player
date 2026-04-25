@@ -121,7 +121,7 @@ function ScheduleTab({ teams }) {
                 {event.is_optional && <span className="px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">Optional - RSVP</span>}
               </div>
               <div className="text-sm text-gray-600 mt-1">
-                {new Date(event.event_date).toLocaleDateString()}
+                {new Date(event.event_date + 'T00:00:00').toLocaleDateString()}
                 {event.event_time && ` • ${event.event_time}${event.event_end_time ? `–${event.event_end_time}` : ''}`}
                 {event.location && ` • ${event.location}`}
                 {event.recurrence_rule && ` • ${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}`}
