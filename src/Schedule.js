@@ -1068,9 +1068,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
       <div className="text-xs font-semibold text-gray-900 pr-4">
         {displayText}
       </div>
-      {event.event_time && (
-        <div className="text-xs text-gray-600 mt-1">{event.event_time}</div>
-      )}
+      <div className="text-xs text-gray-600 mt-1">{event.event_time || 'TBD'}</div>
       {!compact && event.location && (
         <div className="text-xs text-gray-500 mt-1">{event.location}</div>
       )}
@@ -1296,6 +1294,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
     notes: '',
     lanes: []
   });
+  const [timeTBD, setTimeTBD] = useState(false);
 
   const [trainingPrograms, setTrainingPrograms] = useState([]);
   const [trainingDays, setTrainingDays] = useState([]);
@@ -1402,7 +1401,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             event_type: teamEventData.event_type,
             opponent: teamEventData.opponent,
             event_date: dateStr,
-            event_time: teamEventData.event_time,
+            event_time: timeTBD ? null : (teamEventData.event_time || null),
             location: teamEventData.location,
             address: teamEventData.address || null,
             home_away: teamEventData.event_type === 'game' ? teamEventData.home_away : null,
@@ -1713,14 +1712,24 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Time *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Time {!timeTBD && '*'}</label>
                   <input
                     type="time"
-                    required
-                    value={teamEventData.event_time}
+                    required={!timeTBD}
+                    disabled={timeTBD}
+                    value={timeTBD ? '' : teamEventData.event_time}
                     onChange={(e) => setTeamEventData({...teamEventData, event_time: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
                   />
+                  <label className="flex items-center space-x-2 mt-2">
+                    <input
+                      type="checkbox"
+                      checked={timeTBD}
+                      onChange={(e) => setTimeTBD(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-gray-600">TBD (set later)</span>
+                  </label>
                 </div>
 
                 <div>
@@ -2791,12 +2800,10 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
                 </span>
               </div>
 
-              {event.event_time && (
-                <div className="flex items-center space-x-3 text-sm">
-                  <span className="text-gray-400 font-medium">Time:</span>
-                  <span className="text-gray-900">{event.event_time}</span>
-                </div>
-              )}
+              <div className="flex items-center space-x-3 text-sm">
+                <span className="text-gray-400 font-medium">Time:</span>
+                <span className={event.event_time ? 'text-gray-900' : 'text-yellow-700 font-medium'}>{event.event_time || 'TBD'}</span>
+              </div>
 
               {event.location && (
                 <div className="flex items-center space-x-3 text-sm">

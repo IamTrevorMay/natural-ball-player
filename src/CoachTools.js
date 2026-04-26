@@ -183,7 +183,9 @@ function ScheduleTab({ teams }) {
               </div>
               <div className="text-sm text-gray-600 mt-1">
                 {new Date(event.event_date + 'T00:00:00').toLocaleDateString()}
-                {event.event_time && ` • ${event.event_time}${event.event_end_time ? `–${event.event_end_time}` : ''}`}
+                {event.event_time
+                  ? ` • ${event.event_time}${event.event_end_time ? `–${event.event_end_time}` : ''}`
+                  : ' • TBD'}
                 {event.location && ` • ${event.location}`}
                 {event.recurrence_rule && ` • ${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}`}
               </div>
@@ -269,6 +271,7 @@ function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit,
 function CreateScheduleModal({ teams, onClose, onSuccess }) {
   const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
   const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', event_end_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '', lanes: [] });
+  const [timeTBD, setTimeTBD] = useState(false);
   const [recurrence, setRecurrence] = useState('none');
   const [recurrenceEndDate, setRecurrenceEndDate] = useState('');
   const [customInterval, setCustomInterval] = useState(1);
@@ -295,7 +298,8 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
     e.preventDefault(); setLoading(true); setError('');
     const baseRow = {
       ...formData,
-      event_end_time: formData.event_end_time || null,
+      event_time: timeTBD ? null : (formData.event_time || null),
+      event_end_time: timeTBD ? null : (formData.event_end_time || null),
       home_away: formData.event_type === 'game' ? formData.home_away : null,
       lanes: formData.lanes.length > 0 ? formData.lanes : null,
     };
@@ -383,12 +387,36 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
               <input type="date" required value={formData.event_date} onChange={(e) => setFormData({...formData, event_date: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Start Time *</label>
-              <input type="time" required value={formData.event_time} onChange={(e) => setFormData({...formData, event_time: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Start Time {!timeTBD && '*'}</label>
+              <input
+                type="time"
+                required={!timeTBD}
+                disabled={timeTBD}
+                value={timeTBD ? '' : formData.event_time}
+                onChange={(e) => setFormData({...formData, event_time: e.target.value})}
+                className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">End Time</label>
-              <input type="time" value={formData.event_end_time} onChange={(e) => setFormData({...formData, event_end_time: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input
+                type="time"
+                disabled={timeTBD}
+                value={timeTBD ? '' : formData.event_end_time}
+                onChange={(e) => setFormData({...formData, event_end_time: e.target.value})}
+                className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={timeTBD}
+                  onChange={(e) => setTimeTBD(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Time TBD (e.g. tournament — set later)</span>
+              </label>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Repeats</label>
