@@ -75,6 +75,10 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
 function ScheduleTab({ teams }) {
   const [showForm, setShowForm] = useState(false);
   const [events, setEvents] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterTeam, setFilterTeam] = useState('All');
+  const [filterType, setFilterType] = useState('All');
+  const [filterTimeframe, setFilterTimeframe] = useState('upcoming');
   useEffect(() => { fetchEvents(); }, []);
 
   const fetchEvents = async () => {
@@ -98,6 +102,25 @@ function ScheduleTab({ teams }) {
     }
   };
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const filteredEvents = events.filter(ev => {
+    if (filterTeam !== 'All' && ev.team_id !== filterTeam) return false;
+    if (filterType !== 'All' && ev.event_type !== filterType) return false;
+    if (filterTimeframe === 'upcoming' && ev.event_date < todayStr) return false;
+    if (filterTimeframe === 'past' && ev.event_date >= todayStr) return false;
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      const haystack = [
+        ev.title, ev.opponent, ev.location, ev.address, ev.notes,
+        ev.teams?.name, ev.event_type
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filterSelectClass = "px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white";
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -106,8 +129,46 @@ function ScheduleTab({ teams }) {
           <Plus size={18} /><span>Add Event</span>
         </button>
       </div>
+      <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search title, opponent, location, notes..."
+            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <select value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)} className={filterSelectClass}>
+          <option value="All">All teams</option>
+          {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={filterSelectClass}>
+          <option value="All">All types</option>
+          <option value="practice">Practice</option>
+          <option value="game">Game</option>
+        </select>
+        <select value={filterTimeframe} onChange={(e) => setFilterTimeframe(e.target.value)} className={filterSelectClass}>
+          <option value="upcoming">Upcoming</option>
+          <option value="past">Past</option>
+          <option value="all">All time</option>
+        </select>
+        {(searchQuery || filterTeam !== 'All' || filterType !== 'All' || filterTimeframe !== 'upcoming') && (
+          <button
+            onClick={() => { setSearchQuery(''); setFilterTeam('All'); setFilterType('All'); setFilterTimeframe('upcoming'); }}
+            className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1"
+          >
+            Reset
+          </button>
+        )}
+        <span className="text-xs text-gray-500 ml-auto">{filteredEvents.length} of {events.length}</span>
+      </div>
       <div className="space-y-2">
-        {events.map(event => (
+        {filteredEvents.length === 0 && (
+          <div className="text-center py-8 text-gray-500 text-sm">No events match these filters.</div>
+        )}
+        {filteredEvents.map(event => (
           <div key={event.id} className="bg-gray-50 rounded-lg p-4 flex justify-between items-center">
             <div>
               <div className="flex items-center space-x-3">
