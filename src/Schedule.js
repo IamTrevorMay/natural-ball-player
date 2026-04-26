@@ -99,6 +99,7 @@ export default function Schedule({ userId, userRole }) {
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
   const [laneDate, setLaneDate] = useState(new Date().toISOString().split('T')[0]);
   const [coachesCollapsed, setCoachesCollapsed] = useState(false);
+  const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
 
   useEffect(() => {
     fetchTeams();
@@ -372,7 +373,16 @@ export default function Schedule({ userId, userRole }) {
         <div className="bg-white rounded-lg shadow">
           <div className="border-b border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">My Schedule</h3>
+              <div className="flex items-center space-x-3">
+                <h3 className="text-lg font-semibold text-gray-900">My Schedule</h3>
+                <button
+                  onClick={() => setShowPlayerAddGame(true)}
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
+                >
+                  <Plus size={16} />
+                  <span>Add Game</span>
+                </button>
+              </div>
               <div className="flex items-center space-x-2">
                 <button onClick={() => setViewMode('week')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Week</button>
                 <button onClick={() => setViewMode('month')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'month' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Month</button>
@@ -386,11 +396,33 @@ export default function Schedule({ userId, userRole }) {
           </div>
           <div className="p-6">
             {viewMode === 'month' ? (
-              <MonthView selectedDate={selectedDate} events={myScheduleEvents} onDateClick={() => {}} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={false} setSelectedEvent={setSelectedEvent} setShowEventDetail={setShowEventDetail} />
+              <MonthView
+                selectedDate={selectedDate}
+                events={myScheduleEvents}
+                onDateClick={() => {}}
+                hoveredDate={hoveredDate}
+                setHoveredDate={setHoveredDate}
+                canManage={true}
+                setSelectedEvent={setSelectedEvent}
+                setShowEventDetail={setShowEventDetail}
+              />
             ) : (
-              <WeekView selectedDate={selectedDate} events={myScheduleEvents} onDateClick={() => {}} canManage={false} />
+              <WeekView
+                selectedDate={selectedDate}
+                events={myScheduleEvents}
+                onDateClick={() => {}}
+                canManage={true}
+                onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
+              />
             )}
           </div>
+          {showPlayerAddGame && (
+            <PlayerAddGameModal
+              userId={userId}
+              onClose={() => setShowPlayerAddGame(false)}
+              onSuccess={() => { setShowPlayerAddGame(false); fetchMyScheduleEvents(); }}
+            />
+          )}
         </div>
       )}
 
@@ -1304,6 +1336,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
   const [selectedDayId, setSelectedDayId] = useState('');
   const [selectedMealId, setSelectedMealId] = useState('');
   const [selectedMealPlanId, setSelectedMealPlanId] = useState('');
+  const [mealsPerDay, setMealsPerDay] = useState(3);
   const [workoutSelectionMode, setWorkoutSelectionMode] = useState(null); // 'existing' or 'create'
   const [mealSelectionMode, setMealSelectionMode] = useState(null); // 'existing' or 'create'
   const [newWorkoutData, setNewWorkoutData] = useState({ title: '', notes: '', program: 'No Program', folder: '', exercises: [{ name: '', sets: '', reps: '', rest: '', load: '', link: '' }] });
@@ -1560,8 +1593,9 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             .insert({
               meal_plan_id: selectedMealPlanId,
               player_id: playerId,
-              start_date: date,
-              assigned_by: user?.id
+              start_date: dateStr,
+              assigned_by: user?.id,
+              meals_per_day: mealsPerDay,
             });
 
           if (error) throw error;
@@ -2368,8 +2402,22 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  Plan will start on {new Date(date).toLocaleDateString()}
+                  Plan will start on {(typeof date === 'string' ? new Date(date + 'T00:00:00') : date).toLocaleDateString()}
                 </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Meals / Snacks per day *</label>
+                <select
+                  value={mealsPerDay}
+                  onChange={(e) => setMealsPerDay(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={2}>2 meals/snacks per day</option>
+                  <option value={3}>3 meals/snacks per day</option>
+                  <option value={4}>4 meals/snacks per day</option>
+                  <option value={5}>5 meals/snacks per day</option>
+                  <option value={6}>6 meals/snacks per day</option>
+                </select>
               </div>
             </div>
           )}
@@ -3408,6 +3456,149 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             <button onClick={handleReserve} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// PLAYER ADD GAME MODAL — players self-upload games to their schedule
+// ============================================
+
+function PlayerAddGameModal({ userId, onClose, onSuccess }) {
+  const [formData, setFormData] = useState({
+    title: '',
+    event_date: new Date().toISOString().split('T')[0],
+    event_time: '',
+    event_end_time: '',
+    location: '',
+    address: '',
+    notes: '',
+  });
+  const [timeTBD, setTimeTBD] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    const { error: insertError } = await supabase.from('schedule_events').insert({
+      title: formData.title,
+      opponent: formData.title,
+      event_type: 'game',
+      event_date: formData.event_date,
+      event_time: timeTBD ? null : (formData.event_time || null),
+      event_end_time: timeTBD ? null : (formData.event_end_time || null),
+      location: formData.location || null,
+      address: formData.address || null,
+      notes: formData.notes || null,
+      player_id: userId,
+    });
+    if (insertError) { setError(insertError.message); setLoading(false); return; }
+    setLoading(false);
+    onSuccess();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Add a Game to My Schedule</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title / Opponent *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g., vs. Hawks"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+              <input
+                type="date"
+                required
+                value={formData.event_date}
+                onChange={(e) => setFormData({ ...formData, event_date: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Time {!timeTBD && '*'}</label>
+              <input
+                type="time"
+                required={!timeTBD}
+                disabled={timeTBD}
+                value={timeTBD ? '' : formData.event_time}
+                onChange={(e) => setFormData({ ...formData, event_time: e.target.value })}
+                className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+              <input
+                type="time"
+                disabled={timeTBD}
+                value={timeTBD ? '' : formData.event_end_time}
+                onChange={(e) => setFormData({ ...formData, event_end_time: e.target.value })}
+                className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={timeTBD}
+                  onChange={(e) => setTimeTBD(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Time TBD</span>
+              </label>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <input
+              type="text"
+              placeholder="e.g., Smith Park Field 3"
+              value={formData.location}
+              onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+            <input
+              type="text"
+              placeholder="Full address"
+              value={formData.address}
+              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea
+              rows={3}
+              placeholder="Anything else (tournament name, uniform, etc.)"
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex space-x-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
+            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Add to Schedule'}</button>
+          </div>
+        </form>
       </div>
     </div>
   );

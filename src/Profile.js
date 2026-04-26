@@ -28,6 +28,7 @@ const PROFILE_TABS = [
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
   { key: 'waiver', label: 'Waiver' },
   { key: 'codes', label: 'Codes' },
+  { key: 'goals', label: 'Goals' },
 ];
 
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
@@ -51,6 +52,10 @@ export default function Profile({ userId, userRole, onBack }) {
   const [editingRoutineId, setEditingRoutineId] = useState(null);
   const [routineDraft, setRoutineDraft] = useState({ title: '', content: '' });
   const [savingRoutine, setSavingRoutine] = useState(false);
+  const [goals, setGoals] = useState([]);
+  const [editingGoalId, setEditingGoalId] = useState(null);
+  const [goalDraft, setGoalDraft] = useState({ goal_type: 'short_term', content: '' });
+  const [savingGoal, setSavingGoal] = useState(false);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -59,6 +64,7 @@ export default function Profile({ userId, userRole, onBack }) {
     fetchDiscountCodes();
     fetchWaiverData();
     fetchArmCareRoutines();
+    fetchGoals();
   }, [userId]);
 
   const fetchUserData = async () => {
@@ -367,6 +373,73 @@ export default function Profile({ userId, userRole, onBack }) {
     }
   };
 
+  const fetchGoals = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_goals')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setGoals(data || []);
+    } catch (error) {
+      console.error('Error fetching goals:', error);
+    }
+  };
+
+  const addGoal = (goalType) => {
+    setEditingGoalId('new');
+    setGoalDraft({ goal_type: goalType, content: '' });
+  };
+
+  const startEditGoal = (goal) => {
+    setEditingGoalId(goal.id);
+    setGoalDraft({ goal_type: goal.goal_type, content: goal.content || '' });
+  };
+
+  const cancelEditGoal = () => {
+    setEditingGoalId(null);
+    setGoalDraft({ goal_type: 'short_term', content: '' });
+  };
+
+  const saveGoal = async () => {
+    if (!goalDraft.content.trim()) return;
+    setSavingGoal(true);
+    try {
+      if (editingGoalId === 'new') {
+        const { error } = await supabase
+          .from('user_goals')
+          .insert({ user_id: userId, goal_type: goalDraft.goal_type, content: goalDraft.content.trim() });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('user_goals')
+          .update({ content: goalDraft.content.trim(), updated_at: new Date().toISOString() })
+          .eq('id', editingGoalId);
+        if (error) throw error;
+      }
+      await fetchGoals();
+      cancelEditGoal();
+    } catch (error) {
+      console.error('Error saving goal:', error);
+      alert('Error saving goal: ' + error.message);
+    } finally {
+      setSavingGoal(false);
+    }
+  };
+
+  const deleteGoal = async (id) => {
+    if (!window.confirm('Delete this goal?')) return;
+    try {
+      const { error } = await supabase.from('user_goals').delete().eq('id', id);
+      if (error) throw error;
+      await fetchGoals();
+    } catch (error) {
+      console.error('Error deleting goal:', error);
+      alert('Error deleting goal: ' + error.message);
+    }
+  };
+
   const fetchWaiverData = async () => {
     try {
       const { data, error } = await supabase
@@ -596,9 +669,88 @@ export default function Profile({ userId, userRole, onBack }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
+            </div>
+          )}
+
+          {activeProfileTab === 'goals' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[
+                { type: 'short_term', label: 'Short-Term Goals' },
+                { type: 'long_term', label: 'Long-Term Goals' },
+              ].map(({ type, label }) => {
+                const items = goals.filter(g => g.goal_type === type);
+                return (
+                  <div key={type}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-lg font-semibold text-gray-900">{label}</h4>
+                      <button
+                        onClick={() => addGoal(type)}
+                        className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
+                      >
+                        <Plus size={14} />
+                        <span>Add</span>
+                      </button>
+                    </div>
+                    {editingGoalId === 'new' && goalDraft.goal_type === type && (
+                      <div className="border border-blue-300 rounded-lg p-3 mb-3 bg-blue-50">
+                        <textarea
+                          value={goalDraft.content}
+                          onChange={(e) => setGoalDraft({ ...goalDraft, content: e.target.value })}
+                          placeholder={`What's a ${label.toLowerCase().replace(' goals', ' goal')}?`}
+                          rows={3}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                        <div className="flex justify-end space-x-2 mt-2">
+                          <button onClick={cancelEditGoal} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                          <button onClick={saveGoal} disabled={savingGoal || !goalDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                            {savingGoal ? 'Saving...' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      {items.length === 0 && editingGoalId !== 'new' && (
+                        <p className="text-sm text-gray-500 italic">No {label.toLowerCase()} yet.</p>
+                      )}
+                      {items.map(goal => (
+                        <div key={goal.id} className="border border-gray-200 rounded-lg p-3">
+                          {editingGoalId === goal.id ? (
+                            <>
+                              <textarea
+                                value={goalDraft.content}
+                                onChange={(e) => setGoalDraft({ ...goalDraft, content: e.target.value })}
+                                rows={3}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                              />
+                              <div className="flex justify-end space-x-2 mt-2">
+                                <button onClick={cancelEditGoal} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                                <button onClick={saveGoal} disabled={savingGoal || !goalDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                                  {savingGoal ? 'Saving...' : 'Save'}
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex justify-between items-start">
+                              <p className="text-sm text-gray-800 whitespace-pre-wrap flex-1">{goal.content}</p>
+                              <div className="flex items-center space-x-1 ml-3 flex-shrink-0">
+                                <button onClick={() => startEditGoal(goal)} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                                  <Edit2 size={14} />
+                                </button>
+                                <button onClick={() => deleteGoal(goal.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

@@ -531,7 +531,8 @@ function ProspectsTab({ teamId, userId, roster }) {
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addMode, setAddMode] = useState(null); // null, 'roster', 'external'
-  const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '' });
+  const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '', position: '' });
+  const [hoveredPosition, setHoveredPosition] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editNotes, setEditNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -567,12 +568,13 @@ function ProspectsTab({ teamId, userId, roster }) {
           team_id: teamId,
           player_id: newProspect.player_id || null,
           name: newProspect.name,
+          position: newProspect.position || null,
           notes: newProspect.notes || null,
           added_by: userId,
         });
 
       if (error) throw error;
-      setNewProspect({ name: '', notes: '', player_id: '' });
+      setNewProspect({ name: '', notes: '', player_id: '', position: '' });
       setAddMode(null);
       await fetchProspects();
     } catch (error) {
@@ -635,14 +637,14 @@ function ProspectsTab({ teamId, userId, roster }) {
         {!addMode && (
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => { setAddMode('roster'); setNewProspect({ name: '', notes: '', player_id: '' }); }}
+              onClick={() => { setAddMode('roster'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); }}
               className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center space-x-1"
             >
               <UserPlus size={16} />
               <span>From Roster</span>
             </button>
             <button
-              onClick={() => { setAddMode('external'); setNewProspect({ name: '', notes: '', player_id: '' }); }}
+              onClick={() => { setAddMode('external'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); }}
               className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center space-x-1"
             >
               <Plus size={16} />
@@ -681,6 +683,24 @@ function ProspectsTab({ teamId, userId, roster }) {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             )}
+            <select
+              value={newProspect.position}
+              onChange={(e) => setNewProspect({...newProspect, position: e.target.value})}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">No position</option>
+              <option value="P">P — Pitcher</option>
+              <option value="C">C — Catcher</option>
+              <option value="1B">1B — First Base</option>
+              <option value="2B">2B — Second Base</option>
+              <option value="3B">3B — Third Base</option>
+              <option value="SS">SS — Shortstop</option>
+              <option value="LF">LF — Left Field</option>
+              <option value="CF">CF — Center Field</option>
+              <option value="RF">RF — Right Field</option>
+              <option value="DH">DH — Designated Hitter</option>
+              <option value="UT">UT — Utility</option>
+            </select>
             <textarea
               value={newProspect.notes}
               onChange={(e) => setNewProspect({...newProspect, notes: e.target.value})}
@@ -708,6 +728,9 @@ function ProspectsTab({ teamId, userId, roster }) {
           </div>
         </div>
       )}
+
+      {/* Depth Chart Diagram */}
+      <DepthChartField prospects={prospects} hoveredPosition={hoveredPosition} setHoveredPosition={setHoveredPosition} />
 
       {/* Prospects List */}
       {prospects.length === 0 ? (
@@ -787,6 +810,112 @@ function ProspectsTab({ teamId, userId, roster }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
+  const POSITIONS = [
+    { code: 'P',  label: 'Pitcher',      x: 200, y: 215 },
+    { code: 'C',  label: 'Catcher',      x: 200, y: 305 },
+    { code: '1B', label: 'First Base',   x: 270, y: 215 },
+    { code: '2B', label: 'Second Base',  x: 240, y: 155 },
+    { code: 'SS', label: 'Shortstop',    x: 160, y: 155 },
+    { code: '3B', label: 'Third Base',   x: 130, y: 215 },
+    { code: 'LF', label: 'Left Field',   x: 75,  y: 70  },
+    { code: 'CF', label: 'Center Field', x: 200, y: 35  },
+    { code: 'RF', label: 'Right Field',  x: 325, y: 70  },
+  ];
+
+  const byPos = {};
+  POSITIONS.forEach(p => { byPos[p.code] = []; });
+  prospects.forEach(pr => {
+    if (pr.position && byPos[pr.position]) byPos[pr.position].push(pr);
+  });
+
+  const hovered = POSITIONS.find(p => p.code === hoveredPosition);
+  const hoveredList = hovered ? byPos[hovered.code] : [];
+
+  return (
+    <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-semibold text-gray-900">Depth Chart</h4>
+        <span className="text-xs text-gray-600">Hover a position to see who's there</span>
+      </div>
+      <div className="flex flex-col md:flex-row md:space-x-4">
+        <div className="flex-shrink-0 mx-auto" style={{ width: 400, maxWidth: '100%' }}>
+          <svg viewBox="0 0 400 360" className="w-full h-auto">
+            <path d="M 200 320 L 30 80 A 240 240 0 0 1 370 80 Z" fill="#86efac" stroke="#16a34a" strokeWidth="2" />
+            <path d="M 200 280 L 110 215 L 200 150 L 290 215 Z" fill="#fbbf24" opacity="0.7" stroke="#b45309" strokeWidth="2" />
+            <circle cx="200" cy="215" r="14" fill="#fbbf24" stroke="#b45309" strokeWidth="1.5" />
+            {[ {x:200,y:280}, {x:290,y:215}, {x:200,y:150}, {x:110,y:215} ].map((b, i) => (
+              <rect key={i} x={b.x - 6} y={b.y - 6} width="12" height="12" fill="white" stroke="#374151" strokeWidth="1" transform={`rotate(45 ${b.x} ${b.y})`} />
+            ))}
+            {POSITIONS.map(pos => {
+              const count = byPos[pos.code].length;
+              const isHovered = hoveredPosition === pos.code;
+              return (
+                <g
+                  key={pos.code}
+                  onMouseEnter={() => setHoveredPosition(pos.code)}
+                  onMouseLeave={() => setHoveredPosition(null)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <circle
+                    cx={pos.x}
+                    cy={pos.y}
+                    r={isHovered ? 22 : 18}
+                    fill={count > 0 ? '#2563eb' : '#9ca3af'}
+                    stroke="white"
+                    strokeWidth="2"
+                  />
+                  <text
+                    x={pos.x}
+                    y={pos.y + 4}
+                    textAnchor="middle"
+                    fill="white"
+                    fontSize="11"
+                    fontWeight="700"
+                    pointerEvents="none"
+                  >
+                    {pos.code}
+                  </text>
+                  {count > 0 && (
+                    <circle cx={pos.x + 14} cy={pos.y - 14} r="9" fill="#dc2626" stroke="white" strokeWidth="1.5" />
+                  )}
+                  {count > 0 && (
+                    <text x={pos.x + 14} y={pos.y - 11} textAnchor="middle" fill="white" fontSize="10" fontWeight="700" pointerEvents="none">
+                      {count}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        <div className="flex-1 mt-3 md:mt-0 bg-white border border-gray-200 rounded-lg p-3 min-h-[120px]">
+          {hovered ? (
+            <>
+              <div className="text-sm font-semibold text-gray-900 mb-1">{hovered.code} — {hovered.label}</div>
+              <div className="text-xs text-gray-500 mb-2">{hoveredList.length} prospect{hoveredList.length !== 1 ? 's' : ''}</div>
+              {hoveredList.length === 0 ? (
+                <p className="text-sm text-gray-500 italic">No prospects at this position.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {hoveredList.map(p => (
+                    <li key={p.id} className="text-sm text-gray-800 flex items-center space-x-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                      <span>{p.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-gray-500 italic">Hover any position on the field to see prospects.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

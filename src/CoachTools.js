@@ -271,6 +271,7 @@ function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit,
 function CreateScheduleModal({ teams, onClose, onSuccess }) {
   const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
   const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', event_end_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '', lanes: [] });
+  const [selectedTeamIds, setSelectedTeamIds] = useState([]);
   const [timeTBD, setTimeTBD] = useState(false);
   const [recurrence, setRecurrence] = useState('none');
   const [recurrenceEndDate, setRecurrenceEndDate] = useState('');
@@ -296,19 +297,27 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
-    const baseRow = {
-      ...formData,
+    if (selectedTeamIds.length === 0) {
+      setError('Please select at least one team.');
+      setLoading(false);
+      return;
+    }
+    const { team_id: _ignored, ...rest } = formData;
+    const baseShared = {
+      ...rest,
       event_time: timeTBD ? null : (formData.event_time || null),
       event_end_time: timeTBD ? null : (formData.event_end_time || null),
       home_away: formData.event_type === 'game' ? formData.home_away : null,
       lanes: formData.lanes.length > 0 ? formData.lanes : null,
     };
+    const rowsForTeams = (extra = {}) => selectedTeamIds.map(tid => ({ ...baseShared, ...extra, team_id: tid }));
 
     if (recurrence === 'none') {
-      const { error: insertError } = await supabase.from('schedule_events').insert(baseRow);
+      const { error: insertError } = await supabase.from('schedule_events').insert(rowsForTeams());
       if (insertError) { setError(insertError.message); setLoading(false); return; }
       setLoading(false);
-      alert('Event created successfully!'); onSuccess();
+      alert(`Created ${selectedTeamIds.length} event${selectedTeamIds.length > 1 ? 's' : ''}!`);
+      onSuccess();
       return;
     }
 
@@ -321,28 +330,35 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
     const dates = generateRecurrenceDates(formData.event_date, recurrence, customInterval, recurrenceEndDate, customUnit, customDays);
     if (dates.length === 0) { setError('No occurrences generated.'); setLoading(false); return; }
 
-    const parentRow = {
-      ...baseRow,
-      event_date: dates[0],
-      recurrence_rule: recurrence,
-      recurrence_interval: recurrence === 'custom' ? parseInt(customInterval) || 1 : null,
-      recurrence_end_date: recurrenceEndDate,
-    };
-    const { data: parent, error: parentErr } = await supabase.from('schedule_events').insert(parentRow).select('id').single();
-    if (parentErr) { setError(parentErr.message); setLoading(false); return; }
+    let totalCreated = 0;
+    for (const tid of selectedTeamIds) {
+      const parentRow = {
+        ...baseShared,
+        team_id: tid,
+        event_date: dates[0],
+        recurrence_rule: recurrence,
+        recurrence_interval: recurrence === 'custom' ? parseInt(customInterval) || 1 : null,
+        recurrence_end_date: recurrenceEndDate,
+      };
+      const { data: parent, error: parentErr } = await supabase.from('schedule_events').insert(parentRow).select('id').single();
+      if (parentErr) { setError(parentErr.message); setLoading(false); return; }
+      totalCreated++;
 
-    if (dates.length > 1) {
-      const children = dates.slice(1).map(d => ({
-        ...baseRow,
-        event_date: d,
-        recurrence_parent_id: parent.id,
-      }));
-      const { error: childErr } = await supabase.from('schedule_events').insert(children);
-      if (childErr) { setError(childErr.message); setLoading(false); return; }
+      if (dates.length > 1) {
+        const children = dates.slice(1).map(d => ({
+          ...baseShared,
+          team_id: tid,
+          event_date: d,
+          recurrence_parent_id: parent.id,
+        }));
+        const { error: childErr } = await supabase.from('schedule_events').insert(children);
+        if (childErr) { setError(childErr.message); setLoading(false); return; }
+        totalCreated += children.length;
+      }
     }
 
     setLoading(false);
-    alert(`Created ${dates.length} event${dates.length !== 1 ? 's' : ''}!`);
+    alert(`Created ${totalCreated} event${totalCreated !== 1 ? 's' : ''}!`);
     onSuccess();
   };
 
@@ -366,11 +382,27 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
           </datalist>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Team *</label>
-              <select required value={formData.team_id} onChange={(e) => setFormData({...formData, team_id: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Select team</option>
-                {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
-              </select>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Team(s) *</label>
+              <div className="border border-gray-300 rounded-lg p-2 max-h-32 overflow-y-auto bg-white">
+                {teams.length === 0 && <p className="text-xs text-gray-500 px-2 py-1">No teams available</p>}
+                {teams.map(team => (
+                  <label key={team.id} className="flex items-center space-x-2 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedTeamIds.includes(team.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedTeamIds([...selectedTeamIds, team.id]);
+                        else setSelectedTeamIds(selectedTeamIds.filter(id => id !== team.id));
+                      }}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-900">{team.name}</span>
+                  </label>
+                ))}
+              </div>
+              {selectedTeamIds.length > 0 && (
+                <p className="text-xs text-gray-500 mt-1">{selectedTeamIds.length} team{selectedTeamIds.length > 1 ? 's' : ''} selected — one event per team will be created</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Event Type *</label>
