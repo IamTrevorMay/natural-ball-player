@@ -14,6 +14,8 @@ import WaiverPage from './WaiverPage';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText } from 'lucide-react';
 import './App.css';
 
+const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -590,7 +592,7 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
   }, [userId]);
 
   const fetchTodayFacilityEvents = async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = fmtLocalDate(new Date());
     const todayDow = new Date().getDay();
 
     const { data: nonRecurring } = await supabase.from('facility_events').select('*').eq('is_recurring', false).is('recurrence_parent_id', null).eq('event_date', today);
@@ -640,7 +642,7 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
 
   const fetchTrainingSessions = async () => {
     setLoadingSlots(true);
-    const today = new Date().toISOString().split('T')[0];
+    const today = fmtLocalDate(new Date());
     const todayDow = new Date().getDay();
 
     const { data: slots } = await supabase

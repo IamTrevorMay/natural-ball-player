@@ -6,13 +6,16 @@ import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, Us
 // RECURRENCE UTILITIES
 // ============================================
 
+// Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
+const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 function generateOccurrenceDates(startDate, rule, rangeStart, rangeEnd) {
   const dates = [];
   if (!rule || !rule.freq) return dates;
-  const start = new Date(startDate);
+  const start = new Date(startDate + 'T12:00:00');
   const interval = rule.interval || 1;
   const maxCount = rule.count || 365;
-  const until = rule.until ? new Date(rule.until) : null;
+  const until = rule.until ? new Date(rule.until + 'T23:59:59') : null;
   let current = new Date(start);
   let count = 0;
   while (count < maxCount) {
@@ -56,7 +59,7 @@ function expandRecurringEvents(masters, exceptions, rangeStart, rangeEnd) {
     if (!master.recurrence_rule) return;
     const dates = generateOccurrenceDates(master.event_date, master.recurrence_rule, rangeStart, rangeEnd);
     dates.forEach((date, index) => {
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = fmtLocalDate(date);
       const exKey = `${master.id}_${dateStr}`;
       if (exceptionMap[exKey]) {
         const ex = exceptionMap[exKey];
@@ -97,7 +100,7 @@ export default function Schedule({ userId, userRole }) {
   const [showReserveSlot, setShowReserveSlot] = useState(null);
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
-  const [laneDate, setLaneDate] = useState(new Date().toISOString().split('T')[0]);
+  const [laneDate, setLaneDate] = useState(fmtLocalDate(new Date()));
   const [coachesCollapsed, setCoachesCollapsed] = useState(false);
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
 
@@ -200,8 +203,8 @@ export default function Schedule({ userId, userRole }) {
       .from('schedule_events')
       .select('*')
       .eq('team_id', selectedTeam)
-      .gte('event_date', startOfMonth.toISOString().split('T')[0])
-      .lte('event_date', endOfMonth.toISOString().split('T')[0]);
+      .gte('event_date', fmtLocalDate(startOfMonth))
+      .lte('event_date', fmtLocalDate(endOfMonth));
 
     setEvents(data || []);
   };
@@ -217,8 +220,8 @@ export default function Schedule({ userId, userRole }) {
       .from('schedule_events')
       .select('*')
       .in('player_id', ids)
-      .gte('event_date', startOfMonth.toISOString().split('T')[0])
-      .lte('event_date', endOfMonth.toISOString().split('T')[0]);
+      .gte('event_date', fmtLocalDate(startOfMonth))
+      .lte('event_date', fmtLocalDate(endOfMonth));
 
     setEvents(data || []);
   };
@@ -231,8 +234,8 @@ export default function Schedule({ userId, userRole }) {
       .from('schedule_events')
       .select('*')
       .eq('player_id', userId)
-      .gte('event_date', startOfMonth.toISOString().split('T')[0])
-      .lte('event_date', endOfMonth.toISOString().split('T')[0]);
+      .gte('event_date', fmtLocalDate(startOfMonth))
+      .lte('event_date', fmtLocalDate(endOfMonth));
 
     setMyScheduleEvents(data || []);
   };
@@ -240,8 +243,8 @@ export default function Schedule({ userId, userRole }) {
   const fetchFacilityEvents = async () => {
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = startOfMonth.toISOString().split('T')[0];
-    const endStr = endOfMonth.toISOString().split('T')[0];
+    const startStr = fmtLocalDate(startOfMonth);
+    const endStr = fmtLocalDate(endOfMonth);
     const { data: nonRecurring } = await supabase.from('facility_events').select('*').eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
     const { data: masters } = await supabase.from('facility_events').select('*').eq('is_recurring', true).is('recurrence_parent_id', null);
     const { data: exceptions } = await supabase.from('facility_events').select('*').not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr);
@@ -257,8 +260,8 @@ export default function Schedule({ userId, userRole }) {
   const fetchCoachSlots = async (coachId) => {
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = startOfMonth.toISOString().split('T')[0];
-    const endStr = endOfMonth.toISOString().split('T')[0];
+    const startStr = fmtLocalDate(startOfMonth);
+    const endStr = fmtLocalDate(endOfMonth);
     const { data: slots } = await supabase.from('training_slots').select('*').eq('coach_id', coachId);
     const expandedSlots = [];
     (slots || []).forEach(slot => {
@@ -269,7 +272,7 @@ export default function Schedule({ userId, userRole }) {
         let index = 0;
         while (current <= endDate && current <= endOfMonth) {
           if (current >= startOfMonth) {
-            expandedSlots.push({ ...slot, slot_date: current.toISOString().split('T')[0], _occurrence_index: index, _is_virtual: index > 0 });
+            expandedSlots.push({ ...slot, slot_date: fmtLocalDate(current), _occurrence_index: index, _is_virtual: index > 0 });
           }
           current.setDate(current.getDate() + 7);
           index++;
@@ -1125,7 +1128,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     }
   }
 
-  const dateStr = laneDate || new Date().toISOString().split('T')[0];
+  const dateStr = laneDate || fmtLocalDate(new Date());
 
   // Filter events for this date
   const dayEvents = events.filter(ev => ev.event_date === dateStr);
@@ -1190,12 +1193,12 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const prevDay = () => {
     const d = new Date(dateStr + 'T12:00:00');
     d.setDate(d.getDate() - 1);
-    setLaneDate(d.toISOString().split('T')[0]);
+    setLaneDate(fmtLocalDate(d));
   };
   const nextDay = () => {
     const d = new Date(dateStr + 'T12:00:00');
     d.setDate(d.getDate() + 1);
-    setLaneDate(d.toISOString().split('T')[0]);
+    setLaneDate(fmtLocalDate(d));
   };
 
   const handleEmptyClick = (lane, slot) => {
@@ -1520,7 +1523,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             .insert({
               program_id: selectedProgramId,
               player_id: playerId,
-              start_date: date,
+              start_date: dateStr,
               assigned_by: user?.id
             });
 
@@ -3036,7 +3039,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
   })();
 
   const [title, setTitle] = useState('');
-  const [eventDate, setEventDate] = useState(prefill.date || new Date().toISOString().split('T')[0]);
+  const [eventDate, setEventDate] = useState(prefill.date || fmtLocalDate(new Date()));
   const [startTime, setStartTime] = useState(prefill.startTime || '09:00');
   const [endTime, setEndTime] = useState(prefill.endTime || '10:00');
   const [location, setLocation] = useState('');
@@ -3351,7 +3354,7 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
 // ============================================
 
 function CreateSlotPanel({ onClose, onSuccess, userId }) {
-  const [slotDate, setSlotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [slotDate, setSlotDate] = useState(fmtLocalDate(new Date()));
   const [startTime, setStartTime] = useState('09:00');
   const [duration, setDuration] = useState(60);
   const [autoConfirm, setAutoConfirm] = useState(false);
@@ -3468,7 +3471,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
 function PlayerAddGameModal({ userId, onClose, onSuccess }) {
   const [formData, setFormData] = useState({
     title: '',
-    event_date: new Date().toISOString().split('T')[0],
+    event_date: fmtLocalDate(new Date()),
     event_time: '',
     event_end_time: '',
     location: '',

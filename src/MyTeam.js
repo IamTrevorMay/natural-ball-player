@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus } from 'lucide-react';
 
+const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 export default function MyTeam({ userId, userRole }) {
   const [loading, setLoading] = useState(true);
   const [teamData, setTeamData] = useState(null);
@@ -93,7 +95,7 @@ export default function MyTeam({ userId, userRole }) {
         .from('schedule_events')
         .select('*')
         .eq('team_id', teamId)
-        .gte('event_date', new Date().toISOString().split('T')[0])
+        .gte('event_date', fmtLocalDate(new Date()))
         .order('event_date', { ascending: true })
         .limit(5);
 

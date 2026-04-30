@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 
+// Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
+const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('schedule');
   const [teams, setTeams] = useState([]);
@@ -102,7 +105,7 @@ function ScheduleTab({ teams }) {
     }
   };
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = fmtLocalDate(new Date());
   const filteredEvents = events.filter(ev => {
     if (filterTeam !== 'All' && ev.team_id !== filterTeam) return false;
     if (filterType !== 'All' && ev.event_type !== filterType) return false;
@@ -229,16 +232,15 @@ function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit,
     const dayCodes = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
     const allowed = new Set(customDays);
     let cur = new Date(start);
-    // Anchor "week 0" at the week containing the start date (Sunday-aligned)
-    const weekAnchor = new Date(cur);
-    weekAnchor.setDate(weekAnchor.getDate() - weekAnchor.getDay());
+    // Track week boundaries by counting Sunday crossings (DST-safe)
+    let weekNum = 0;
     let safety = 0;
     while (cur <= end && safety < 2000) {
-      if (allowed.has(dayCodes[cur.getDay()])) {
-        // Determine which week index this date belongs to relative to the anchor
-        const diffDays = Math.floor((cur - weekAnchor) / 86400000);
-        const weekIdx = Math.floor(diffDays / 7);
-        if (weekIdx % n === 0) dates.push(fmt(cur));
+      // Detect new week when we hit Sunday (after the first iteration)
+      if (safety > 0 && cur.getDay() === 0) weekNum++;
+
+      if (allowed.has(dayCodes[cur.getDay()]) && weekNum % n === 0) {
+        dates.push(fmt(cur));
       }
       cur.setDate(cur.getDate() + 1);
       safety++;
@@ -2617,7 +2619,7 @@ function TrainingSlotsTab({ userId }) {
 }
 
 function CreateSlotForm({ onClose, onSave }) {
-  const [slotDate, setSlotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [slotDate, setSlotDate] = useState(fmtLocalDate(new Date()));
   const [startTime, setStartTime] = useState('09:00');
   const [duration, setDuration] = useState(60);
   const [autoConfirm, setAutoConfirm] = useState(false);
@@ -3063,7 +3065,7 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
 function FillAssessmentModal({ template, templates, players, userId, onClose, onSuccess }) {
   const [selectedTemplate, setSelectedTemplate] = useState(template);
   const [playerId, setPlayerId] = useState('');
-  const [assessmentDate, setAssessmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
   const [responses, setResponses] = useState({});
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);

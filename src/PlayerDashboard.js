@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTriangle } from 'lucide-react';
 
+const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
 export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }) {
   const [loading, setLoading] = useState(true);
   const [playerData, setPlayerData] = useState(null);
@@ -38,7 +40,7 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
       if (userError) throw userError;
       setPlayerData(userData);
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = fmtLocalDate(new Date());
       const todayDow = new Date().getDay();
 
       // Fetch today's schedule events for the player
