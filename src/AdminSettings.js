@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList } from 'lucide-react';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -114,7 +114,7 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
       {/* Tabs */}
       <div className="bg-white rounded-lg shadow">
         <div className="border-b border-gray-200">
-          <nav className="flex space-x-8 px-6">
+          <nav className="flex space-x-8 px-6 overflow-x-auto">
             <button
               onClick={() => setActiveTab('users')}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
@@ -144,6 +144,16 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
               }`}
             >
               Coaches ({coaches.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('coach-tasks')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition whitespace-nowrap ${
+                activeTab === 'coach-tasks'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Coach Tasks
             </button>
             <button
               onClick={() => setActiveTab('prospects')}
@@ -218,6 +228,9 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
               setShowAssignRole={setShowAssignRole}
               refreshUsers={fetchUsers}
             />
+          )}
+          {activeTab === 'coach-tasks' && (
+            <CoachTasksTab coaches={coaches} userId={userId} />
           )}
           {activeTab === 'prospects' && (
             <ProspectsTab
@@ -2989,6 +3002,335 @@ function WaiversTab({ players, waiverSignatures }) {
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// COACH TASKS TAB
+// ============================================
+
+function CoachTasksTab({ coaches, userId }) {
+  const [tasks, setTasks] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCoach, setFilterCoach] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterFrequency, setFilterFrequency] = useState('all');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+
+  const fetchTasks = async () => {
+    const { data, error } = await supabase
+      .from('coach_tasks')
+      .select('*, assigned_coach:assigned_to(id, full_name, avatar_url), assigner:assigned_by(full_name)')
+      .order('created_at', { ascending: false });
+    if (error) console.error('Error fetching coach tasks:', error);
+    else setTasks(data || []);
+  };
+
+  useEffect(() => { fetchTasks(); }, []);
+
+  const handleDelete = async (taskId) => {
+    if (!window.confirm('Delete this task?')) return;
+    const { error } = await supabase.from('coach_tasks').delete().eq('id', taskId);
+    if (error) alert('Error deleting task: ' + error.message);
+    else fetchTasks();
+  };
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isOverdue = (task) => task.due_date && task.due_date < todayStr && task.status !== 'completed';
+
+  const filtered = tasks.filter(t => {
+    if (filterCoach !== 'all' && t.assigned_to !== filterCoach) return false;
+    if (filterStatus !== 'all' && t.status !== filterStatus) return false;
+    if (filterFrequency !== 'all' && t.frequency !== filterFrequency) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const hay = [t.title, t.description, t.assigned_coach?.full_name].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const counts = { pending: 0, in_progress: 0, completed: 0, overdue: 0 };
+  tasks.forEach(t => {
+    counts[t.status]++;
+    if (isOverdue(t)) counts.overdue++;
+  });
+
+  const priorityColors = { low: 'bg-gray-100 text-gray-700', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
+  const statusColors = { pending: 'bg-yellow-100 text-yellow-700', in_progress: 'bg-blue-100 text-blue-700', completed: 'bg-green-100 text-green-700' };
+  const frequencyColors = { daily: 'bg-purple-100 text-purple-700', weekly: 'bg-indigo-100 text-indigo-700', monthly: 'bg-teal-100 text-teal-700', 'one-time': 'bg-gray-100 text-gray-700' };
+  const statusLabels = { pending: 'Pending', in_progress: 'In Progress', completed: 'Completed' };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">Coach Task Assignments</h3>
+        <button onClick={() => setShowCreateModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2">
+          <Plus size={18} /><span>Assign Task</span>
+        </button>
+      </div>
+
+      {/* Summary counts */}
+      <div className="flex flex-wrap gap-3">
+        <span className="px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-700">Pending: {counts.pending}</span>
+        <span className="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-700">In Progress: {counts.in_progress}</span>
+        <span className="px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700">Completed: {counts.completed}</span>
+        {counts.overdue > 0 && <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-700">Overdue: {counts.overdue}</span>}
+      </div>
+
+      {/* Filter bar */}
+      <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search tasks..." className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <select value={filterCoach} onChange={e => setFilterCoach(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="all">All Coaches</option>
+          {coaches.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+        </select>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="all">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
+        <select value={filterFrequency} onChange={e => setFilterFrequency(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="all">All Frequencies</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+          <option value="one-time">One-time</option>
+        </select>
+      </div>
+
+      {/* Task cards */}
+      {filtered.length === 0 ? (
+        <p className="text-center text-gray-500 py-8">No tasks found.</p>
+      ) : (
+        <div className="grid gap-3">
+          {filtered.map(task => (
+            <div key={task.id} className={`border rounded-lg p-4 ${isOverdue(task) ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'}`}>
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-semibold text-gray-900">{task.title}</h4>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[task.status]}`}>{statusLabels[task.status]}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${priorityColors[task.priority]}`}>{task.priority}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${frequencyColors[task.frequency]}`}>{task.frequency}</span>
+                    {isOverdue(task) && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Overdue</span>}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+                    <span>Assigned to: <strong>{task.assigned_coach?.full_name}</strong></span>
+                    {task.due_date && <span className="flex items-center gap-1"><Calendar size={14} /> Due: {task.due_date}</span>}
+                  </div>
+                  {task.description && <p className="text-sm text-gray-600 mt-1 line-clamp-2">{task.description}</p>}
+                </div>
+                <div className="flex items-center gap-2 ml-4">
+                  <button onClick={() => setEditingTask(task)} className="text-blue-600 hover:text-blue-800"><Edit2 size={16} /></button>
+                  <button onClick={() => handleDelete(task.id)} className="text-red-600 hover:text-red-800"><Trash2 size={16} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showCreateModal && <CreateTaskModal coaches={coaches} userId={userId} onClose={() => setShowCreateModal(false)} onSuccess={() => { setShowCreateModal(false); fetchTasks(); }} />}
+      {editingTask && <EditTaskModal task={editingTask} coaches={coaches} onClose={() => setEditingTask(null)} onSuccess={() => { setEditingTask(null); fetchTasks(); }} />}
+    </div>
+  );
+}
+
+function CreateTaskModal({ coaches, userId, onClose, onSuccess }) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedCoaches, setSelectedCoaches] = useState([]);
+  const [frequency, setFrequency] = useState('one-time');
+  const [priority, setPriority] = useState('medium');
+  const [dueDate, setDueDate] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const toggleCoach = (id) => {
+    setSelectedCoaches(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!title.trim() || selectedCoaches.length === 0) return alert('Title and at least one coach are required.');
+    setSaving(true);
+    const rows = selectedCoaches.map(coachId => ({
+      title: title.trim(),
+      description: description.trim() || null,
+      assigned_to: coachId,
+      assigned_by: userId,
+      frequency,
+      priority,
+      due_date: dueDate || null,
+    }));
+    const { error } = await supabase.from('coach_tasks').insert(rows);
+    setSaving(false);
+    if (error) alert('Error creating task: ' + error.message);
+    else onSuccess();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="text-lg font-semibold">Assign Task</h3>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Coaches *</label>
+            <div className="border border-gray-300 rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
+              {coaches.map(c => (
+                <label key={c.id} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                  <input type="checkbox" checked={selectedCoaches.includes(c.id)} onChange={() => toggleCoach(c.id)} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                  <span className="text-sm">{c.full_name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
+              <select value={frequency} onChange={e => setFrequency(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="one-time">One-time</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+              <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving...' : 'Assign Task'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditTaskModal({ task, coaches, onClose, onSuccess }) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description || '');
+  const [assignedTo, setAssignedTo] = useState(task.assigned_to);
+  const [frequency, setFrequency] = useState(task.frequency);
+  const [priority, setPriority] = useState(task.priority);
+  const [status, setStatus] = useState(task.status);
+  const [dueDate, setDueDate] = useState(task.due_date || '');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setSaving(true);
+    const updates = {
+      title: title.trim(),
+      description: description.trim() || null,
+      assigned_to: assignedTo,
+      frequency,
+      priority,
+      status,
+      due_date: dueDate || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (status === 'completed' && task.status !== 'completed') {
+      updates.completed_at = new Date().toISOString();
+    } else if (status !== 'completed') {
+      updates.completed_at = null;
+    }
+    const { error } = await supabase.from('coach_tasks').update(updates).eq('id', task.id);
+    setSaving(false);
+    if (error) alert('Error updating task: ' + error.message);
+    else onSuccess();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h3 className="text-lg font-semibold">Edit Task</h3>
+          <button onClick={onClose}><X size={20} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assigned to</label>
+            <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {coaches.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
+              <select value={frequency} onChange={e => setFrequency(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="one-time">One-time</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+              <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+              <select value={status} onChange={e => setStatus(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Saving...' : 'Save Changes'}</button>
+          </div>
+        </form>
       </div>
     </div>
   );

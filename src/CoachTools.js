@@ -39,6 +39,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
     { key: 'training', icon: Dumbbell, label: 'Training Programs' },
     { key: 'meals', icon: Utensils, label: 'Meal Plans' },
     { key: 'slots', icon: Clock, label: 'Training Slots' },
+    { key: 'tasks', icon: ClipboardList, label: 'My Tasks' },
   ];
 
   return (
@@ -65,6 +66,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
           {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
           {activeTab === 'meals' && <MealsTab teams={teams} players={players} />}
           {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
+          {activeTab === 'tasks' && <MyTasksTab userId={userId} />}
         </div>
       </div>
     </div>
@@ -3325,6 +3327,102 @@ function ViewAssessmentModal({ submission, onClose }) {
           <button onClick={onClose} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ============================================
+   MY TASKS TAB (Coach view)
+   ============================================ */
+
+function MyTasksTab({ userId }) {
+  const [tasks, setTasks] = useState([]);
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [loading, setLoading] = useState(true);
+
+  const fetchTasks = async () => {
+    const { data, error } = await supabase
+      .from('coach_tasks')
+      .select('*, assigner:assigned_by(full_name)')
+      .eq('assigned_to', userId)
+      .order('created_at', { ascending: false });
+    if (error) console.error('Error fetching tasks:', error);
+    else setTasks(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchTasks(); }, []);
+
+  const updateStatus = async (taskId, newStatus) => {
+    const updates = { status: newStatus, updated_at: new Date().toISOString() };
+    if (newStatus === 'completed') updates.completed_at = new Date().toISOString();
+    else updates.completed_at = null;
+    const { error } = await supabase.from('coach_tasks').update(updates).eq('id', taskId);
+    if (error) alert('Error updating task: ' + error.message);
+    else fetchTasks();
+  };
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isOverdue = (task) => task.due_date && task.due_date < todayStr && task.status !== 'completed';
+
+  const filtered = tasks.filter(t => filterStatus === 'all' || t.status === filterStatus);
+
+  const priorityColors = { low: 'bg-gray-100 text-gray-700', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
+  const statusColors = { pending: 'bg-yellow-100 text-yellow-700', in_progress: 'bg-blue-100 text-blue-700', completed: 'bg-green-100 text-green-700' };
+  const frequencyColors = { daily: 'bg-purple-100 text-purple-700', weekly: 'bg-indigo-100 text-indigo-700', monthly: 'bg-teal-100 text-teal-700', 'one-time': 'bg-gray-100 text-gray-700' };
+  const statusLabels = { pending: 'Pending', in_progress: 'In Progress', completed: 'Completed' };
+
+  if (loading) return <p className="text-gray-600 py-8 text-center">Loading tasks...</p>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">My Tasks</h3>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="all">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="text-center text-gray-500 py-8">No tasks assigned yet.</p>
+      ) : (
+        <div className="grid gap-3">
+          {filtered.map(task => (
+            <div key={task.id} className={`border rounded-lg p-4 ${isOverdue(task) ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'}`}>
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-semibold text-gray-900">{task.title}</h4>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[task.status]}`}>{statusLabels[task.status]}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${priorityColors[task.priority]}`}>{task.priority}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${frequencyColors[task.frequency]}`}>{task.frequency}</span>
+                    {isOverdue(task) && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Overdue</span>}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
+                    {task.assigner?.full_name && <span>Assigned by: {task.assigner.full_name}</span>}
+                    {task.due_date && <span className="flex items-center gap-1"><Calendar size={14} /> Due: {task.due_date}</span>}
+                  </div>
+                  {task.description && <p className="text-sm text-gray-600 mt-1">{task.description}</p>}
+                </div>
+                <div className="flex items-center gap-2 ml-4">
+                  {task.status === 'pending' && (
+                    <button onClick={() => updateStatus(task.id, 'in_progress')} className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Start</button>
+                  )}
+                  {task.status === 'in_progress' && (
+                    <button onClick={() => updateStatus(task.id, 'completed')} className="px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">Complete</button>
+                  )}
+                  {task.status === 'completed' && (
+                    <button onClick={() => updateStatus(task.id, 'pending')} className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">Reopen</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
