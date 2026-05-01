@@ -11,7 +11,8 @@ import KnowledgeBase from './KnowledgeBase';
 import ManageAthletes from './ManageAthletes';
 import ManageCoaches from './ManageCoaches';
 import WaiverPage from './WaiverPage';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText } from 'lucide-react';
+import ContractPage from './ContractPage';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -23,6 +24,7 @@ export default function App() {
   const [userId, setUserId] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [waiverSigned, setWaiverSigned] = useState(null);
+  const [contractSigned, setContractSigned] = useState(null);
 
   const checkWaiverStatus = async (uid) => {
     const { data } = await supabase
@@ -33,6 +35,15 @@ export default function App() {
     setWaiverSigned(!!data);
   };
 
+  const checkContractStatus = async (uid) => {
+    const { data } = await supabase
+      .from('player_contracts')
+      .select('id')
+      .eq('user_id', uid)
+      .maybeSingle();
+    setContractSigned(!!data);
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -40,6 +51,7 @@ export default function App() {
         setUserId(session.user.id);
         fetchUserRole(session.user.id);
         checkWaiverStatus(session.user.id);
+        checkContractStatus(session.user.id);
       }
       setLoading(false);
     });
@@ -52,10 +64,12 @@ export default function App() {
         setUserId(session.user.id);
         fetchUserRole(session.user.id);
         checkWaiverStatus(session.user.id);
+        checkContractStatus(session.user.id);
       } else {
         setUserRole(null);
         setUserId(null);
         setWaiverSigned(null);
+        setContractSigned(null);
       }
     });
 
@@ -124,6 +138,8 @@ export default function App() {
         setCurrentView={setCurrentView}
         waiverSigned={waiverSigned}
         setWaiverSigned={setWaiverSigned}
+        contractSigned={contractSigned}
+        setContractSigned={setContractSigned}
       />
     </div>
   );
@@ -186,7 +202,7 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, waiverSigned, setWaiverSigned }) {
+function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned }) {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [pendingSlotCount, setPendingSlotCount] = useState(0);
   const [pendingSlotDetails, setPendingSlotDetails] = useState([]);
@@ -318,6 +334,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         unreadMessageCount={unreadMessageCount}
         pendingSlotCount={pendingSlotCount}
         waiverSigned={waiverSigned}
+        contractSigned={contractSigned}
       />
       <div className="flex-1 ml-64">
         {/* Sticky header with notification bell */}
@@ -401,6 +418,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
             {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={userRole} onSigned={() => setWaiverSigned(true)} />}
+            {currentView === 'contract' && <ContractPage userId={userId} userRole={userRole} onSigned={() => setContractSigned(true)} />}
             {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
           </div>
         </div>
@@ -409,7 +427,9 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned }) {
+  const [documentsExpanded, setDocumentsExpanded] = useState(waiverSigned === false || contractSigned === false ? true : true);
+  const anyDocUnsigned = waiverSigned === false || contractSigned === false;
   return (
     <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-6 flex flex-col">
       <div className="mb-8">
@@ -453,18 +473,48 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <span>Profile</span>
         </button>
 
-        <button
-          onClick={() => setCurrentView('waiver')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
-            currentView === 'waiver' ? 'bg-blue-600' : 'hover:bg-gray-800'
-          }`}
-        >
-          <FileText size={20} />
-          <span className="flex-1 text-left">Waiver</span>
-          {waiverSigned === false && (
-            <span className="w-2.5 h-2.5 bg-red-500 rounded-full flex-shrink-0"></span>
+        {/* Documents Section */}
+        <div>
+          <button
+            onClick={() => setDocumentsExpanded(!documentsExpanded)}
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition hover:bg-gray-800`}
+          >
+            <FolderOpen size={20} />
+            <span className="flex-1 text-left">Documents</span>
+            {anyDocUnsigned && (
+              <span className="w-2.5 h-2.5 bg-red-500 rounded-full flex-shrink-0"></span>
+            )}
+            {documentsExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </button>
+          {documentsExpanded && (
+            <div className="ml-4 space-y-1 mt-1">
+              <button
+                onClick={() => setCurrentView('waiver')}
+                className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
+                  currentView === 'waiver' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                }`}
+              >
+                <FileText size={16} />
+                <span className="flex-1 text-left">Waiver</span>
+                {waiverSigned === false && (
+                  <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0"></span>
+                )}
+              </button>
+              <button
+                onClick={() => setCurrentView('contract')}
+                className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
+                  currentView === 'contract' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                }`}
+              >
+                <FileText size={16} />
+                <span className="flex-1 text-left">Player Contract</span>
+                {contractSigned === false && (
+                  <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0"></span>
+                )}
+              </button>
+            </div>
           )}
-        </button>
+        </div>
 
         <button
           onClick={() => setCurrentView('team')}
