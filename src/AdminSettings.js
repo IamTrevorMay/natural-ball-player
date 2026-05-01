@@ -249,10 +249,28 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
 
 function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refreshUsers }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  const getCoachStatus = (c) => c.coach_status || 'Active';
+
+  const statusCounts = { Active: 0, Inactive: 0, Archived: 0 };
+  coaches.forEach(c => {
+    const s = getCoachStatus(c);
+    if (s === 'Inactive') statusCounts.Inactive++;
+    else if (s === 'Archived') statusCounts.Archived++;
+    else statusCounts.Active++;
+  });
 
   const filteredCoaches = coaches.filter(c => {
     const q = searchQuery.toLowerCase();
-    return c.full_name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q);
+    if (!c.full_name.toLowerCase().includes(q) && !c.email.toLowerCase().includes(q)) return false;
+    if (filterStatus !== 'all') {
+      const status = getCoachStatus(c);
+      if (filterStatus === 'Active' && status !== 'Active') return false;
+      if (filterStatus === 'Inactive' && status !== 'Inactive') return false;
+      if (filterStatus === 'Archived' && status !== 'Archived') return false;
+    }
+    return true;
   });
 
   return (
@@ -268,21 +286,40 @@ function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refresh
         </button>
       </div>
 
-      <div className="relative">
-        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search coaches by name or email..."
-          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search coaches by name or email..."
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          />
+        </div>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">All Statuses</option>
+          <option value="Active">Active ({statusCounts.Active})</option>
+          <option value="Inactive">Inactive ({statusCounts.Inactive})</option>
+          <option value="Archived">Archived ({statusCounts.Archived})</option>
+        </select>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-gray-500">
+        <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Active {statusCounts.Active}</span>
+        <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">Inactive {statusCounts.Inactive}</span>
+        <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Archived {statusCounts.Archived}</span>
+        <span className="ml-auto text-gray-400">{filteredCoaches.length} shown</span>
       </div>
 
       {filteredCoaches.length === 0 ? (
         <div className="text-center py-12 text-gray-500">
           <Users size={48} className="mx-auto mb-4 text-gray-300" />
-          <p>{searchQuery ? 'No coaches match your search.' : 'No coaches yet. Assign the coach role to a user to get started.'}</p>
+          <p>{searchQuery || filterStatus !== 'all' ? 'No coaches match your filters.' : 'No coaches yet. Assign the coach role to a user to get started.'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4">
@@ -589,10 +626,38 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 
 function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId, onNavigateToProfile }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterRole, setFilterRole] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  const getUserStatus = (u) => {
+    if (u.role === 'player') {
+      const pp = Array.isArray(u.player_profiles) ? u.player_profiles[0] : u.player_profiles;
+      return pp?.status || 'Active';
+    }
+    if (u.role === 'coach') return u.coach_status || 'Active';
+    return 'Active';
+  };
 
   const filteredUsers = users.filter(u => {
     const q = searchQuery.toLowerCase();
-    return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+    if (!u.full_name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q)) return false;
+    if (filterRole !== 'all' && u.role !== filterRole) return false;
+    if (filterStatus !== 'all') {
+      const status = getUserStatus(u);
+      if (filterStatus === 'Active' && status !== 'Active') return false;
+      if (filterStatus === 'Inactive' && status !== 'Inactive') return false;
+      if (filterStatus === 'Archived' && status !== 'Archived') return false;
+    }
+    return true;
+  });
+
+  const statusCounts = { Active: 0, Inactive: 0, Archived: 0 };
+  const roleFiltered = users.filter(u => filterRole === 'all' || u.role === filterRole);
+  roleFiltered.forEach(u => {
+    const s = getUserStatus(u);
+    if (s === 'Inactive') statusCounts.Inactive++;
+    else if (s === 'Archived') statusCounts.Archived++;
+    else statusCounts.Active++;
   });
 
   return (
@@ -608,15 +673,44 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
         </button>
       </div>
 
-      <div className="relative">
-        <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search users by name or email..."
-          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search users by name or email..."
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          />
+        </div>
+        <select
+          value={filterRole}
+          onChange={(e) => setFilterRole(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">All Roles</option>
+          <option value="admin">Admin</option>
+          <option value="coach">Coach</option>
+          <option value="player">Player</option>
+        </select>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">All Statuses</option>
+          <option value="Active">Active ({statusCounts.Active})</option>
+          <option value="Inactive">Inactive ({statusCounts.Inactive})</option>
+          <option value="Archived">Archived ({statusCounts.Archived})</option>
+        </select>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-gray-500">
+        <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Active {statusCounts.Active}</span>
+        <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">Inactive {statusCounts.Inactive}</span>
+        <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Archived {statusCounts.Archived}</span>
+        <span className="ml-auto text-gray-400">{filteredUsers.length} shown</span>
       </div>
 
       <div className="grid grid-cols-1 gap-4">

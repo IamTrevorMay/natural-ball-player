@@ -29,12 +29,21 @@ const PROFILE_TABS = [
   { key: 'waiver', label: 'Waiver' },
   { key: 'codes', label: 'Codes' },
   { key: 'goals', label: 'Goals' },
+  { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
 ];
 
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
 const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered', 'Committed'];
 
-export default function Profile({ userId, userRole, onBack }) {
+const NOTE_CATEGORIES = [
+  { value: 'general', label: 'General', color: 'bg-gray-100 text-gray-700' },
+  { value: 'practice', label: 'Practice', color: 'bg-blue-100 text-blue-700' },
+  { value: 'game', label: 'Game', color: 'bg-green-100 text-green-700' },
+  { value: 'skill_session', label: 'Skill Session', color: 'bg-purple-100 text-purple-700' },
+  { value: 'disciplinary', label: 'Disciplinary', color: 'bg-red-100 text-red-700' },
+];
+
+export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -56,6 +65,11 @@ export default function Profile({ userId, userRole, onBack }) {
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [goalDraft, setGoalDraft] = useState({ goal_type: 'short_term', content: '' });
   const [savingGoal, setSavingGoal] = useState(false);
+  const [playerNotes, setPlayerNotes] = useState([]);
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [noteDraft, setNoteDraft] = useState({ category: 'general', content: '' });
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteFilter, setNoteFilter] = useState('all');
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -65,6 +79,7 @@ export default function Profile({ userId, userRole, onBack }) {
     fetchWaiverData();
     fetchArmCareRoutines();
     fetchGoals();
+    fetchPlayerNotes();
   }, [userId]);
 
   const fetchUserData = async () => {
@@ -440,6 +455,82 @@ export default function Profile({ userId, userRole, onBack }) {
     }
   };
 
+  const fetchPlayerNotes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('player_notes')
+        .select('*, author:created_by(full_name)')
+        .eq('player_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setPlayerNotes(data || []);
+    } catch (error) {
+      console.error('Error fetching player notes:', error);
+    }
+  };
+
+  const startNewNote = () => {
+    setEditingNoteId('new');
+    setNoteDraft({ category: 'general', content: '' });
+  };
+
+  const startEditNote = (note) => {
+    setEditingNoteId(note.id);
+    setNoteDraft({ category: note.category, content: note.content || '' });
+  };
+
+  const cancelEditNote = () => {
+    setEditingNoteId(null);
+    setNoteDraft({ category: 'general', content: '' });
+  };
+
+  const saveNote = async () => {
+    if (!noteDraft.content.trim()) return;
+    setSavingNote(true);
+    try {
+      if (editingNoteId === 'new') {
+        const { error } = await supabase
+          .from('player_notes')
+          .insert({
+            player_id: userId,
+            created_by: loggedInUserId,
+            category: noteDraft.category,
+            content: noteDraft.content.trim(),
+          });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('player_notes')
+          .update({
+            category: noteDraft.category,
+            content: noteDraft.content.trim(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editingNoteId);
+        if (error) throw error;
+      }
+      await fetchPlayerNotes();
+      cancelEditNote();
+    } catch (error) {
+      console.error('Error saving note:', error);
+      alert('Error saving note: ' + error.message);
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const deleteNote = async (id) => {
+    if (!window.confirm('Delete this note?')) return;
+    try {
+      const { error } = await supabase.from('player_notes').delete().eq('id', id);
+      if (error) throw error;
+      await fetchPlayerNotes();
+    } catch (error) {
+      console.error('Error deleting note:', error);
+      alert('Error deleting note: ' + error.message);
+    }
+  };
+
   const fetchWaiverData = async () => {
     try {
       const { data, error } = await supabase
@@ -669,7 +760,7 @@ export default function Profile({ userId, userRole, onBack }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -751,6 +842,135 @@ export default function Profile({ userId, userRole, onBack }) {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {activeProfileTab === 'notes' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-wrap gap-2">
+                  {[{ value: 'all', label: 'All' }, ...NOTE_CATEGORIES].map(cat => (
+                    <button
+                      key={cat.value}
+                      onClick={() => setNoteFilter(cat.value)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                        noteFilter === cat.value
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={startNewNote}
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
+                >
+                  <Plus size={14} />
+                  <span>Add Note</span>
+                </button>
+              </div>
+
+              {editingNoteId === 'new' && (
+                <div className="border border-blue-300 rounded-lg p-4 bg-blue-50">
+                  <div className="flex items-center space-x-3 mb-3">
+                    <label className="text-sm font-medium text-gray-700">Category:</label>
+                    <select
+                      value={noteDraft.category}
+                      onChange={(e) => setNoteDraft({ ...noteDraft, category: e.target.value })}
+                      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {NOTE_CATEGORIES.map(cat => (
+                        <option key={cat.value} value={cat.value}>{cat.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    value={noteDraft.content}
+                    onChange={(e) => setNoteDraft({ ...noteDraft, content: e.target.value })}
+                    placeholder="Write a note..."
+                    rows={4}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                  <div className="flex justify-end space-x-2 mt-2">
+                    <button onClick={cancelEditNote} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                    <button onClick={saveNote} disabled={savingNote || !noteDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                      {savingNote ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {playerNotes
+                  .filter(n => noteFilter === 'all' || n.category === noteFilter)
+                  .length === 0 && editingNoteId !== 'new' && (
+                  <p className="text-sm text-gray-500 italic text-center py-6">No notes yet.</p>
+                )}
+                {playerNotes
+                  .filter(n => noteFilter === 'all' || n.category === noteFilter)
+                  .map(note => {
+                    const catInfo = NOTE_CATEGORIES.find(c => c.value === note.category) || NOTE_CATEGORIES[0];
+                    const canModify = note.created_by === loggedInUserId || userRole === 'admin';
+                    return (
+                      <div key={note.id} className="border border-gray-200 rounded-lg p-4">
+                        {editingNoteId === note.id ? (
+                          <>
+                            <div className="flex items-center space-x-3 mb-3">
+                              <label className="text-sm font-medium text-gray-700">Category:</label>
+                              <select
+                                value={noteDraft.category}
+                                onChange={(e) => setNoteDraft({ ...noteDraft, category: e.target.value })}
+                                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                {NOTE_CATEGORIES.map(cat => (
+                                  <option key={cat.value} value={cat.value}>{cat.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <textarea
+                              value={noteDraft.content}
+                              onChange={(e) => setNoteDraft({ ...noteDraft, content: e.target.value })}
+                              rows={4}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                            <div className="flex justify-end space-x-2 mt-2">
+                              <button onClick={cancelEditNote} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                              <button onClick={saveNote} disabled={savingNote || !noteDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                                {savingNote ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center space-x-2">
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${catInfo.color}`}>{catInfo.label}</span>
+                                <span className="text-xs text-gray-500">{note.author?.full_name || 'Unknown'}</span>
+                                <span className="text-xs text-gray-400">{new Date(note.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                              </div>
+                              {canModify && (
+                                <div className="flex items-center space-x-1">
+                                  <button onClick={() => startEditNote(note)} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                                    <Edit2 size={14} />
+                                  </button>
+                                  <button onClick={() => deleteNote(note.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-800 whitespace-pre-wrap">{note.content}</p>
+                            {note.updated_at && note.updated_at !== note.created_at && (
+                              <p className="text-xs text-gray-400 mt-2 italic">Edited {new Date(note.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           )}
 

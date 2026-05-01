@@ -391,8 +391,8 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
                 <AdminDashboard userId={userId} userRole={userRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={userRole} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} onBack={() => setCurrentView('settings')} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={userRole} loggedInUserId={userId} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
