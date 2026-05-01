@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users } from 'lucide-react';
+import AttendanceRings from './AttendanceRings';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -30,6 +31,7 @@ const PROFILE_TABS = [
   { key: 'codes', label: 'Codes' },
   { key: 'goals', label: 'Goals' },
   { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
+  { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
 ];
 
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
@@ -70,6 +72,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [noteDraft, setNoteDraft] = useState({ category: 'general', content: '' });
   const [savingNote, setSavingNote] = useState(false);
   const [noteFilter, setNoteFilter] = useState('all');
+  const [attendanceStats, setAttendanceStats] = useState(null);
+  const [attendanceEvents, setAttendanceEvents] = useState([]);
+  const [attendanceMap, setAttendanceMap] = useState({});
+  const [attendanceFilter, setAttendanceFilter] = useState('all');
+  const [savingAttendance, setSavingAttendance] = useState({});
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -81,6 +88,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     fetchGoals();
     fetchPlayerNotes();
   }, [userId]);
+
+  useEffect(() => {
+    if (userData && userData.role === 'player') fetchAttendanceData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userData]);
 
   const fetchUserData = async () => {
     try {
@@ -531,6 +543,107 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     }
   };
 
+  const fetchAttendanceData = async () => {
+    try {
+      const teamIds = (userData.team_members || []).map(tm => tm.team_id);
+      const today = new Date().toISOString().split('T')[0];
+
+      let allEvents = [];
+
+      // Fetch past team events (games + practices)
+      if (teamIds.length > 0) {
+        const { data: teamEvents } = await supabase
+          .from('schedule_events')
+          .select('id, event_type, event_date, opponent, title, team_id')
+          .in('team_id', teamIds)
+          .is('player_id', null)
+          .in('event_type', ['game', 'practice'])
+          .lte('event_date', today);
+        if (teamEvents) allEvents = [...allEvents, ...teamEvents];
+      }
+
+      // Fetch past player-specific workouts
+      const { data: workoutEvents } = await supabase
+        .from('schedule_events')
+        .select('id, event_type, event_date, title, player_id')
+        .eq('player_id', userId)
+        .eq('event_type', 'workout')
+        .lte('event_date', today);
+      if (workoutEvents) allEvents = [...allEvents, ...workoutEvents];
+
+      // Sort by date descending
+      allEvents.sort((a, b) => b.event_date.localeCompare(a.event_date));
+      setAttendanceEvents(allEvents);
+
+      if (allEvents.length === 0) {
+        setAttendanceStats({ practice: { attended: 0, total: 0 }, game: { attended: 0, total: 0 }, workout: { attended: 0, total: 0 } });
+        setAttendanceMap({});
+        return;
+      }
+
+      // Fetch attendance records for this player
+      const eventIds = allEvents.map(e => e.id);
+      const { data: records } = await supabase
+        .from('event_attendance')
+        .select('*')
+        .eq('player_id', userId)
+        .in('event_id', eventIds);
+
+      const recMap = {};
+      (records || []).forEach(r => { recMap[r.event_id] = r; });
+      setAttendanceMap(recMap);
+
+      // Compute stats per type
+      const stats = { practice: { attended: 0, total: 0 }, game: { attended: 0, total: 0 }, workout: { attended: 0, total: 0 } };
+      allEvents.forEach(ev => {
+        const rec = recMap[ev.id];
+        if (!rec) return; // unmarked events don't count
+        if (rec.status === 'excused') return; // excused excluded entirely
+        const type = ev.event_type;
+        if (stats[type]) {
+          stats[type].total += 1;
+          if (rec.status === 'present') stats[type].attended += 1;
+        }
+      });
+      setAttendanceStats(stats);
+    } catch (error) {
+      console.error('Error fetching attendance data:', error);
+    }
+  };
+
+  const handleMarkAttendance = async (eventId, status) => {
+    setSavingAttendance(prev => ({ ...prev, [eventId]: true }));
+    try {
+      const existing = attendanceMap[eventId];
+      if (existing && existing.status === status) {
+        // Toggle off — delete the record
+        const { error } = await supabase
+          .from('event_attendance')
+          .delete()
+          .eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        // Upsert
+        const { error } = await supabase
+          .from('event_attendance')
+          .upsert({
+            event_id: eventId,
+            player_id: userId,
+            status,
+            marked_by: loggedInUserId,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'event_id,player_id' });
+        if (error) throw error;
+      }
+      await fetchAttendanceData();
+    } catch (error) {
+      console.error('Error marking attendance:', error);
+      alert('Error marking attendance: ' + error.message);
+    } finally {
+      setSavingAttendance(prev => ({ ...prev, [eventId]: false }));
+    }
+  };
+
   const fetchWaiverData = async () => {
     try {
       const { data, error } = await supabase
@@ -690,6 +803,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                 </p>
               )}
             </div>
+            {userData.role === 'player' && attendanceStats && (
+              <div className="ml-auto flex items-center">
+                <AttendanceRings
+                  practices={attendanceStats.practice}
+                  games={attendanceStats.game}
+                  lifts={attendanceStats.workout}
+                  onToggleLog={() => setActiveProfileTab('attendance')}
+                  canEdit={canEditProfile}
+                />
+              </div>
+            )}
           </div>
 
           {profile && (
@@ -760,9 +884,104 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
+            </div>
+          )}
+
+          {activeProfileTab === 'attendance' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { value: 'all', label: 'All' },
+                  { value: 'practice', label: 'Practices', color: 'bg-green-100 text-green-700' },
+                  { value: 'game', label: 'Games', color: 'bg-blue-100 text-blue-700' },
+                  { value: 'workout', label: 'Lifts', color: 'bg-amber-100 text-amber-700' },
+                ].map(f => (
+                  <button
+                    key={f.value}
+                    onClick={() => setAttendanceFilter(f.value)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                      attendanceFilter === f.value
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                {attendanceEvents
+                  .filter(ev => attendanceFilter === 'all' || ev.event_type === attendanceFilter)
+                  .length === 0 && (
+                  <p className="text-sm text-gray-500 italic text-center py-8">No past events found.</p>
+                )}
+                {attendanceEvents
+                  .filter(ev => attendanceFilter === 'all' || ev.event_type === attendanceFilter)
+                  .map(ev => {
+                    const rec = attendanceMap[ev.id];
+                    const currentStatus = rec?.status || null;
+                    const isSaving = savingAttendance[ev.id];
+                    const typeBadge = ev.event_type === 'practice'
+                      ? 'bg-green-100 text-green-700'
+                      : ev.event_type === 'game'
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'bg-amber-100 text-amber-700';
+                    const typeLabel = ev.event_type === 'practice' ? 'Practice' : ev.event_type === 'game' ? 'Game' : 'Lift';
+                    const displayName = ev.title || ev.opponent || typeLabel;
+                    const dateStr = new Date(ev.event_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+                    return (
+                      <div key={ev.id} className="flex items-center justify-between border border-gray-200 rounded-lg p-3">
+                        <div className="flex items-center space-x-3 min-w-0">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${typeBadge}`}>{typeLabel}</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{displayName}</p>
+                            <p className="text-xs text-gray-500">{dateStr}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-1 flex-shrink-0">
+                          <button
+                            onClick={() => handleMarkAttendance(ev.id, 'present')}
+                            disabled={isSaving}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                              currentStatus === 'present'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'
+                            } disabled:opacity-50`}
+                          >
+                            Present
+                          </button>
+                          <button
+                            onClick={() => handleMarkAttendance(ev.id, 'absent')}
+                            disabled={isSaving}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                              currentStatus === 'absent'
+                                ? 'bg-red-600 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-red-100 hover:text-red-700'
+                            } disabled:opacity-50`}
+                          >
+                            Absent
+                          </button>
+                          <button
+                            onClick={() => handleMarkAttendance(ev.id, 'excused')}
+                            disabled={isSaving}
+                            className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                              currentStatus === 'excused'
+                                ? 'bg-yellow-500 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-yellow-100 hover:text-yellow-700'
+                            } disabled:opacity-50`}
+                          >
+                            Excused
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           )}
 
