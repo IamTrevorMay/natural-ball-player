@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
+import MedicalHistoryForm from './MedicalHistoryForm';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -77,6 +78,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [attendanceMap, setAttendanceMap] = useState({});
   const [attendanceFilter, setAttendanceFilter] = useState('all');
   const [savingAttendance, setSavingAttendance] = useState({});
+  const [assessmentTemplates, setAssessmentTemplates] = useState([]);
+  const [assessmentSubmissions, setAssessmentSubmissions] = useState([]);
+  const [medicalHistory, setMedicalHistory] = useState(null);
+  const [showMedicalForm, setShowMedicalForm] = useState(false);
+  const [expandedSubmission, setExpandedSubmission] = useState(null);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -87,6 +93,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     fetchArmCareRoutines();
     fetchGoals();
     fetchPlayerNotes();
+    fetchAssessmentData();
   }, [userId]);
 
   useEffect(() => {
@@ -658,6 +665,37 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     }
   };
 
+  const fetchAssessmentData = async () => {
+    try {
+      // Fetch assessment templates visible to athlete
+      const { data: templates } = await supabase
+        .from('assessment_templates')
+        .select('*')
+        .eq('status', 'active')
+        .eq('show_to_athlete', true)
+        .order('name');
+      setAssessmentTemplates(templates || []);
+
+      // Fetch completed submissions for this player
+      const { data: subs } = await supabase
+        .from('assessment_submissions')
+        .select('*, assessment_templates(name, schema), assessor:assessed_by(full_name)')
+        .eq('player_id', userId)
+        .order('created_at', { ascending: false });
+      setAssessmentSubmissions(subs || []);
+
+      // Fetch medical history status
+      const { data: mh } = await supabase
+        .from('medical_history')
+        .select('id, signed_at')
+        .eq('user_id', userId)
+        .maybeSingle();
+      setMedicalHistory(mh);
+    } catch (error) {
+      console.error('Error fetching assessment data:', error);
+    }
+  };
+
   const addRecruitmentTeam = async () => {
     try {
       const { data, error } = await supabase
@@ -884,7 +922,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -982,6 +1020,138 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                     );
                   })}
               </div>
+            </div>
+          )}
+
+          {activeProfileTab === 'assessment' && (
+            <div className="space-y-6">
+              {/* Medical History Card */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setShowMedicalForm(!showMedicalForm)}
+                  className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${medicalHistory ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <FileText size={20} className={medicalHistory ? 'text-green-600' : 'text-gray-400'} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900">Medical History / Athlete Intake Form</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {medicalHistory ? (
+                          <span className="text-green-600 font-medium">
+                            Completed {medicalHistory.signed_at ? `on ${new Date(medicalHistory.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                          </span>
+                        ) : (
+                          'Not yet completed'
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {medicalHistory && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span>}
+                    {showMedicalForm ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                  </div>
+                </button>
+                {showMedicalForm && (
+                  <div className="border-t border-gray-200 p-4">
+                    <MedicalHistoryForm userId={userId} userRole={userRole} />
+                  </div>
+                )}
+              </div>
+
+              {/* Assessment Templates */}
+              {assessmentTemplates.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center space-x-2">
+                    <ClipboardList size={16} className="text-gray-400" />
+                    <span>Available Assessments</span>
+                  </h4>
+                  <div className="space-y-2">
+                    {assessmentTemplates.map(template => {
+                      const completedCount = assessmentSubmissions.filter(s => s.template_id === template.id).length;
+                      const latestSub = assessmentSubmissions.find(s => s.template_id === template.id);
+                      return (
+                        <div key={template.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-3">
+                            <div className="flex items-center space-x-3">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${completedCount > 0 ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                                <ClipboardList size={16} className={completedCount > 0 ? 'text-blue-600' : 'text-gray-400'} />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">{template.name}</p>
+                                <p className="text-xs text-gray-500">
+                                  {completedCount > 0 ? `${completedCount} completed submission${completedCount !== 1 ? 's' : ''}` : 'No submissions yet'}
+                                </p>
+                              </div>
+                            </div>
+                            {latestSub && (
+                              <button
+                                onClick={() => setExpandedSubmission(expandedSubmission === latestSub.id ? null : latestSub.id)}
+                                className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center space-x-1"
+                              >
+                                <Eye size={14} />
+                                <span>View Latest</span>
+                              </button>
+                            )}
+                          </div>
+                          {latestSub && expandedSubmission === latestSub.id && (
+                            <div className="border-t border-gray-200 p-4 bg-gray-50">
+                              <div className="text-xs text-gray-500 mb-3">
+                                {latestSub.assessment_date} &middot; Assessed by {latestSub.assessor?.full_name || 'Unknown'}
+                              </div>
+                              <SubmissionView submission={latestSub} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* All Completed Submissions */}
+              {assessmentSubmissions.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center space-x-2">
+                    <CheckCircle size={16} className="text-gray-400" />
+                    <span>Completed Assessments ({assessmentSubmissions.length})</span>
+                  </h4>
+                  <div className="space-y-2">
+                    {assessmentSubmissions.map(sub => (
+                      <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => setExpandedSubmission(expandedSubmission === sub.id ? null : sub.id)}
+                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <CheckCircle size={16} className="text-green-500" />
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{sub.assessment_templates?.name || 'Assessment'}</p>
+                              <p className="text-xs text-gray-500">
+                                {sub.assessment_date} &middot; Assessed by {sub.assessor?.full_name || 'Unknown'}
+                              </p>
+                            </div>
+                          </div>
+                          {expandedSubmission === sub.id ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                        </button>
+                        {expandedSubmission === sub.id && (
+                          <div className="border-t border-gray-200 p-4 bg-gray-50">
+                            <SubmissionView submission={sub} />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Empty state when no assessment templates and no medical history */}
+              {assessmentTemplates.length === 0 && assessmentSubmissions.length === 0 && !medicalHistory && !showMedicalForm && (
+                <div className="text-center py-4">
+                  <p className="text-sm text-gray-500">Complete the Medical History form above to get started.</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -1826,6 +1996,66 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function SubmissionView({ submission }) {
+  const schema = submission.assessment_templates?.schema || [];
+  const responses = submission.responses || {};
+
+  if (schema.length === 0) {
+    return <p className="text-sm text-gray-500 italic">No template schema available.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {schema.sort((a, b) => a.sort_order - b.sort_order).map(el => (
+        <div key={el.id} className="space-y-1">
+          <label className="block text-xs font-semibold text-gray-700">{el.label || el.type}</label>
+          {(el.type === 'text_field' || el.type === 'text_area' || el.type === 'notes') && (
+            <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{responses[el.id] || <span className="text-gray-400 italic">No response</span>}</p>
+          )}
+          {el.type === 'combo_box' && (
+            <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{responses[el.id] || <span className="text-gray-400 italic">No selection</span>}</p>
+          )}
+          {el.type === 'date' && (
+            <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{responses[el.id] || <span className="text-gray-400 italic">No date</span>}</p>
+          )}
+          {el.type === 'table' && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border border-gray-300">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="border border-gray-300 px-3 py-1.5 text-left text-xs font-medium text-gray-600"></th>
+                    {(el.columns || []).map(col => (
+                      <th key={col} className="border border-gray-300 px-3 py-1.5 text-left text-xs font-medium text-gray-600">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(el.rows || []).map(row => (
+                    <tr key={row}>
+                      <td className="border border-gray-300 px-3 py-1.5 font-medium text-gray-700 bg-gray-50 text-xs">{row}</td>
+                      {(el.columns || []).map(col => (
+                        <td key={col} className="border border-gray-300 px-3 py-1.5 text-gray-700 text-xs">
+                          {responses[el.id]?.[row]?.[col] || '—'}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+      {submission.notes && (
+        <div>
+          <label className="block text-xs font-semibold text-gray-700">Additional Notes</label>
+          <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{submission.notes}</p>
+        </div>
+      )}
     </div>
   );
 }
