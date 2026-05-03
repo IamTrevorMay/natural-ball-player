@@ -36,3 +36,20 @@ When creating new tables:
 - `assessment_templates` / `assessment_submissions` — assessment system
 - `custom_status_options` — custom status dropdowns for Manage Athletes/Coaches
 - `facility_events` — facility calendar events with lane reservations
+
+### Work Portal tables (added 2026-05-03, coach + admin only)
+The Work Portal is a separate shell at the same URL (toggled via the bottom of the sidebar) for staff-only HR/ops. Players cannot access these. The shell lives in `src/WorkPortal.js`; per-feature pages are `src/Work*.js`.
+
+- `staff_announcements` — admin-posted feed shown on Work Portal Home
+- `staff_documents` + `staff-documents` Storage bucket — handbook / SOPs (admin write, staff read)
+- `staff_pay_documents` + `staff-pay-docs` Storage bucket — paystubs / W-2 / 1099. Files are namespaced under `{user_id}/...` so storage RLS double-enforces own-only reads
+- `staff_hour_entries` — coach-submitted hours, admin-reviewed (status workflow: pending → approved/rejected). Coaches can only edit their own pending entries
+- `staff_time_off_requests` — same workflow as hours, plus a `cancelled` status coaches can self-set
+- `work_portal_settings` (key/value) — generic config; currently holds `time_off_primary_approver_id`. Update this row to swap the primary approver without a code push
+- `staff_schedule_events` + `staff_schedule_assignments` — staff shifts/meetings rendered as a week agenda alongside `facility_events`. Recurrence helpers extracted to `src/scheduleUtils.js` for reuse
+- `work_channels` (audience: `all`/`coaches`/`admin`/`custom`), `work_channel_members`, `work_dm_threads` (canonical `user_a < user_b`), `work_messages` (channel XOR DM, optional attachment), `work_message_reads` (with generated `target_kind` + `target_id` columns so a single regular unique index supports `ON CONFLICT` upserts — partial indexes do NOT work with PostgREST upsert)
+- `work-attachments` Storage bucket — paths are `channel/{channel_id}/...` or `dm/{thread_id}/...`; storage RLS uses `storage.foldername(name)` to defer to channel access / thread membership
+- `public.user_can_access_channel(channel_id, user_id)` SECURITY DEFINER function — used by every channel/message/storage policy. Reuse it for any future channel-scoped feature instead of inlining the access logic
+- `work_roadmap_items` — V2 placeholder; UI is "Coming soon"
+
+Notification/cross-portal pattern: `src/useNotifications.js` exposes `useMainPortalCounts` and `useWorkPortalCounts` hooks; `src/NotificationBell.js` is the shared bell rendered in both shells. Items from the other portal carry a portal tag and clicking jumps across via the `onJump(portal, view)` callback (Work Portal's `currentView` is lifted to `App.js` so cross-portal jumps can target a specific Work view).
