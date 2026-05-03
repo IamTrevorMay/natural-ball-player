@@ -7,6 +7,8 @@ import {
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
 import WorkAdminAnnouncements from './WorkAdminAnnouncements';
+import WorkDocs from './WorkDocs';
+import WorkAdminDocs from './WorkAdminDocs';
 
 const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
@@ -51,8 +53,12 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkHome userId={userId} userRole={userRole} />;
       case 'work-directory':
         return <WorkDirectory />;
+      case 'work-docs':
+        return <WorkDocs />;
       case 'work-admin-announcements':
         return <WorkAdminAnnouncements userId={userId} />;
+      case 'work-admin-docs':
+        return <WorkAdminDocs userId={userId} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
