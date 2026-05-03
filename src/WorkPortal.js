@@ -13,6 +13,8 @@ import WorkMyPay from './WorkMyPay';
 import WorkAdminPayroll from './WorkAdminPayroll';
 import WorkMyHours from './WorkMyHours';
 import WorkAdminHours from './WorkAdminHours';
+import WorkTimeOff from './WorkTimeOff';
+import WorkAdminTimeOff from './WorkAdminTimeOff';
 
 const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
@@ -63,6 +65,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkMyPay userId={userId} />;
       case 'work-hours':
         return <WorkMyHours userId={userId} />;
+      case 'work-time-off':
+        return <WorkTimeOff userId={userId} />;
       case 'work-admin-announcements':
         return <WorkAdminAnnouncements userId={userId} />;
       case 'work-admin-docs':
@@ -71,6 +75,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkAdminPayroll userId={userId} />;
       case 'work-admin-hours':
         return <WorkAdminHours userId={userId} />;
+      case 'work-admin-time-off':
+        return <WorkAdminTimeOff userId={userId} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
