@@ -4,6 +4,9 @@ import {
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight
 } from 'lucide-react';
+import WorkHome from './WorkHome';
+import WorkDirectory from './WorkDirectory';
+import WorkAdminAnnouncements from './WorkAdminAnnouncements';
 
 const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
@@ -36,11 +39,24 @@ function ComingSoon({ viewKey }) {
   );
 }
 
-export default function WorkPortalShell({ userRole, userName, userAvatar, onLogout, onSwitchPortal }) {
+export default function WorkPortalShell({ userId, userRole, userName, userAvatar, onLogout, onSwitchPortal }) {
   const [currentView, setCurrentView] = useState('work-home');
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const meta = PAGE_META[currentView] || { title: 'Work Portal' };
+
+  const renderContent = () => {
+    switch (currentView) {
+      case 'work-home':
+        return <WorkHome userId={userId} userRole={userRole} />;
+      case 'work-directory':
+        return <WorkDirectory />;
+      case 'work-admin-announcements':
+        return <WorkAdminAnnouncements userId={userId} />;
+      default:
+        return <ComingSoon viewKey={currentView} />;
+    }
+  };
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -77,7 +93,7 @@ export default function WorkPortalShell({ userRole, userName, userAvatar, onLogo
 
         <div className="p-4 md:p-8">
           <div className="max-w-7xl mx-auto">
-            <ComingSoon viewKey={currentView} />
+            {renderContent()}
           </div>
         </div>
       </div>

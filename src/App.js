@@ -347,6 +347,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
       <WorkPortalShell
+        userId={userId}
         userRole={userRole}
         userName={userName}
         userAvatar={userAvatar}
