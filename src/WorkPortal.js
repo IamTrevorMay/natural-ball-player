@@ -15,6 +15,7 @@ import WorkMyHours from './WorkMyHours';
 import WorkAdminHours from './WorkAdminHours';
 import WorkTimeOff from './WorkTimeOff';
 import WorkAdminTimeOff from './WorkAdminTimeOff';
+import WorkSchedule from './WorkSchedule';
 
 const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
@@ -67,6 +68,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkMyHours userId={userId} />;
       case 'work-time-off':
         return <WorkTimeOff userId={userId} />;
+      case 'work-schedule':
+        return <WorkSchedule userId={userId} userRole={userRole} />;
       case 'work-admin-announcements':
         return <WorkAdminAnnouncements userId={userId} />;
       case 'work-admin-docs':
