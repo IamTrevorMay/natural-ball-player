@@ -12,7 +12,8 @@ import ManageAthletes from './ManageAthletes';
 import ManageCoaches from './ManageCoaches';
 import WaiverPage from './WaiverPage';
 import ContractPage from './ContractPage';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight } from 'lucide-react';
+import WorkPortalShell from './WorkPortal';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -25,6 +26,25 @@ export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [waiverSigned, setWaiverSigned] = useState(null);
   const [contractSigned, setContractSigned] = useState(null);
+  const [currentPortal, setCurrentPortal] = useState(() => {
+    try {
+      return localStorage.getItem('nbp_current_portal') || 'main';
+    } catch {
+      return 'main';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('nbp_current_portal', currentPortal);
+    } catch {}
+  }, [currentPortal]);
+
+  useEffect(() => {
+    if (userRole === 'player' && currentPortal === 'work') {
+      setCurrentPortal('main');
+    }
+  }, [userRole, currentPortal]);
 
   const checkWaiverStatus = async (uid) => {
     const { data } = await supabase
@@ -140,6 +160,8 @@ export default function App() {
         setWaiverSigned={setWaiverSigned}
         contractSigned={contractSigned}
         setContractSigned={setContractSigned}
+        currentPortal={currentPortal}
+        setCurrentPortal={setCurrentPortal}
       />
     </div>
   );
@@ -202,7 +224,7 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned }) {
+function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [pendingSlotCount, setPendingSlotCount] = useState(0);
   const [pendingSlotDetails, setPendingSlotDetails] = useState([]);
@@ -322,6 +344,18 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
 
   const totalNotifCount = unreadMessageCount + pendingSlotCount;
 
+  if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
+    return (
+      <WorkPortalShell
+        userRole={userRole}
+        userName={userName}
+        userAvatar={userAvatar}
+        onLogout={onLogout}
+        onSwitchPortal={() => setCurrentPortal('main')}
+      />
+    );
+  }
+
   return (
     <div className="flex">
       <Sidebar
@@ -335,6 +369,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         pendingSlotCount={pendingSlotCount}
         waiverSigned={waiverSigned}
         contractSigned={contractSigned}
+        onSwitchPortal={() => setCurrentPortal('work')}
       />
       <div className="flex-1 ml-64">
         {/* Sticky header with notification bell */}
@@ -427,7 +462,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, onSwitchPortal }) {
   const [documentsExpanded, setDocumentsExpanded] = useState(waiverSigned === false || contractSigned === false ? true : true);
   const anyDocUnsigned = waiverSigned === false || contractSigned === false;
   return (
@@ -606,7 +641,16 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         )}
       </nav>
 
-      <div className="mt-auto">
+      <div className="mt-auto pt-4 space-y-2">
+        {(userRole === 'coach' || userRole === 'admin') && onSwitchPortal && (
+          <button
+            onClick={onSwitchPortal}
+            className="w-full flex items-center justify-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm"
+          >
+            <Briefcase size={16} />
+            <span>Switch to Work Portal</span>
+          </button>
+        )}
         <button
           onClick={onLogout}
           className="w-full bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
