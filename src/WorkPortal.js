@@ -16,6 +16,9 @@ import WorkAdminHours from './WorkAdminHours';
 import WorkTimeOff from './WorkTimeOff';
 import WorkAdminTimeOff from './WorkAdminTimeOff';
 import WorkSchedule from './WorkSchedule';
+import WorkMessages from './WorkMessages';
+import NotificationBell from './NotificationBell';
+import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
 const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
@@ -48,11 +51,21 @@ function ComingSoon({ viewKey }) {
   );
 }
 
-export default function WorkPortalShell({ userId, userRole, userName, userAvatar, onLogout, onSwitchPortal }) {
-  const [currentView, setCurrentView] = useState('work-home');
+export default function WorkPortalShell({ userId, userRole, userName, userAvatar, onLogout, onSwitchPortal, onSwitchPortalAndView, currentView: controlledView, setCurrentView: setControlledView }) {
+  const [internalView, setInternalView] = useState('work-home');
+  const currentView = controlledView ?? internalView;
+  const setCurrentView = setControlledView ?? setInternalView;
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const mainCounts = useMainPortalCounts(userId, userRole);
+  const workCounts = useWorkPortalCounts(userId, userRole);
+
   const meta = PAGE_META[currentView] || { title: 'Work Portal' };
+
+  const handleNotifJump = (portal, view) => {
+    if (portal === 'work') setCurrentView(view);
+    else onSwitchPortalAndView?.(view);
+  };
 
   const renderContent = () => {
     switch (currentView) {
@@ -70,6 +83,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkTimeOff userId={userId} />;
       case 'work-schedule':
         return <WorkSchedule userId={userId} userRole={userRole} />;
+      case 'work-messages':
+        return <WorkMessages userId={userId} userRole={userRole} />;
       case 'work-admin-announcements':
         return <WorkAdminAnnouncements userId={userId} />;
       case 'work-admin-docs':
@@ -107,15 +122,23 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
       />
 
       <div className="flex-1 md:ml-64">
-        <div className="sticky top-0 z-30 bg-white border-b px-4 md:px-8 py-3 flex items-center">
-          <button
-            onClick={() => setMobileOpen(true)}
-            className="md:hidden p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition mr-2"
-            aria-label="Open menu"
-          >
-            <Menu size={22} />
-          </button>
-          <h2 className="text-lg font-semibold text-gray-900">{meta.title}</h2>
+        <div className="sticky top-0 z-30 bg-white border-b px-4 md:px-8 py-3 flex items-center justify-between">
+          <div className="flex items-center min-w-0">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="md:hidden p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition mr-2"
+              aria-label="Open menu"
+            >
+              <Menu size={22} />
+            </button>
+            <h2 className="text-lg font-semibold text-gray-900 truncate">{meta.title}</h2>
+          </div>
+          <NotificationBell
+            currentPortal="work"
+            mainCounts={mainCounts}
+            workCounts={workCounts}
+            onJump={handleNotifJump}
+          />
         </div>
 
         <div className="p-4 md:p-8">

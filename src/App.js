@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
@@ -13,6 +13,8 @@ import ManageCoaches from './ManageCoaches';
 import WaiverPage from './WaiverPage';
 import ContractPage from './ContractPage';
 import WorkPortalShell from './WorkPortal';
+import NotificationBell from './NotificationBell';
+import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase } from 'lucide-react';
 import './App.css';
 
@@ -24,6 +26,7 @@ export default function App() {
   const [userRole, setUserRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
+  const [workPortalView, setWorkPortalView] = useState('work-home');
   const [waiverSigned, setWaiverSigned] = useState(null);
   const [contractSigned, setContractSigned] = useState(null);
   const [currentPortal, setCurrentPortal] = useState(() => {
@@ -156,6 +159,8 @@ export default function App() {
         onLogout={handleLogout}
         currentView={currentView}
         setCurrentView={setCurrentView}
+        workPortalView={workPortalView}
+        setWorkPortalView={setWorkPortalView}
         waiverSigned={waiverSigned}
         setWaiverSigned={setWaiverSigned}
         contractSigned={contractSigned}
@@ -224,125 +229,16 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
-  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
-  const [pendingSlotCount, setPendingSlotCount] = useState(0);
-  const [pendingSlotDetails, setPendingSlotDetails] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
+function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
-  const notifRef = useRef(null);
 
-  const fetchNotificationCounts = useCallback(async () => {
-    if (!userId) return;
+  const mainCounts = useMainPortalCounts(userId, userRole);
+  const workCounts = useWorkPortalCounts(userId, userRole);
 
-    // Unread messages: messages in user's conversations not sent by them and not in message_reads
-    try {
-      const { data: participantRows } = await supabase
-        .from('conversation_participants')
-        .select('conversation_id')
-        .eq('user_id', userId);
-
-      const convIds = (participantRows || []).map(p => p.conversation_id);
-      if (convIds.length > 0) {
-        const { data: allMessages } = await supabase
-          .from('messages')
-          .select('id')
-          .in('conversation_id', convIds)
-          .neq('sender_id', userId);
-
-        const msgIds = (allMessages || []).map(m => m.id);
-        if (msgIds.length > 0) {
-          const { data: reads } = await supabase
-            .from('message_reads')
-            .select('message_id')
-            .eq('user_id', userId)
-            .in('message_id', msgIds);
-
-          const readIds = new Set((reads || []).map(r => r.message_id));
-          setUnreadMessageCount(msgIds.filter(id => !readIds.has(id)).length);
-        } else {
-          setUnreadMessageCount(0);
-        }
-      } else {
-        setUnreadMessageCount(0);
-      }
-    } catch (err) {
-      console.error('Error fetching unread messages:', err);
-    }
-
-    // Pending slot requests (coaches/admins only)
-    if (userRole === 'coach' || userRole === 'admin') {
-      try {
-        const { data: slots } = await supabase
-          .from('training_slots')
-          .select('id, slot_date, start_time')
-          .eq('coach_id', userId);
-
-        const slotIds = (slots || []).map(s => s.id);
-        if (slotIds.length > 0) {
-          const { data: pending } = await supabase
-            .from('slot_reservations')
-            .select('id, slot_id, slot_date, users:player_id(full_name)')
-            .in('slot_id', slotIds)
-            .eq('status', 'pending');
-
-          const details = (pending || []).map(p => {
-            const slot = slots.find(s => s.id === p.slot_id);
-            return { ...p, slot };
-          });
-          setPendingSlotCount(details.length);
-          setPendingSlotDetails(details);
-        } else {
-          setPendingSlotCount(0);
-          setPendingSlotDetails([]);
-        }
-      } catch (err) {
-        console.error('Error fetching pending slots:', err);
-      }
-    }
-  }, [userId, userRole]);
-
-  // Re-fetch counts when switching tabs (e.g., Messages marks reads, Coach Tools confirms slots)
-  useEffect(() => {
-    const timer = setTimeout(() => fetchNotificationCounts(), 500);
-    return () => clearTimeout(timer);
-  }, [currentView]);
-
-  useEffect(() => {
-    fetchNotificationCounts();
-
-    // Realtime subscriptions
-    const msgChannel = supabase.channel('notif-messages')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchNotificationCounts())
-      .subscribe();
-
-    const slotChannel = supabase.channel('notif-slots')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'slot_reservations' }, () => fetchNotificationCounts())
-      .subscribe();
-
-    const readChannel = supabase.channel('notif-reads')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reads' }, () => fetchNotificationCounts())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(msgChannel);
-      supabase.removeChannel(slotChannel);
-      supabase.removeChannel(readChannel);
-    };
-  }, [fetchNotificationCounts]);
-
-  // Click-outside handler
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (notifRef.current && !notifRef.current.contains(e.target)) {
-        setShowNotifications(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const totalNotifCount = unreadMessageCount + pendingSlotCount;
+  const handleNotifJump = (portal, view) => {
+    if (portal === 'main') setCurrentView(view);
+    else { setWorkPortalView(view); setCurrentPortal('work'); }
+  };
 
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
@@ -352,7 +248,10 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         userName={userName}
         userAvatar={userAvatar}
         onLogout={onLogout}
+        currentView={workPortalView}
+        setCurrentView={setWorkPortalView}
         onSwitchPortal={() => setCurrentPortal('main')}
+        onSwitchPortalAndView={(view) => { setCurrentView(view); setCurrentPortal('main'); }}
       />
     );
   }
@@ -366,72 +265,20 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         currentView={currentView}
         setCurrentView={setCurrentView}
         onLogout={onLogout}
-        unreadMessageCount={unreadMessageCount}
-        pendingSlotCount={pendingSlotCount}
+        unreadMessageCount={mainCounts.unreadMessages}
+        pendingSlotCount={mainCounts.pendingSlots.length}
         waiverSigned={waiverSigned}
         contractSigned={contractSigned}
         onSwitchPortal={() => setCurrentPortal('work')}
       />
       <div className="flex-1 ml-64">
-        {/* Sticky header with notification bell */}
         <div className="sticky top-0 z-40 bg-white border-b px-8 py-3 flex justify-end">
-          <div className="relative" ref={notifRef}>
-            <button
-              onClick={() => setShowNotifications(!showNotifications)}
-              className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-            >
-              <Bell size={22} />
-              {totalNotifCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">
-                  {totalNotifCount > 99 ? '99+' : totalNotifCount}
-                </span>
-              )}
-            </button>
-
-            {showNotifications && (
-              <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-                  <h4 className="font-semibold text-gray-900 text-sm">Notifications</h4>
-                </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {pendingSlotDetails.map(req => (
-                    <button
-                      key={req.id}
-                      onClick={() => { setCurrentView('coach-tools'); setShowNotifications(false); }}
-                      className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition"
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className="mt-0.5"><Clock size={16} className="text-yellow-500" /></div>
-                        <div>
-                          <p className="text-sm text-gray-900"><span className="font-medium">{req.users?.full_name || 'A player'}</span> requested a training session</p>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            {req.slot?.slot_date && new Date(req.slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            {req.slot?.start_time && ` at ${(() => { const [h, m] = req.slot.start_time.split(':'); const hour = parseInt(h); return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`; })()}`}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                  {unreadMessageCount > 0 && (
-                    <button
-                      onClick={() => { setCurrentView('messages'); setShowNotifications(false); }}
-                      className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition"
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className="mt-0.5"><MessageSquare size={16} className="text-blue-500" /></div>
-                        <div>
-                          <p className="text-sm text-gray-900">You have <span className="font-medium">{unreadMessageCount} unread message{unreadMessageCount !== 1 ? 's' : ''}</span></p>
-                        </div>
-                      </div>
-                    </button>
-                  )}
-                  {totalNotifCount === 0 && (
-                    <div className="px-4 py-6 text-center text-sm text-gray-500">No new notifications</div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          <NotificationBell
+            currentPortal="main"
+            mainCounts={mainCounts}
+            workCounts={workCounts}
+            onJump={handleNotifJump}
+          />
         </div>
 
         {/* Main content */}
