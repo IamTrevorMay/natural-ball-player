@@ -474,7 +474,7 @@ export default function Schedule({ userId, userRole }) {
               )}
             </div>
             {/* Main Calendar Area */}
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="border-b border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-4">
