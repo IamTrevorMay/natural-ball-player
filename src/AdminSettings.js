@@ -21,6 +21,25 @@ async function deleteAuthUser(userId) {
   return result;
 }
 
+async function updateAuthUserEmail(userId, newEmail) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(
+    `${supabaseUrl}/functions/v1/update-user-email`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ user_id: userId, new_email: newEmail }),
+    }
+  );
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'Failed to update auth email');
+  return result;
+}
+
 export default function AdminSettings({ userId, userRole, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('users');
   const [teams, setTeams] = useState([]);
@@ -850,6 +869,11 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
     setLoading(true);
     setError('');
     try {
+      // 0. Sync auth email if changed
+      if (formData.email !== user.email) {
+        await updateAuthUserEmail(user.id, formData.email);
+      }
+
       // 1. Update users table
       const { error: userError } = await supabase
         .from('users')
@@ -3169,6 +3193,7 @@ function CreateTaskModal({ coaches, userId, onClose, onSuccess }) {
       frequency,
       priority,
       due_date: dueDate || null,
+      status: 'pending',
     }));
     const { error } = await supabase.from('coach_tasks').insert(rows);
     setSaving(false);

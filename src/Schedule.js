@@ -3,6 +3,28 @@ import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 
+function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
+  const events = [];
+  for (const a of assignments) {
+    const planName = a.meal_plans?.name || 'Meal Plan';
+    const aStart = new Date(a.start_date + 'T00:00:00');
+    const aEnd = a.end_date ? new Date(a.end_date + 'T00:00:00') : null;
+    const from = aStart > startOfMonth ? aStart : startOfMonth;
+    const to = aEnd && aEnd < endOfMonth ? aEnd : endOfMonth;
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      events.push({
+        id: `mpa-${a.id}-${fmtLocalDate(d)}`,
+        event_type: 'meal',
+        event_date: fmtLocalDate(d),
+        title: planName,
+        player_id: a.player_id,
+        _isMealPlan: true,
+      });
+    }
+  }
+  return events;
+}
+
 export default function Schedule({ userId, userRole }) {
   const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'team');
   const [myScheduleEvents, setMyScheduleEvents] = useState([]);
@@ -145,29 +167,47 @@ export default function Schedule({ userId, userRole }) {
 
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    const startStr = fmtLocalDate(startOfMonth);
+    const endStr = fmtLocalDate(endOfMonth);
 
-    const { data } = await supabase
-      .from('schedule_events')
-      .select('*')
-      .in('player_id', ids)
-      .gte('event_date', fmtLocalDate(startOfMonth))
-      .lte('event_date', fmtLocalDate(endOfMonth));
+    const [{ data }, { data: mpa }] = await Promise.all([
+      supabase.from('schedule_events').select('*').in('player_id', ids)
+        .gte('event_date', startStr).lte('event_date', endStr),
+      supabase.from('meal_plan_assignments').select('*, meal_plans(name)').in('player_id', ids)
+        .lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`),
+    ]);
 
-    setEvents(data || []);
+    const mealEvents = expandMealPlanAssignments(mpa || [], startOfMonth, endOfMonth);
+    setEvents([...(data || []), ...mealEvents]);
   };
 
   const fetchMyScheduleEvents = async () => {
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    const startStr = fmtLocalDate(startOfMonth);
+    const endStr = fmtLocalDate(endOfMonth);
 
-    const { data } = await supabase
-      .from('schedule_events')
-      .select('*')
-      .eq('player_id', userId)
-      .gte('event_date', fmtLocalDate(startOfMonth))
-      .lte('event_date', fmtLocalDate(endOfMonth));
+    // Fetch schedule events
+    const { data } = await supabase.from('schedule_events').select('*')
+      .eq('player_id', userId).gte('event_date', startStr).lte('event_date', endStr);
 
-    setMyScheduleEvents(data || []);
+    // Fetch direct meal plan assignments
+    const { data: directMpa } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
+      .eq('player_id', userId).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
+
+    // Fetch team-based meal plan assignments
+    const { data: myTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
+    const teamIds = (myTeams || []).map(t => t.team_id);
+    let teamMpa = [];
+    if (teamIds.length > 0) {
+      const { data: tMpa } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
+        .in('team_id', teamIds).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
+      teamMpa = (tMpa || []).map(a => ({ ...a, player_id: userId }));
+    }
+
+    const allMpa = [...(directMpa || []), ...teamMpa];
+    const mealEvents = expandMealPlanAssignments(allMpa, startOfMonth, endOfMonth);
+    setMyScheduleEvents([...(data || []), ...mealEvents]);
   };
 
   const fetchFacilityEvents = async () => {
@@ -2852,24 +2892,28 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
                 >
                   Close
                 </button>
-                <button
-                  onClick={() => setEditing(true)}
-                  className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 transition flex items-center justify-center space-x-2"
-                >
-                  <Edit2 size={16} />
-                  <span>Edit</span>
-                </button>
-                <button
-                  onClick={() => {
-                    console.log('DELETE BUTTON CLICKED!');
-                    setConfirmDelete(true); // Show custom confirm modal
-                  }}
-                  disabled={deleting}
-                  className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center space-x-2"
-                >
-                  <Trash2 size={16} />
-                  <span>{deleting ? 'Deleting...' : 'Delete'}</span>
-                </button>
+                {!event._isMealPlan && (
+                  <>
+                    <button
+                      onClick={() => setEditing(true)}
+                      className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 transition flex items-center justify-center space-x-2"
+                    >
+                      <Edit2 size={16} />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        console.log('DELETE BUTTON CLICKED!');
+                        setConfirmDelete(true); // Show custom confirm modal
+                      }}
+                      disabled={deleting}
+                      className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center space-x-2"
+                    >
+                      <Trash2 size={16} />
+                      <span>{deleting ? 'Deleting...' : 'Delete'}</span>
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
