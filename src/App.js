@@ -15,7 +15,7 @@ import ContractPage from './ContractPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -29,6 +29,7 @@ export default function App() {
   const [workPortalView, setWorkPortalView] = useState('work-home');
   const [waiverSigned, setWaiverSigned] = useState(null);
   const [contractSigned, setContractSigned] = useState(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [currentPortal, setCurrentPortal] = useState(() => {
     try {
       return localStorage.getItem('nbp_current_portal') || 'main';
@@ -81,8 +82,11 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true);
+      }
       if (session) {
         setUserId(session.user.id);
         fetchUserRole(session.user.id);
@@ -145,6 +149,10 @@ export default function App() {
     );
   }
 
+  if (passwordRecovery && session) {
+    return <ResetPasswordPage onComplete={() => setPasswordRecovery(false)} />;
+  }
+
   if (!session) {
     return <LoginPage onLogin={handleLogin} />;
   }
@@ -175,10 +183,28 @@ export default function App() {
 function LoginPage({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onLogin(email, password);
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setForgotLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: window.location.origin,
+    });
+    setForgotLoading(false);
+    if (error) {
+      alert('Error: ' + error.message);
+    } else {
+      setForgotSent(true);
+    }
   };
 
   return (
@@ -190,38 +216,157 @@ function LoginPage({ onLogin }) {
           <p className="text-gray-600 mt-2">Training Portal</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
+        {showForgot ? (
+          forgotSent ? (
+            <div className="text-center space-y-4">
+              <Mail size={40} className="mx-auto text-blue-500" />
+              <h2 className="text-lg font-semibold text-gray-900">Check Your Email</h2>
+              <p className="text-sm text-gray-600">We sent a password reset link to <strong>{forgotEmail}</strong>. Click the link in the email to reset your password.</p>
+              <button
+                onClick={() => { setShowForgot(false); setForgotSent(false); setForgotEmail(''); }}
+                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setShowForgot(false)}
+                className="flex items-center space-x-1 text-sm text-blue-600 hover:text-blue-800"
+              >
+                <ArrowLeft size={16} />
+                <span>Back to Sign In</span>
+              </button>
+              <h2 className="text-lg font-semibold text-gray-900">Reset Password</h2>
+              <p className="text-sm text-gray-600">Enter your email address and we'll send you a link to reset your password.</p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={forgotLoading}
+                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
+              >
+                {forgotLoading ? 'Sending...' : 'Send Reset Link'}
+              </button>
+            </form>
+          )
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+            >
+              Sign In
+            </button>
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setShowForgot(true)}
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                Forgot Password?
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
 
+function ResetPasswordPage({ onComplete }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleReset = async (e) => {
+    e.preventDefault();
+    if (newPassword.length < 6) {
+      alert('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      alert('Passwords do not match.');
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setSaving(false);
+    if (error) {
+      alert('Error resetting password: ' + error.message);
+    } else {
+      alert('Password updated successfully!');
+      onComplete();
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
+        <div className="text-center mb-6">
+          <Lock size={40} className="mx-auto text-blue-500 mb-3" />
+          <h1 className="text-2xl font-bold text-gray-900">Set New Password</h1>
+          <p className="text-gray-600 mt-2 text-sm">Enter your new password below.</p>
+        </div>
+        <form onSubmit={handleReset} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">New Password</label>
             <input
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
+              minLength={6}
             />
           </div>
-
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Confirm Password</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+              minLength={6}
+            />
+          </div>
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+            disabled={saving}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
           >
-            Sign In
+            {saving ? 'Updating...' : 'Update Password'}
           </button>
         </form>
       </div>
