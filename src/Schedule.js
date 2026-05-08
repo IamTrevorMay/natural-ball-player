@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 
 function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
@@ -36,6 +36,7 @@ export default function Schedule({ userId, userRole }) {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [selectedPlayers, setSelectedPlayers] = useState([]);
   const [playerDropdownOpen, setPlayerDropdownOpen] = useState(false);
+  const [playerSearch, setPlayerSearch] = useState('');
   const [events, setEvents] = useState([]);
   const [showAddPanel, setShowAddPanel] = useState(null);
   const [hoveredDate, setHoveredDate] = useState(null);
@@ -551,7 +552,7 @@ export default function Schedule({ userId, userRole }) {
                 <div className="relative">
                   <button
                     type="button"
-                    onClick={() => setPlayerDropdownOpen(!playerDropdownOpen)}
+                    onClick={() => { setPlayerDropdownOpen(!playerDropdownOpen); if (playerDropdownOpen) setPlayerSearch(''); }}
                     className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[240px] text-left flex items-center justify-between"
                   >
                     <span className="text-sm truncate">
@@ -564,18 +565,32 @@ export default function Schedule({ userId, userRole }) {
                     <ChevronRight size={16} className={`transition-transform ${playerDropdownOpen ? 'rotate-90' : ''}`} />
                   </button>
                   {playerDropdownOpen && (
-                    <div className="absolute z-20 mt-1 w-72 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                      <div className="p-2 flex items-center justify-between border-b border-gray-200">
-                        <span className="text-xs text-gray-500">{selectedPlayers.length} selected</span>
-                        <button
-                          type="button"
-                          onClick={() => { setSelectedPlayers([]); setSelectedPlayer(null); }}
-                          className="text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          Clear all
-                        </button>
+                    <div className="absolute z-20 mt-1 w-72 bg-white border border-gray-300 rounded-lg shadow-lg max-h-80 flex flex-col">
+                      <div className="p-2 border-b border-gray-200">
+                        <div className="relative mb-2">
+                          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            value={playerSearch}
+                            onChange={(e) => setPlayerSearch(e.target.value)}
+                            placeholder="Search players..."
+                            className="w-full pl-7 pr-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">{selectedPlayers.length} selected</span>
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedPlayers([]); setSelectedPlayer(null); }}
+                            className="text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            Clear all
+                          </button>
+                        </div>
                       </div>
-                      {players.map((player) => {
+                      <div className="overflow-y-auto flex-1">
+                      {players.filter(p => !playerSearch || p.full_name.toLowerCase().includes(playerSearch.toLowerCase())).map((player) => {
                         const checked = selectedPlayers.includes(player.id);
                         const paletteIdx = selectedPlayers.indexOf(player.id);
                         return (
@@ -599,6 +614,7 @@ export default function Schedule({ userId, userRole }) {
                           </label>
                         );
                       })}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -976,6 +976,8 @@ function TrainingTab({ teams, players }) {
   const [editingProgram, setEditingProgram] = useState(null);
   const [workoutViewMode, setWorkoutViewMode] = useState('list');
   const [expandedPrograms, setExpandedPrograms] = useState(new Set());
+  const [workoutSearch, setWorkoutSearch] = useState('');
+  const [programSearch, setProgramSearch] = useState('');
 
   useEffect(() => { fetchPrograms(); fetchWorkoutTemplates(); }, []);
 
@@ -1043,6 +1045,17 @@ function TrainingTab({ teams, players }) {
             </button>
           </div>
 
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={workoutSearch}
+              onChange={(e) => setWorkoutSearch(e.target.value)}
+              placeholder="Search workouts..."
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
           {workoutTemplates.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <Dumbbell size={40} className="mx-auto mb-3 text-gray-300" />
@@ -1050,7 +1063,7 @@ function TrainingTab({ teams, players }) {
             </div>
           ) : workoutViewMode === 'list' ? (
             <div className="space-y-3">
-              {workoutTemplates.map(wt => {
+              {workoutTemplates.filter(wt => !workoutSearch || wt.name?.toLowerCase().includes(workoutSearch.toLowerCase()) || wt.program?.toLowerCase().includes(workoutSearch.toLowerCase()) || wt.folder?.toLowerCase().includes(workoutSearch.toLowerCase())).map(wt => {
                 const exercises = wt.exercises || [];
                 return (
                   <div key={wt.id} className="bg-gray-50 rounded-lg p-4">
@@ -1105,7 +1118,7 @@ function TrainingTab({ teams, players }) {
           ) : (
             <div className="space-y-2">
               {Object.entries(
-                workoutTemplates.reduce((groups, wt) => {
+                workoutTemplates.filter(wt => !workoutSearch || wt.name?.toLowerCase().includes(workoutSearch.toLowerCase()) || wt.program?.toLowerCase().includes(workoutSearch.toLowerCase()) || wt.folder?.toLowerCase().includes(workoutSearch.toLowerCase())).reduce((groups, wt) => {
                   const program = (!wt.program || wt.program === 'No Program') ? 'Uncategorized' : wt.program;
                   if (!groups[program]) groups[program] = [];
                   groups[program].push(wt);
@@ -1209,6 +1222,17 @@ function TrainingTab({ teams, players }) {
             </button>
           </div>
 
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={programSearch}
+              onChange={(e) => setProgramSearch(e.target.value)}
+              placeholder="Search programs..."
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
           {programs.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <Dumbbell size={40} className="mx-auto mb-3 text-gray-300" />
@@ -1216,7 +1240,7 @@ function TrainingTab({ teams, players }) {
             </div>
           ) : (
             <div className="space-y-4">
-              {programs.map(program => (
+              {programs.filter(p => !programSearch || p.name?.toLowerCase().includes(programSearch.toLowerCase()) || p.description?.toLowerCase().includes(programSearch.toLowerCase())).map(program => (
                 <TrainingProgramCard
                   key={program.id}
                   program={program}

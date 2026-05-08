@@ -60,7 +60,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, phone, avatar_url, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
+      .select('id, full_name, phone, avatar_url, date_of_birth, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
       .eq('role', 'player')
       .order('full_name');
 
@@ -196,6 +196,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                     />
                   </div>
                 </th>
+                <th className="px-2 py-2"></th>
                 <th className="px-2 py-2">
                   <select value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)} className={filterSelectClass}>
                     <option value="All">All</option>
@@ -237,6 +238,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
               <tr className="border-b border-gray-200 bg-white">
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">First Name</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Last Name</th>
+                <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Age</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Team</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Trainer</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Program</th>
@@ -264,6 +266,11 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                       </button>
                     </td>
                     <td className="py-3 px-3 font-semibold text-gray-900">{lastName}</td>
+                    <td className="py-3 px-3 text-gray-600 text-xs">
+                      {player.date_of_birth
+                        ? Math.floor((new Date() - new Date(player.date_of_birth + 'T00:00:00')) / 31557600000)
+                        : '—'}
+                    </td>
                     <td className="py-3 px-3 text-gray-600 text-xs">{teamNames.join(', ') || '—'}</td>
                     <td className="py-3 px-3 text-gray-600 text-xs">{trainerName || '—'}</td>
                     <td className="py-3 px-3">

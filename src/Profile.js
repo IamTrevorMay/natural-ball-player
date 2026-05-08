@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 
@@ -131,6 +131,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
         phone: data.phone || '',
         height: data.height || '',
         weight: data.weight || '',
+        date_of_birth: data.date_of_birth || '',
         sport: profile?.sport || '',
         instagram: data.instagram || '',
         twitter: data.twitter || '',
@@ -179,6 +180,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
           phone: editForm.phone || null,
           height: editForm.height || null,
           weight: editForm.weight || null,
+          date_of_birth: editForm.date_of_birth || null,
           instagram: editForm.instagram || null,
           twitter: editForm.twitter || null,
           organization: editForm.organization || null,
@@ -240,6 +242,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
       phone: userData.phone || '',
       height: userData.height || '',
       weight: userData.weight || '',
+      date_of_birth: userData.date_of_birth || '',
       sport: profile?.sport || '',
       instagram: userData.instagram || '',
       twitter: userData.twitter || '',
@@ -1873,6 +1876,27 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                     />
                   ) : (
                     <p className="text-gray-900">{userData.weight || 'Not set'}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <Calendar className="text-gray-400" size={20} />
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600">Date of Birth</p>
+                  {editing ? (
+                    <input
+                      type="date"
+                      value={editForm.date_of_birth}
+                      onChange={(e) => setEditForm({...editForm, date_of_birth: e.target.value})}
+                      className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900">
+                      {userData.date_of_birth
+                        ? `${new Date(userData.date_of_birth + 'T00:00:00').toLocaleDateString()} (${Math.floor((new Date() - new Date(userData.date_of_birth + 'T00:00:00')) / 31557600000)} yrs)`
+                        : 'Not set'}
+                    </p>
                   )}
                 </div>
               </div>

@@ -314,14 +314,14 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
   const [documentsExpanded, setDocumentsExpanded] = useState(waiverSigned === false || contractSigned === false ? true : true);
   const anyDocUnsigned = waiverSigned === false || contractSigned === false;
   return (
-    <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-6 flex flex-col">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-blue-400">Natural Ball Player</h1>
-        <div className="flex items-center space-x-3 mt-3">
+    <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col">
+      <div className="mb-4">
+        <h1 className="text-xl font-bold text-blue-400">Natural Ball Player</h1>
+        <div className="flex items-center space-x-3 mt-2">
           {userAvatar ? (
-            <img src={userAvatar} alt="Avatar" className="w-9 h-9 rounded-full object-cover" />
+            <img src={userAvatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
           ) : (
-            <div className="w-9 h-9 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
               {userName?.charAt(0) || '?'}
             </div>
           )}
@@ -332,14 +332,14 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         </div>
       </div>
 
-      <nav className="space-y-2 flex-1">
+      <nav className="space-y-1 flex-1 overflow-y-auto">
         <button
           onClick={() => setCurrentView('dashboard')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'dashboard' ? 'bg-blue-600' : 'hover:bg-gray-800'
           }`}
         >
-          <BarChart3 size={20} />
+          <BarChart3 size={18} />
           <span className="flex-1 text-left">Dashboard</span>
           {(userRole === 'coach' || userRole === 'admin') && pendingSlotCount > 0 && (
             <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{pendingSlotCount}</span>
@@ -348,11 +348,11 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
 
         <button
           onClick={() => setCurrentView('profile')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'profile' ? 'bg-blue-600' : 'hover:bg-gray-800'
           }`}
         >
-          <Users size={20} />
+          <Users size={18} />
           <span>Profile</span>
         </button>
 
@@ -360,9 +360,9 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <div>
           <button
             onClick={() => setDocumentsExpanded(!documentsExpanded)}
-            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition hover:bg-gray-800`}
+            className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm hover:bg-gray-800`}
           >
-            <FolderOpen size={20} />
+            <FolderOpen size={18} />
             <span className="flex-1 text-left">Documents</span>
             {anyDocUnsigned && (
               <span className="w-2.5 h-2.5 bg-red-500 rounded-full flex-shrink-0"></span>
@@ -401,41 +401,41 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
 
         <button
           onClick={() => setCurrentView('team')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'team' ? 'bg-blue-600' : 'hover:bg-gray-800'
           }`}
         >
-          <Users size={20} />
+          <Users size={18} />
           <span>My Team</span>
         </button>
 
         <button 
           onClick={() => setCurrentView('schedule')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'schedule' ? 'bg-blue-600' : 'hover:bg-gray-800'
           }`}
         >
-          <Calendar size={20} />
+          <Calendar size={18} />
           <span>Schedule</span>
         </button>
 
         <button 
           onClick={() => setCurrentView('knowledge')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'knowledge' ? 'bg-blue-600' : 'hover:bg-gray-800'
           }`}
         >
-          <BookOpen size={20} />
+          <BookOpen size={18} />
           <span>Knowledge Base</span>
         </button>
 
         <button
           onClick={() => setCurrentView('messages')}
-          className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'messages' ? 'bg-blue-600' : 'hover:bg-gray-800'
           }`}
         >
-          <MessageSquare size={20} />
+          <MessageSquare size={18} />
           <span className="flex-1 text-left">Communication</span>
           {unreadMessageCount > 0 && (
             <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
@@ -446,50 +446,50 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <>
             <button
               onClick={() => setCurrentView('manage-athletes')}
-              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
                 currentView === 'manage-athletes' ? 'bg-blue-600' : 'hover:bg-gray-800'
               }`}
             >
-              <Users size={20} />
+              <Users size={18} />
               <span>Manage Athletes</span>
             </button>
 
             {userRole === 'admin' && (
               <button
                 onClick={() => setCurrentView('manage-coaches')}
-                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
                   currentView === 'manage-coaches' ? 'bg-blue-600' : 'hover:bg-gray-800'
                 }`}
               >
-                <UserCog size={20} />
+                <UserCog size={18} />
                 <span>Manage Coaches</span>
               </button>
             )}
 
             <button
               onClick={() => setCurrentView('coach-tools')}
-              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
                 currentView === 'coach-tools' ? 'bg-blue-600' : 'hover:bg-gray-800'
               }`}
             >
-              <Wrench size={20} />
+              <Wrench size={18} />
               <span>Coach Tools</span>
             </button>
 
             <button
               onClick={() => setCurrentView('settings')}
-              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
                 currentView === 'settings' ? 'bg-blue-600' : 'hover:bg-gray-800'
               }`}
             >
-              <Settings size={20} />
+              <Settings size={18} />
               <span>Settings</span>
             </button>
           </>
         )}
       </nav>
 
-      <div className="mt-auto pt-4 space-y-2">
+      <div className="mt-auto pt-3 space-y-1.5">
         {(userRole === 'coach' || userRole === 'admin') && onSwitchPortal && (
           <button
             onClick={onSwitchPortal}

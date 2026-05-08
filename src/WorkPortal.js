@@ -158,11 +158,11 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
   const NavItem = ({ id, icon: Icon, label }) => (
     <button
       onClick={() => setCurrentView(id)}
-      className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition ${
+      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
         currentView === id ? 'bg-indigo-600' : 'hover:bg-gray-800'
       }`}
     >
-      <Icon size={20} />
+      <Icon size={18} />
       <span className="flex-1 text-left">{label}</span>
     </button>
   );
@@ -180,20 +180,20 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
   );
 
   return (
-    <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-6 flex flex-col z-50 transition-transform ${
+    <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col z-50 transition-transform ${
       mobileOpen ? 'translate-x-0' : '-translate-x-full'
     } md:translate-x-0`}>
-      <div className="mb-8 flex items-start justify-between">
+      <div className="mb-4 flex items-start justify-between">
         <div className="min-w-0">
           <div className="flex items-center space-x-2">
             <Briefcase size={22} className="text-indigo-400 flex-shrink-0" />
             <h1 className="text-xl font-bold text-indigo-400 truncate">NBP Work Portal</h1>
           </div>
-          <div className="flex items-center space-x-3 mt-3">
+          <div className="flex items-center space-x-3 mt-2">
             {userAvatar ? (
-              <img src={userAvatar} alt="Avatar" className="w-9 h-9 rounded-full object-cover" />
+              <img src={userAvatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
             ) : (
-              <div className="w-9 h-9 bg-indigo-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+              <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
                 {userName?.charAt(0) || '?'}
               </div>
             )}
@@ -212,7 +212,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         </button>
       </div>
 
-      <nav className="space-y-2 flex-1 overflow-y-auto -mx-2 px-2">
+      <nav className="space-y-1 flex-1 overflow-y-auto -mx-2 px-2">
         <NavItem id="work-home"      icon={Home}          label="Home" />
         <NavItem id="work-schedule"  icon={Calendar}      label="Schedule" />
         <NavItem id="work-messages"  icon={MessageSquare} label="Messages" />
@@ -245,10 +245,10 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         )}
       </nav>
 
-      <div className="mt-auto pt-4 space-y-2">
+      <div className="mt-auto pt-3 space-y-1.5">
         <button
           onClick={onSwitchPortal}
-          className="w-full flex items-center justify-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm"
+          className="w-full flex items-center justify-center space-x-2 bg-indigo-600 text-white px-3 py-2 rounded-lg hover:bg-indigo-700 transition text-sm"
         >
           <ArrowLeftRight size={16} />
           <span>Switch to Main Portal</span>
