@@ -54,13 +54,16 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const { options: statusOptions, addOption: addStatusOption } = useStatusOptions('status');
   const isAdmin = userRole === 'admin';
 
-  useEffect(() => { fetchRosterPlayers(); fetchTeamCoaches(); }, []);
+  useEffect(() => { fetchRosterPlayers(); fetchTeamCoaches(); fetchAllTeams(); fetchAllCoaches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  const [allTeams, setAllTeams] = useState([]);
+  const [allCoaches, setAllCoaches] = useState([]);
 
   const fetchRosterPlayers = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, phone, avatar_url, date_of_birth, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
+      .select('id, full_name, phone, avatar_url, date_of_birth, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id), team_members(team_id, teams(name))')
       .eq('role', 'player')
       .order('full_name');
 
@@ -91,16 +94,84 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setTeamCoachMap(map);
   };
 
+  const fetchAllTeams = async () => {
+    const { data } = await supabase.from('teams').select('id, name').order('name');
+    setAllTeams(data || []);
+  };
+
+  const fetchAllCoaches = async () => {
+    const { data } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .in('role', ['coach', 'admin'])
+      .order('full_name');
+    setAllCoaches(data || []);
+  };
+
+  // Ensures a player has a player_profiles row. Returns the profile id.
+  const ensureProfile = async (player) => {
+    const existing = player?.player_profiles?.[0]?.id;
+    if (existing) return existing;
+    const { data, error } = await supabase
+      .from('player_profiles')
+      .insert({ user_id: player.id })
+      .select('id')
+      .single();
+    if (error) {
+      console.error('Failed to create player profile:', error);
+      return null;
+    }
+    setRosterPlayers(prev => prev.map(p =>
+      p.id === player.id ? { ...p, player_profiles: [{ id: data.id }] } : p
+    ));
+    return data.id;
+  };
+
   const handleInlineUpdate = async (playerId, field, value) => {
     const player = rosterPlayers.find(p => p.id === playerId);
-    const profileId = player?.player_profiles?.[0]?.id;
+    if (!player) return;
+    const profileId = await ensureProfile(player);
     if (!profileId) return;
-    const { error } = await supabase.from('player_profiles').update({ [field]: value }).eq('id', profileId);
-    if (!error) {
-      setRosterPlayers(prev => prev.map(p =>
-        p.id === playerId ? { ...p, player_profiles: [{ ...p.player_profiles[0], [field]: value }] } : p
-      ));
+    const { error } = await supabase.from('player_profiles').update({ [field]: value || null }).eq('id', profileId);
+    if (error) {
+      console.error(`Failed to update ${field}:`, error);
+      alert(`Could not save ${field}: ${error.message}`);
+      return;
     }
+    setRosterPlayers(prev => prev.map(p => {
+      if (p.id !== playerId) return p;
+      const prevProfile = p.player_profiles?.[0] || { id: profileId };
+      return { ...p, player_profiles: [{ ...prevProfile, id: profileId, [field]: value || null }] };
+    }));
+  };
+
+  const handleAddTeam = async (playerId, teamId) => {
+    if (!teamId) return;
+    const player = rosterPlayers.find(p => p.id === playerId);
+    if (!player) return;
+    const already = (player.team_members || []).some(tm => tm.team_id === teamId);
+    if (already) return;
+    const { error } = await supabase.from('team_members').insert({
+      user_id: playerId, team_id: teamId, role: 'player',
+    });
+    if (error) {
+      alert('Could not add team: ' + error.message);
+      return;
+    }
+    fetchRosterPlayers();
+  };
+
+  const handleRemoveTeam = async (playerId, teamId) => {
+    const { error } = await supabase
+      .from('team_members')
+      .delete()
+      .eq('user_id', playerId)
+      .eq('team_id', teamId);
+    if (error) {
+      alert('Could not remove team: ' + error.message);
+      return;
+    }
+    fetchRosterPlayers();
   };
 
   const handleEditSave = async () => {
@@ -125,6 +196,11 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   };
 
   const getTrainer = (player) => {
+    const explicit = player?.player_profiles?.[0]?.trainer_id;
+    if (explicit) {
+      const coach = allCoaches.find(c => c.id === explicit);
+      if (coach) return coach.full_name;
+    }
     const teamIds = (player.team_members || []).map(tm => tm.team_id);
     const names = [];
     teamIds.forEach(tid => {
@@ -271,8 +347,58 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                         ? Math.floor((new Date() - new Date(player.date_of_birth + 'T00:00:00')) / 31557600000)
                         : '—'}
                     </td>
-                    <td className="py-3 px-3 text-gray-600 text-xs">{teamNames.join(', ') || '—'}</td>
-                    <td className="py-3 px-3 text-gray-600 text-xs">{trainerName || '—'}</td>
+                    <td className="py-3 px-3">
+                      <div className="flex flex-wrap gap-1 mb-1">
+                        {(player.team_members || []).map(tm => (
+                          <span key={tm.team_id} className="inline-flex items-center bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5 text-xs">
+                            {tm.teams?.name || 'Team'}
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveTeam(player.id, tm.team_id)}
+                                className="ml-1 text-blue-500 hover:text-red-600"
+                                title="Remove team"
+                              >
+                                <X size={10} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                      {isAdmin && (
+                        <select
+                          value=""
+                          onChange={(e) => handleAddTeam(player.id, e.target.value)}
+                          className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                        >
+                          <option value="">+ Add team</option>
+                          {allTeams
+                            .filter(t => !(player.team_members || []).some(tm => tm.team_id === t.id))
+                            .map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                      )}
+                    </td>
+                    <td className="py-3 px-3">
+                      {isAdmin ? (
+                        <select
+                          value={profile.trainer_id || ''}
+                          onChange={(e) => handleInlineUpdate(player.id, 'trainer_id', e.target.value || null)}
+                          className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                          title={!profile.trainer_id ? `Auto: ${trainerName || '—'}` : ''}
+                        >
+                          <option value="">{trainerName ? `Auto: ${trainerName}` : '—'}</option>
+                          {allCoaches.map(c => (
+                            <option key={c.id} value={c.id}>{c.full_name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-gray-600 text-xs">
+                          {profile.trainer_id
+                            ? (allCoaches.find(c => c.id === profile.trainer_id)?.full_name || '—')
+                            : (trainerName || '—')}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-3">
                       <select
                         value={profile.program || ''}

@@ -1747,9 +1747,8 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
         {/* Footer Buttons */}
         <div className="border-t border-gray-200 px-6 py-4 flex justify-end space-x-3">
           <button type="button" onClick={onClose} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm">Close</button>
-          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50">Apply For Calendar</button>
-          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 bg-green-600 text-white rounded font-medium hover:bg-green-700 transition text-sm disabled:opacity-50">
-            {loading ? 'Saving...' : 'Save changes'}
+          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-6 py-2 bg-green-600 text-white rounded font-semibold hover:bg-green-700 transition text-sm disabled:opacity-50">
+            {loading ? 'Saving...' : (editingProgram ? 'Save changes' : 'Save program')}
           </button>
         </div>
       </div>
@@ -1887,8 +1886,16 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
   const [playerSearch, setPlayerSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [scheduleOnCalendar, setScheduleOnCalendar] = useState(true);
+  // Default to weekday programming (Mon-Fri)
+  const [weekdays, setWeekdays] = useState([false, true, true, true, true, true, false]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const toggleWeekday = (idx) => {
+    setWeekdays(prev => prev.map((v, i) => i === idx ? !v : v));
+  };
 
   const playerLevel = (p) => {
     const prof = Array.isArray(p.player_profiles) ? p.player_profiles[0] : p.player_profiles;
@@ -1918,42 +1925,105 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
     }
   };
 
+  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  const generateWorkoutEvents = async ({ teamId, playerIds }) => {
+    if (!scheduleOnCalendar || !startDate || !endDate) return { count: 0 };
+    if (!weekdays.some(Boolean)) return { count: 0 };
+
+    const { data: days } = await supabase
+      .from('training_days')
+      .select('id, day_number, title')
+      .eq('program_id', program.id)
+      .order('day_number');
+    const sortedDays = days || [];
+    if (sortedDays.length === 0) return { count: 0 };
+
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T00:00:00');
+    if (isNaN(start) || isNaN(end) || end < start) return { count: 0 };
+
+    const matchingDates = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      if (weekdays[d.getDay()]) matchingDates.push(fmt(d));
+    }
+
+    const rows = [];
+    matchingDates.forEach((dateStr, idx) => {
+      const day = sortedDays[idx % sortedDays.length];
+      const baseRow = {
+        event_type: 'workout',
+        event_date: dateStr,
+        title: day.title || `${program.name} - Day ${day.day_number}`,
+        training_program_id: program.id,
+        training_day_id: day.id,
+      };
+      if (teamId) {
+        rows.push({ ...baseRow, team_id: teamId, team_ids: [teamId] });
+      } else {
+        (playerIds || []).forEach(pid => rows.push({ ...baseRow, player_id: pid }));
+      }
+    });
+
+    if (rows.length === 0) return { count: 0 };
+
+    // Insert in batches of 500 to avoid request size limits
+    const BATCH = 500;
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const chunk = rows.slice(i, i + BATCH);
+      const { error: insErr } = await supabase.from('schedule_events').insert(chunk);
+      if (insErr) throw insErr;
+      inserted += chunk.length;
+    }
+    return { count: inserted };
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
     const { data: { user } } = await supabase.auth.getUser();
 
-    if (assignType === 'team') {
-      if (!teamId) { setError('Please select a team.'); setLoading(false); return; }
-      const { error: insertError } = await supabase.from('training_program_assignments').insert({
+    try {
+      if (assignType === 'team') {
+        if (!teamId) { setError('Please select a team.'); setLoading(false); return; }
+        const { error: insertError } = await supabase.from('training_program_assignments').insert({
+          program_id: program.id,
+          team_id: teamId,
+          player_id: null,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          assigned_by: user?.id,
+        });
+        if (insertError) { setError(insertError.message); setLoading(false); return; }
+        const { count } = await generateWorkoutEvents({ teamId });
+        if (count > 0) alert(`Assigned program. Added ${count} workout${count === 1 ? '' : 's'} to the calendar.`);
+        onSuccess();
+        return;
+      }
+
+      if (selectedPlayerIds.length === 0) {
+        setError('Please select at least one player.');
+        setLoading(false);
+        return;
+      }
+
+      const rows = selectedPlayerIds.map(pid => ({
         program_id: program.id,
-        team_id: teamId,
-        player_id: null,
+        player_id: pid,
+        team_id: null,
         start_date: startDate || null,
         end_date: endDate || null,
         assigned_by: user?.id,
-      });
+      }));
+      const { error: insertError } = await supabase.from('training_program_assignments').insert(rows);
       if (insertError) { setError(insertError.message); setLoading(false); return; }
+      const { count } = await generateWorkoutEvents({ playerIds: selectedPlayerIds });
+      if (count > 0) alert(`Assigned program. Added ${count} workout${count === 1 ? '' : 's'} to the calendar.`);
       onSuccess();
-      return;
-    }
-
-    if (selectedPlayerIds.length === 0) {
-      setError('Please select at least one player.');
+    } catch (err) {
+      setError(err.message || String(err));
       setLoading(false);
-      return;
     }
-
-    const rows = selectedPlayerIds.map(pid => ({
-      program_id: program.id,
-      player_id: pid,
-      team_id: null,
-      start_date: startDate || null,
-      end_date: endDate || null,
-      assigned_by: user?.id,
-    }));
-    const { error: insertError } = await supabase.from('training_program_assignments').insert(rows);
-    if (insertError) { setError(insertError.message); setLoading(false); return; }
-    onSuccess();
   };
 
   const allFilteredSelected = filteredPlayers.length > 0 && filteredPlayers.every(p => selectedPlayerIds.includes(p.id));
@@ -2042,6 +2112,35 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
               <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
               <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
+          </div>
+          <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={scheduleOnCalendar}
+                onChange={(e) => setScheduleOnCalendar(e.target.checked)}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-gray-900">Add to calendar over date range</span>
+            </label>
+            {scheduleOnCalendar && (
+              <div className="mt-3">
+                <p className="text-xs text-gray-500 mb-1.5">Repeat on:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {WEEKDAY_LABELS.map((label, i) => (
+                    <button
+                      type="button"
+                      key={label}
+                      onClick={() => toggleWeekday(i)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${weekdays[i] ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-50'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">Cycles through the program's days; if days run out, it loops back to Day 1.</p>
+              </div>
+            )}
           </div>
           <div className="flex space-x-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
@@ -2292,9 +2391,8 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
         {/* Footer Buttons */}
         <div className="border-t border-gray-200 px-6 py-4 flex justify-end space-x-3">
           <button type="button" onClick={onClose} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm">Close</button>
-          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 border border-gray-300 text-gray-700 rounded font-medium hover:bg-gray-50 transition text-sm disabled:opacity-50">Apply For Calendar</button>
-          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-5 py-2 bg-green-600 text-white rounded font-medium hover:bg-green-700 transition text-sm disabled:opacity-50">
-            {loading ? 'Saving...' : 'Save changes'}
+          <button type="button" onClick={handleSave} disabled={loading || !name.trim()} className="px-6 py-2 bg-green-600 text-white rounded font-semibold hover:bg-green-700 transition text-sm disabled:opacity-50">
+            {loading ? 'Saving...' : (editingWorkout ? 'Save changes' : 'Save workout')}
           </button>
         </div>
       </div>

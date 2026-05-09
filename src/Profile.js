@@ -27,6 +27,7 @@ const PROFILE_TABS = [
   { key: 'hittrax', label: 'Hittrax' },
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },
+  { key: 'pt', label: 'Physical Therapy' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
   { key: 'waiver', label: 'Waiver' },
   { key: 'codes', label: 'Codes' },
@@ -34,6 +35,17 @@ const PROFILE_TABS = [
   { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
 ];
+
+const PT_STATUS_OPTIONS = ['Active', 'Pending Eval', 'In Treatment', 'Maintenance', 'Discharged'];
+const PT_STATUS_COLORS = {
+  'Active': 'bg-blue-100 text-blue-700',
+  'Pending Eval': 'bg-yellow-100 text-yellow-700',
+  'In Treatment': 'bg-orange-100 text-orange-700',
+  'Maintenance': 'bg-green-100 text-green-700',
+  'Discharged': 'bg-gray-100 text-gray-700',
+};
+const PT_VISIT_TYPES = ['Evaluation', 'Treatment', 'Follow-up', 'Re-evaluation', 'Discharge'];
+const PT_BODY_AREAS = ['Shoulder', 'Elbow', 'Forearm/Wrist', 'Lower back', 'Hip', 'Knee', 'Ankle/Foot', 'Core', 'Other'];
 
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
 const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered', 'Committed'];
@@ -44,7 +56,22 @@ const NOTE_CATEGORIES = [
   { value: 'game', label: 'Game', color: 'bg-green-100 text-green-700' },
   { value: 'skill_session', label: 'Skill Session', color: 'bg-purple-100 text-purple-700' },
   { value: 'disciplinary', label: 'Disciplinary', color: 'bg-red-100 text-red-700' },
+  { value: 'hitting', label: 'Hitting', color: 'bg-amber-100 text-amber-800' },
+  { value: 'pitching', label: 'Pitching', color: 'bg-cyan-100 text-cyan-800' },
 ];
+
+const NOTE_CONTEXT_OPTIONS = ['game', 'lives', 'scrimmage', 'bullpen', 'practice'];
+const PITCH_TYPE_OPTIONS = ['Fastball', '4-Seam', '2-Seam', 'Cutter', 'Sinker', 'Slider', 'Curveball', 'Changeup', 'Splitter', 'Knuckle', 'Other'];
+const PITCH_LOCATION_OPTIONS = [
+  'Up & In', 'Up Middle', 'Up & Away',
+  'Middle In', 'Middle Middle', 'Middle Away',
+  'Down & In', 'Down Middle', 'Down & Away',
+  'Way Out',
+];
+const HITTING_RESULT_OPTIONS = ['Take - Ball', 'Take - Strike', 'Swing & Miss', 'Foul', 'Weak Contact', 'Hard Contact', 'In Play - Out', 'In Play - Hit', 'HR'];
+const PITCHING_RESULT_OPTIONS = ['Ball', 'Called Strike', 'Swing & Miss', 'Foul', 'Weak Contact', 'Hard Contact', 'In Play - Out', 'In Play - Hit', 'HR'];
+
+const isPitchCategory = (cat) => cat === 'hitting' || cat === 'pitching';
 
 export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [userData, setUserData] = useState(null);
@@ -83,6 +110,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [medicalHistory, setMedicalHistory] = useState(null);
   const [showMedicalForm, setShowMedicalForm] = useState(false);
   const [expandedSubmission, setExpandedSubmission] = useState(null);
+  const [ptVisits, setPtVisits] = useState([]);
+  const [editingPtVisitId, setEditingPtVisitId] = useState(null);
+  const [ptDraft, setPtDraft] = useState({ visit_date: '', visit_type: 'Treatment', body_area: '', pain_level: '', content: '', exercises: [], follow_up_at: '' });
+  const [savingPtVisit, setSavingPtVisit] = useState(false);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -94,6 +125,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     fetchGoals();
     fetchPlayerNotes();
     fetchAssessmentData();
+    fetchPtVisits();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
 
   useEffect(() => {
@@ -493,41 +526,73 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
   const startNewNote = () => {
     setEditingNoteId('new');
-    setNoteDraft({ category: 'general', content: '' });
+    setNoteDraft({ category: 'general', content: '', context: '', pitches: [] });
   };
 
   const startEditNote = (note) => {
     setEditingNoteId(note.id);
-    setNoteDraft({ category: note.category, content: note.content || '' });
+    setNoteDraft({
+      category: note.category,
+      content: note.content || '',
+      context: note.context || '',
+      pitches: Array.isArray(note.pitches) ? note.pitches : [],
+    });
   };
 
   const cancelEditNote = () => {
     setEditingNoteId(null);
-    setNoteDraft({ category: 'general', content: '' });
+    setNoteDraft({ category: 'general', content: '', context: '', pitches: [] });
+  };
+
+  const updateDraftPitch = (idx, field, value) => {
+    setNoteDraft(prev => ({
+      ...prev,
+      pitches: (prev.pitches || []).map((p, i) => i === idx ? { ...p, [field]: value } : p),
+    }));
+  };
+
+  const addDraftPitch = () => {
+    setNoteDraft(prev => ({
+      ...prev,
+      pitches: [...(prev.pitches || []), { pitch_type: '', location: '', result: '', notes: '' }],
+    }));
+  };
+
+  const removeDraftPitch = (idx) => {
+    setNoteDraft(prev => ({
+      ...prev,
+      pitches: (prev.pitches || []).filter((_, i) => i !== idx),
+    }));
   };
 
   const saveNote = async () => {
-    if (!noteDraft.content.trim()) return;
+    const isPitch = isPitchCategory(noteDraft.category);
+    const hasContent = noteDraft.content.trim().length > 0;
+    const hasPitches = isPitch && (noteDraft.pitches || []).some(p => p.pitch_type || p.location || p.result || p.notes);
+    if (!hasContent && !hasPitches) return;
     setSavingNote(true);
     try {
+      const payload = {
+        category: noteDraft.category,
+        content: noteDraft.content.trim(),
+        context: isPitch ? (noteDraft.context || null) : null,
+        pitches: isPitch
+          ? (noteDraft.pitches || []).filter(p => p.pitch_type || p.location || p.result || p.notes)
+          : null,
+      };
       if (editingNoteId === 'new') {
         const { error } = await supabase
           .from('player_notes')
           .insert({
             player_id: userId,
             created_by: loggedInUserId,
-            category: noteDraft.category,
-            content: noteDraft.content.trim(),
+            ...payload,
           });
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from('player_notes')
-          .update({
-            category: noteDraft.category,
-            content: noteDraft.content.trim(),
-            updated_at: new Date().toISOString(),
-          })
+          .update({ ...payload, updated_at: new Date().toISOString() })
           .eq('id', editingNoteId);
         if (error) throw error;
       }
@@ -551,6 +616,127 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
       console.error('Error deleting note:', error);
       alert('Error deleting note: ' + error.message);
     }
+  };
+
+  const fetchPtVisits = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('pt_visits')
+        .select('*, author:created_by(full_name)')
+        .eq('player_id', userId)
+        .order('visit_date', { ascending: false });
+      if (error) throw error;
+      setPtVisits(data || []);
+    } catch (error) {
+      console.error('Error fetching PT visits:', error);
+    }
+  };
+
+  const startNewPtVisit = () => {
+    setEditingPtVisitId('new');
+    const today = new Date().toISOString().split('T')[0];
+    setPtDraft({ visit_date: today, visit_type: 'Treatment', body_area: '', pain_level: '', content: '', exercises: [], follow_up_at: '' });
+  };
+
+  const startEditPtVisit = (visit) => {
+    setEditingPtVisitId(visit.id);
+    setPtDraft({
+      visit_date: visit.visit_date || '',
+      visit_type: visit.visit_type || 'Treatment',
+      body_area: visit.body_area || '',
+      pain_level: visit.pain_level == null ? '' : String(visit.pain_level),
+      content: visit.content || '',
+      exercises: Array.isArray(visit.exercises) ? visit.exercises : [],
+      follow_up_at: visit.follow_up_at || '',
+    });
+  };
+
+  const cancelEditPtVisit = () => {
+    setEditingPtVisitId(null);
+    setPtDraft({ visit_date: '', visit_type: 'Treatment', body_area: '', pain_level: '', content: '', exercises: [], follow_up_at: '' });
+  };
+
+  const updatePtExercise = (idx, field, value) => {
+    setPtDraft(prev => ({
+      ...prev,
+      exercises: (prev.exercises || []).map((ex, i) => i === idx ? { ...ex, [field]: value } : ex),
+    }));
+  };
+
+  const addPtExercise = () => {
+    setPtDraft(prev => ({
+      ...prev,
+      exercises: [...(prev.exercises || []), { name: '', sets: '', reps: '', notes: '' }],
+    }));
+  };
+
+  const removePtExercise = (idx) => {
+    setPtDraft(prev => ({
+      ...prev,
+      exercises: (prev.exercises || []).filter((_, i) => i !== idx),
+    }));
+  };
+
+  const savePtVisit = async () => {
+    if (!ptDraft.visit_date) return;
+    setSavingPtVisit(true);
+    try {
+      const exercises = (ptDraft.exercises || []).filter(ex => ex.name || ex.sets || ex.reps || ex.notes);
+      const payload = {
+        visit_date: ptDraft.visit_date,
+        visit_type: ptDraft.visit_type || null,
+        body_area: ptDraft.body_area || null,
+        pain_level: ptDraft.pain_level === '' ? null : Math.max(0, Math.min(10, parseInt(ptDraft.pain_level, 10) || 0)),
+        content: ptDraft.content || null,
+        exercises: exercises.length > 0 ? exercises : null,
+        follow_up_at: ptDraft.follow_up_at || null,
+      };
+      if (editingPtVisitId === 'new') {
+        const { error } = await supabase.from('pt_visits').insert({
+          ...payload,
+          player_id: userId,
+          created_by: loggedInUserId,
+        });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('pt_visits')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', editingPtVisitId);
+        if (error) throw error;
+      }
+      await fetchPtVisits();
+      cancelEditPtVisit();
+    } catch (error) {
+      console.error('Error saving PT visit:', error);
+      alert('Error saving PT visit: ' + error.message);
+    } finally {
+      setSavingPtVisit(false);
+    }
+  };
+
+  const deletePtVisit = async (id) => {
+    if (!window.confirm('Delete this PT visit?')) return;
+    try {
+      const { error } = await supabase.from('pt_visits').delete().eq('id', id);
+      if (error) throw error;
+      await fetchPtVisits();
+    } catch (error) {
+      alert('Error deleting visit: ' + error.message);
+    }
+  };
+
+  const updatePtStatus = async (newStatus) => {
+    if (!userData?._profile?.id) return;
+    const { error } = await supabase
+      .from('player_profiles')
+      .update({ pt_status: newStatus || null })
+      .eq('id', userData._profile.id);
+    if (error) {
+      alert('Could not update PT status: ' + error.message);
+      return;
+    }
+    setUserData(prev => ({ ...prev, _profile: { ...prev._profile, pt_status: newStatus || null } }));
   };
 
   const fetchAttendanceData = async () => {
@@ -925,7 +1111,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -1266,28 +1452,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
               {editingNoteId === 'new' && (
                 <div className="border border-blue-300 rounded-lg p-4 bg-blue-50">
-                  <div className="flex items-center space-x-3 mb-3">
-                    <label className="text-sm font-medium text-gray-700">Category:</label>
-                    <select
-                      value={noteDraft.category}
-                      onChange={(e) => setNoteDraft({ ...noteDraft, category: e.target.value })}
-                      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {NOTE_CATEGORIES.map(cat => (
-                        <option key={cat.value} value={cat.value}>{cat.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <textarea
-                    value={noteDraft.content}
-                    onChange={(e) => setNoteDraft({ ...noteDraft, content: e.target.value })}
-                    placeholder="Write a note..."
-                    rows={4}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  <NoteEditor
+                    draft={noteDraft}
+                    setDraft={setNoteDraft}
+                    addPitch={addDraftPitch}
+                    updatePitch={updateDraftPitch}
+                    removePitch={removeDraftPitch}
                   />
-                  <div className="flex justify-end space-x-2 mt-2">
+                  <div className="flex justify-end space-x-2 mt-3">
                     <button onClick={cancelEditNote} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
-                    <button onClick={saveNote} disabled={savingNote || !noteDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                    <button onClick={saveNote} disabled={savingNote} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
                       {savingNote ? 'Saving...' : 'Save'}
                     </button>
                   </div>
@@ -1309,27 +1483,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                       <div key={note.id} className="border border-gray-200 rounded-lg p-4">
                         {editingNoteId === note.id ? (
                           <>
-                            <div className="flex items-center space-x-3 mb-3">
-                              <label className="text-sm font-medium text-gray-700">Category:</label>
-                              <select
-                                value={noteDraft.category}
-                                onChange={(e) => setNoteDraft({ ...noteDraft, category: e.target.value })}
-                                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              >
-                                {NOTE_CATEGORIES.map(cat => (
-                                  <option key={cat.value} value={cat.value}>{cat.label}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <textarea
-                              value={noteDraft.content}
-                              onChange={(e) => setNoteDraft({ ...noteDraft, content: e.target.value })}
-                              rows={4}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            <NoteEditor
+                              draft={noteDraft}
+                              setDraft={setNoteDraft}
+                              addPitch={addDraftPitch}
+                              updatePitch={updateDraftPitch}
+                              removePitch={removeDraftPitch}
                             />
-                            <div className="flex justify-end space-x-2 mt-2">
+                            <div className="flex justify-end space-x-2 mt-3">
                               <button onClick={cancelEditNote} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
-                              <button onClick={saveNote} disabled={savingNote || !noteDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                              <button onClick={saveNote} disabled={savingNote} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
                                 {savingNote ? 'Saving...' : 'Save'}
                               </button>
                             </div>
@@ -1337,8 +1500,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                         ) : (
                           <>
                             <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center space-x-2">
+                              <div className="flex items-center space-x-2 flex-wrap">
                                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${catInfo.color}`}>{catInfo.label}</span>
+                                {note.context && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 capitalize">{note.context}</span>}
                                 <span className="text-xs text-gray-500">{note.author?.full_name || 'Unknown'}</span>
                                 <span className="text-xs text-gray-400">{new Date(note.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                               </div>
@@ -1353,7 +1517,33 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                                 </div>
                               )}
                             </div>
-                            <p className="text-sm text-gray-800 whitespace-pre-wrap">{note.content}</p>
+                            {note.content && <p className="text-sm text-gray-800 whitespace-pre-wrap">{note.content}</p>}
+                            {Array.isArray(note.pitches) && note.pitches.length > 0 && (
+                              <div className="mt-2 overflow-x-auto">
+                                <table className="w-full text-xs border-collapse">
+                                  <thead className="bg-gray-50">
+                                    <tr>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-8">#</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Pitch</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Location</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Result</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {note.pitches.map((p, i) => (
+                                      <tr key={i} className="border-t border-gray-100">
+                                        <td className="px-2 py-1 text-gray-500">{i + 1}</td>
+                                        <td className="px-2 py-1 text-gray-900">{p.pitch_type || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-700">{p.location || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-700">{p.result || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-600">{p.notes || ''}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
                             {note.updated_at && note.updated_at !== note.created_at && (
                               <p className="text-xs text-gray-400 mt-2 italic">Edited {new Date(note.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
                             )}
@@ -1362,6 +1552,159 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                       </div>
                     );
                   })}
+              </div>
+            </div>
+          )}
+
+          {activeProfileTab === 'pt' && (
+            <div className="space-y-6">
+              {/* PT Status */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center space-x-3">
+                    <h4 className="text-sm font-semibold text-gray-700">PT Status:</h4>
+                    {userData?._profile?.pt_status ? (
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${PT_STATUS_COLORS[userData._profile.pt_status] || 'bg-gray-100 text-gray-700'}`}>
+                        {userData._profile.pt_status}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500 italic">Not set</span>
+                    )}
+                  </div>
+                  {(userRole === 'admin' || userRole === 'coach') && (
+                    <select
+                      value={userData?._profile?.pt_status || ''}
+                      onChange={(e) => updatePtStatus(e.target.value)}
+                      className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="">Not set</option>
+                      {PT_STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Powered by NBP × LW Physical Therapy. Logging visits helps track development, recovery, and onboarding history.
+                </p>
+              </div>
+
+              {/* Add Visit Button */}
+              {(userRole === 'admin' || userRole === 'coach') && editingPtVisitId !== 'new' && (
+                <div className="flex justify-between items-center">
+                  <h4 className="text-sm font-semibold text-gray-700">Visit Log ({ptVisits.length})</h4>
+                  <button
+                    onClick={startNewPtVisit}
+                    className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
+                  >
+                    <Plus size={14} />
+                    <span>Add Visit</span>
+                  </button>
+                </div>
+              )}
+
+              {/* New Visit Form */}
+              {editingPtVisitId === 'new' && (
+                <div className="border border-blue-300 rounded-lg p-4 bg-blue-50">
+                  <PtVisitEditor
+                    draft={ptDraft}
+                    setDraft={setPtDraft}
+                    addExercise={addPtExercise}
+                    updateExercise={updatePtExercise}
+                    removeExercise={removePtExercise}
+                  />
+                  <div className="flex justify-end space-x-2 mt-3">
+                    <button onClick={cancelEditPtVisit} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                    <button onClick={savePtVisit} disabled={savingPtVisit} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                      {savingPtVisit ? 'Saving...' : 'Save Visit'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Visit List */}
+              {ptVisits.length === 0 && editingPtVisitId !== 'new' && (
+                <div className="text-center py-10 text-gray-500">
+                  <p className="text-sm">No PT visits logged yet.</p>
+                </div>
+              )}
+              <div className="space-y-3">
+                {ptVisits.map(v => {
+                  const canModify = (userRole === 'admin' || userRole === 'coach');
+                  return (
+                    <div key={v.id} className="border border-gray-200 rounded-lg p-4">
+                      {editingPtVisitId === v.id ? (
+                        <>
+                          <PtVisitEditor
+                            draft={ptDraft}
+                            setDraft={setPtDraft}
+                            addExercise={addPtExercise}
+                            updateExercise={updatePtExercise}
+                            removeExercise={removePtExercise}
+                          />
+                          <div className="flex justify-end space-x-2 mt-3">
+                            <button onClick={cancelEditPtVisit} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+                            <button onClick={savePtVisit} disabled={savingPtVisit} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                              {savingPtVisit ? 'Saving...' : 'Save'}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-start justify-between mb-2 flex-wrap gap-2">
+                            <div className="flex items-center space-x-2 flex-wrap">
+                              <span className="text-sm font-semibold text-gray-900">
+                                {v.visit_date ? new Date(v.visit_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                              </span>
+                              {v.visit_type && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">{v.visit_type}</span>}
+                              {v.body_area && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">{v.body_area}</span>}
+                              {v.pain_level != null && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Pain {v.pain_level}/10</span>}
+                              <span className="text-xs text-gray-500">{v.author?.full_name || 'Unknown'}</span>
+                            </div>
+                            {canModify && (
+                              <div className="flex items-center space-x-1">
+                                <button onClick={() => startEditPtVisit(v)} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                                  <Edit2 size={14} />
+                                </button>
+                                <button onClick={() => deletePtVisit(v.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {v.content && <p className="text-sm text-gray-800 whitespace-pre-wrap">{v.content}</p>}
+                          {Array.isArray(v.exercises) && v.exercises.length > 0 && (
+                            <div className="mt-2 overflow-x-auto">
+                              <table className="w-full text-xs border-collapse">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Exercise</th>
+                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Sets</th>
+                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Reps</th>
+                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {v.exercises.map((ex, i) => (
+                                    <tr key={i} className="border-t border-gray-100">
+                                      <td className="px-2 py-1 text-gray-900">{ex.name || '—'}</td>
+                                      <td className="px-2 py-1 text-gray-700">{ex.sets || '—'}</td>
+                                      <td className="px-2 py-1 text-gray-700">{ex.reps || '—'}</td>
+                                      <td className="px-2 py-1 text-gray-600">{ex.notes || ''}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {v.follow_up_at && (
+                            <p className="text-xs text-blue-700 mt-2">
+                              Follow-up: {new Date(v.follow_up_at + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2071,6 +2414,280 @@ function SubmissionView({ submission }) {
           <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{submission.notes}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
+  const isPitch = isPitchCategory(draft.category);
+  const isPitchingCat = draft.category === 'pitching';
+  const resultOptions = isPitchingCat ? PITCHING_RESULT_OPTIONS : HITTING_RESULT_OPTIONS;
+  const pitches = draft.pitches || [];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center space-x-2">
+          <label className="text-sm font-medium text-gray-700">Category:</label>
+          <select
+            value={draft.category}
+            onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {NOTE_CATEGORIES.map(cat => (
+              <option key={cat.value} value={cat.value}>{cat.label}</option>
+            ))}
+          </select>
+        </div>
+        {isPitch && (
+          <div className="flex items-center space-x-2">
+            <label className="text-sm font-medium text-gray-700">Context:</label>
+            <select
+              value={draft.context || ''}
+              onChange={(e) => setDraft({ ...draft, context: e.target.value })}
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select…</option>
+              {NOTE_CONTEXT_OPTIONS.map(c => (
+                <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      <textarea
+        value={draft.content}
+        onChange={(e) => setDraft({ ...draft, content: e.target.value })}
+        placeholder={isPitch
+          ? (isPitchingCat ? 'Notes (overall outing, opponent, conditions...)' : 'Notes (how you were pitched, opponent, conditions...)')
+          : 'Write a note...'}
+        rows={3}
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+      />
+
+      {isPitch && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold text-gray-700">
+              {isPitchingCat ? 'Pitches Thrown' : 'Pitches Seen'} ({pitches.length})
+            </span>
+            <button
+              type="button"
+              onClick={addPitch}
+              className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center space-x-1"
+            >
+              <Plus size={12} />
+              <span>Add pitch</span>
+            </button>
+          </div>
+          {pitches.length === 0 ? (
+            <p className="text-xs text-gray-500 italic">No pitches logged yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="px-2 py-1 text-left font-semibold text-gray-600 uppercase tracking-wide w-8">#</th>
+                    <th className="px-2 py-1 text-left font-semibold text-gray-600 uppercase tracking-wide">Pitch</th>
+                    <th className="px-2 py-1 text-left font-semibold text-gray-600 uppercase tracking-wide">Location</th>
+                    <th className="px-2 py-1 text-left font-semibold text-gray-600 uppercase tracking-wide">Result</th>
+                    <th className="px-2 py-1 text-left font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
+                    <th className="w-8" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {pitches.map((p, i) => (
+                    <tr key={i} className="border-t border-gray-200">
+                      <td className="px-2 py-1 text-gray-500">{i + 1}</td>
+                      <td className="px-1 py-1">
+                        <select
+                          value={p.pitch_type || ''}
+                          onChange={(e) => updatePitch(i, 'pitch_type', e.target.value)}
+                          className="w-full px-1 py-1 border border-gray-200 rounded text-xs bg-white"
+                        >
+                          <option value="">—</option>
+                          {PITCH_TYPE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1">
+                        <select
+                          value={p.location || ''}
+                          onChange={(e) => updatePitch(i, 'location', e.target.value)}
+                          className="w-full px-1 py-1 border border-gray-200 rounded text-xs bg-white"
+                        >
+                          <option value="">—</option>
+                          {PITCH_LOCATION_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1">
+                        <select
+                          value={p.result || ''}
+                          onChange={(e) => updatePitch(i, 'result', e.target.value)}
+                          className="w-full px-1 py-1 border border-gray-200 rounded text-xs bg-white"
+                        >
+                          <option value="">—</option>
+                          {resultOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-1 py-1">
+                        <input
+                          type="text"
+                          value={p.notes || ''}
+                          onChange={(e) => updatePitch(i, 'notes', e.target.value)}
+                          placeholder="(optional)"
+                          className="w-full px-1 py-1 border border-gray-200 rounded text-xs bg-white"
+                        />
+                      </td>
+                      <td className="px-1 py-1 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removePitch(i)}
+                          className="text-gray-400 hover:text-red-600"
+                          title="Remove pitch"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PtVisitEditor({ draft, setDraft, addExercise, updateExercise, removeExercise }) {
+  const exercises = draft.exercises || [];
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Visit date *</label>
+          <input
+            type="date"
+            value={draft.visit_date}
+            onChange={(e) => setDraft({ ...draft, visit_date: e.target.value })}
+            className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Visit type</label>
+          <select
+            value={draft.visit_type || ''}
+            onChange={(e) => setDraft({ ...draft, visit_type: e.target.value })}
+            className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="">—</option>
+            {PT_VISIT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Body area</label>
+          <select
+            value={draft.body_area || ''}
+            onChange={(e) => setDraft({ ...draft, body_area: e.target.value })}
+            className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="">—</option>
+            {PT_BODY_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Pain (0–10)</label>
+          <input
+            type="number"
+            min="0"
+            max="10"
+            value={draft.pain_level}
+            onChange={(e) => setDraft({ ...draft, pain_level: e.target.value })}
+            placeholder="—"
+            className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+        <textarea
+          value={draft.content}
+          onChange={(e) => setDraft({ ...draft, content: e.target.value })}
+          rows={3}
+          placeholder="Treatment notes, range of motion, observations..."
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold text-gray-700">Exercises / Home Plan ({exercises.length})</span>
+          <button
+            type="button"
+            onClick={addExercise}
+            className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition flex items-center space-x-1"
+          >
+            <Plus size={12} />
+            <span>Add exercise</span>
+          </button>
+        </div>
+        {exercises.length === 0 ? (
+          <p className="text-xs text-gray-500 italic">No exercises added.</p>
+        ) : (
+          <div className="space-y-2">
+            {exercises.map((ex, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Exercise name"
+                  value={ex.name || ''}
+                  onChange={(e) => updateExercise(i, 'name', e.target.value)}
+                  className="col-span-4 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  placeholder="Sets"
+                  value={ex.sets || ''}
+                  onChange={(e) => updateExercise(i, 'sets', e.target.value)}
+                  className="col-span-2 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  placeholder="Reps"
+                  value={ex.reps || ''}
+                  onChange={(e) => updateExercise(i, 'reps', e.target.value)}
+                  className="col-span-2 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <input
+                  type="text"
+                  placeholder="Notes (optional)"
+                  value={ex.notes || ''}
+                  onChange={(e) => updateExercise(i, 'notes', e.target.value)}
+                  className="col-span-3 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeExercise(i)}
+                  className="col-span-1 text-gray-400 hover:text-red-600"
+                  title="Remove exercise"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">Follow-up date (optional)</label>
+        <input
+          type="date"
+          value={draft.follow_up_at}
+          onChange={(e) => setDraft({ ...draft, follow_up_at: e.target.value })}
+          className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
     </div>
   );
 }
