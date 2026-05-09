@@ -24,6 +24,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [userRole, setUserRole] = useState(null);
+  const [secondaryRole, setSecondaryRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [currentView, setCurrentView] = useState('dashboard');
   const [workPortalView, setWorkPortalView] = useState('work-home');
@@ -109,7 +110,7 @@ export default function App() {
   const fetchUserRole = async (userId) => {
     const { data, error } = await supabase
       .from('users')
-      .select('role, full_name, avatar_url')
+      .select('role, secondary_role, full_name, avatar_url')
       .eq('id', userId)
       .single();
 
@@ -117,6 +118,7 @@ export default function App() {
       console.error('Error fetching user role:', error);
     } else {
       setUserRole(data.role);
+      setSecondaryRole(data.secondary_role || null);
       setUserName(data.full_name || '');
       setUserAvatar(data.avatar_url || null);
     }
@@ -161,6 +163,7 @@ export default function App() {
     <div className="bg-gray-100 min-h-screen">
       <MainApp
         userRole={userRole}
+        secondaryRole={secondaryRole}
         userId={userId}
         userName={userName}
         userAvatar={userAvatar}
@@ -374,22 +377,26 @@ function ResetPasswordPage({ onComplete }) {
   );
 }
 
-function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
+function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
+  const hasSecondary = !!secondaryRole && secondaryRole !== userRole;
+  const [viewMode, setViewMode] = useState(userRole);
+  useEffect(() => { setViewMode(userRole); }, [userRole]);
+  const effectiveRole = hasSecondary ? viewMode : userRole;
 
-  const mainCounts = useMainPortalCounts(userId, userRole);
-  const workCounts = useWorkPortalCounts(userId, userRole);
+  const mainCounts = useMainPortalCounts(userId, effectiveRole);
+  const workCounts = useWorkPortalCounts(userId, effectiveRole);
 
   const handleNotifJump = (portal, view) => {
     if (portal === 'main') setCurrentView(view);
     else { setWorkPortalView(view); setCurrentPortal('work'); }
   };
 
-  if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
+  if (currentPortal === 'work' && (effectiveRole === 'coach' || effectiveRole === 'admin')) {
     return (
       <WorkPortalShell
         userId={userId}
-        userRole={userRole}
+        userRole={effectiveRole}
         userName={userName}
         userAvatar={userAvatar}
         onLogout={onLogout}
@@ -404,7 +411,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
   return (
     <div className="flex">
       <Sidebar
-        userRole={userRole}
+        userRole={effectiveRole}
         userName={userName}
         userAvatar={userAvatar}
         currentView={currentView}
@@ -415,6 +422,9 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         waiverSigned={waiverSigned}
         contractSigned={contractSigned}
         onSwitchPortal={() => setCurrentPortal('work')}
+        canSwitchRole={hasSecondary}
+        otherRole={hasSecondary ? (viewMode === userRole ? secondaryRole : userRole) : null}
+        onSwitchRole={hasSecondary ? () => setViewMode(viewMode === userRole ? secondaryRole : userRole) : null}
       />
       <div className="flex-1 ml-64">
         <div className="sticky top-0 z-40 bg-white border-b px-8 py-3 flex justify-end">
@@ -430,24 +440,25 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
         <div className="p-8">
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && (
-              userRole === 'player' ? (
+              effectiveRole === 'player' ? (
                 <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} />
               ) : (
-                <AdminDashboard userId={userId} userRole={userRole} setCurrentView={setCurrentView} />
+                <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={userRole} loggedInUserId={userId} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={userRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} />}
-            {currentView === 'team' && <MyTeam userId={userId} userRole={userRole} />}
-            {currentView === 'schedule' && <Schedule userId={userId} userRole={userRole} />}
-            {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={userRole} />}
-            {currentView === 'messages' && <Messages userId={userId} userRole={userRole} />}
-            {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'coach-tools' && <CoachTools userRole={userRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'waiver' && <WaiverPage userId={userId} userRole={userRole} onSigned={() => setWaiverSigned(true)} />}
-            {currentView === 'contract' && <ContractPage userId={userId} userRole={userRole} onSigned={() => setContractSigned(true)} />}
-            {currentView === 'settings' && <AdminSettings userId={userId} userRole={userRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} />}
+            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} />}
+            {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
+            {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
+            {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
+            {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-interns' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
+            {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
+            {currentView === 'settings' && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
           </div>
         </div>
       </div>
@@ -455,7 +466,7 @@ function MainApp({ userRole, userId, userName, userAvatar, onLogout, currentView
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, onSwitchPortal }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole }) {
   const [documentsExpanded, setDocumentsExpanded] = useState(waiverSigned === false || contractSigned === false ? true : true);
   const anyDocUnsigned = waiverSigned === false || contractSigned === false;
   return (
@@ -600,15 +611,26 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             </button>
 
             {userRole === 'admin' && (
-              <button
-                onClick={() => setCurrentView('manage-coaches')}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                  currentView === 'manage-coaches' ? 'bg-blue-600' : 'hover:bg-gray-800'
-                }`}
-              >
-                <UserCog size={18} />
-                <span>Manage Coaches</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setCurrentView('manage-coaches')}
+                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                    currentView === 'manage-coaches' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  }`}
+                >
+                  <UserCog size={18} />
+                  <span>Manage Coaches</span>
+                </button>
+                <button
+                  onClick={() => setCurrentView('manage-interns')}
+                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                    currentView === 'manage-interns' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  }`}
+                >
+                  <UserCog size={18} />
+                  <span>Manage Interns</span>
+                </button>
+              </>
             )}
 
             <button
@@ -635,6 +657,16 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
       </nav>
 
       <div className="mt-auto pt-3 space-y-1.5">
+        {canSwitchRole && onSwitchRole && otherRole && (
+          <button
+            onClick={onSwitchRole}
+            className="w-full flex items-center justify-center space-x-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition text-sm"
+            title={`Currently viewing as ${userRole}`}
+          >
+            <UserCog size={16} />
+            <span>View as {otherRole.charAt(0).toUpperCase() + otherRole.slice(1)}</span>
+          </button>
+        )}
         {(userRole === 'coach' || userRole === 'admin') && onSwitchPortal && (
           <button
             onClick={onSwitchPortal}
@@ -662,6 +694,7 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
   const [todayFacilityEvents, setTodayFacilityEvents] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(true);
+  const [activityTotals, setActivityTotals] = useState(null);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -675,8 +708,58 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
       fetchTrainingSessions();
       fetchTodayFacilityEvents();
       fetchNotifications();
+      fetchActivityTotals();
     }
   }, [userId]);
+
+  const fetchActivityTotals = async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay());
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const todayStr = fmtLocalDate(today);
+    const weekStartStr = fmtLocalDate(weekStart);
+    const monthStartStr = fmtLocalDate(monthStart);
+
+    const countOn = async (table, dateCol, type) => {
+      const ranges = ['day', 'week', 'month'];
+      const starts = { day: todayStr, week: weekStartStr, month: monthStartStr };
+      const out = {};
+      for (const r of ranges) {
+        let q = supabase.from(table).select('id', { count: 'exact', head: true })
+          .gte(dateCol, starts[r]).lte(dateCol, todayStr);
+        if (type) q = q.eq('event_type', type);
+        const { count } = await q;
+        out[r] = count || 0;
+      }
+      return out;
+    };
+
+    const countSlotReservations = async () => {
+      const ranges = ['day', 'week', 'month'];
+      const starts = { day: todayStr, week: weekStartStr, month: monthStartStr };
+      const out = {};
+      for (const r of ranges) {
+        const { count } = await supabase.from('slot_reservations')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'confirmed')
+          .gte('slot_date', starts[r]).lte('slot_date', todayStr);
+        out[r] = count || 0;
+      }
+      return out;
+    };
+
+    const [assessments, lessons, practices, games, workouts] = await Promise.all([
+      countOn('assessment_submissions', 'assessment_date', null),
+      countSlotReservations(),
+      countOn('schedule_events', 'event_date', 'practice'),
+      countOn('schedule_events', 'event_date', 'game'),
+      countOn('schedule_events', 'event_date', 'workout'),
+    ]);
+
+    setActivityTotals({ assessments, lessons, practices, games, workouts });
+  };
 
   const fetchTodayFacilityEvents = async () => {
     const today = fmtLocalDate(new Date());
@@ -950,18 +1033,48 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
         </div>
       </div>
 
-      {/* Stats Placeholder */}
+      {/* Activity Totals */}
       <div className="bg-white rounded-lg shadow">
         <div className="flex items-center space-x-2 p-6 pb-4 border-b border-gray-100">
           <BarChart3 size={20} className="text-green-600" />
-          <h3 className="text-lg font-semibold text-gray-900">Stats</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Activity Totals</h3>
         </div>
         <div className="p-6 pt-4">
-          <div className="text-center py-12">
-            <BarChart3 className="mx-auto text-gray-300 mb-4" size={48} />
-            <h4 className="text-lg font-semibold text-gray-900 mb-2">Coming Soon</h4>
-            <p className="text-gray-500">Team and player performance stats will appear here.</p>
-          </div>
+          {!activityTotals ? (
+            <div className="text-center py-8 text-gray-500 text-sm">Loading totals...</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 pr-4 font-semibold text-gray-700"></th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">Today</th>
+                    <th className="text-right py-2 px-3 font-semibold text-gray-700">This week</th>
+                    <th className="text-right py-2 pl-3 font-semibold text-gray-700">This month</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { key: 'assessments', label: 'Assessments' },
+                    { key: 'lessons', label: 'Lessons' },
+                    { key: 'practices', label: 'Practices' },
+                    { key: 'workouts', label: 'Workouts' },
+                    { key: 'games', label: 'Games' },
+                  ].map(row => {
+                    const t = activityTotals[row.key] || { day: 0, week: 0, month: 0 };
+                    return (
+                      <tr key={row.key} className="border-b border-gray-100 last:border-b-0">
+                        <td className="py-2.5 pr-4 font-medium text-gray-900">{row.label}</td>
+                        <td className="py-2.5 px-3 text-right tabular-nums text-gray-900">{t.day}</td>
+                        <td className="py-2.5 px-3 text-right tabular-nums text-gray-900">{t.week}</td>
+                        <td className="py-2.5 pl-3 text-right tabular-nums text-gray-900">{t.month}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

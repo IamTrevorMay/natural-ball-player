@@ -11,7 +11,12 @@ const STATUS_COLORS = {
   'Archived': 'bg-red-500 text-white',
 };
 
-export default function ManageCoaches({ userId, userRole, onNavigateToProfile }) {
+export default function ManageCoaches({ userId, userRole, onNavigateToProfile, mode = 'coaches' }) {
+  const isInternsMode = mode === 'interns';
+  const labels = isInternsMode
+    ? { title: 'Manage Interns', subtitle: 'View and manage interns', empty: 'No interns yet — promote a coach by toggling the Intern flag.' }
+    : { title: 'Manage Coaches', subtitle: 'View and manage coaching staff', empty: 'No coaches found.' };
+
   const [coaches, setCoaches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -23,14 +28,15 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile })
   const { options: subStatusOptions, addOption: addSubStatusOption } = useStatusOptions('sub_status');
   const isAdmin = userRole === 'admin';
 
-  useEffect(() => { fetchCoaches(); }, []);
+  useEffect(() => { fetchCoaches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [mode]);
 
   const fetchCoaches = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, coach_status, coach_sub_status, team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, coach_status, coach_sub_status, is_intern, team_members(team_id, teams(name))')
       .eq('role', 'coach')
+      .eq('is_intern', isInternsMode)
       .order('full_name');
 
     if (error) { console.error(error); setLoading(false); return; }
@@ -81,12 +87,12 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile })
       <div className="flex justify-between items-center">
         <div>
           <div className="flex items-center space-x-3">
-            <h2 className="text-3xl font-bold text-gray-900">Manage Coaches</h2>
+            <h2 className="text-3xl font-bold text-gray-900">{labels.title}</h2>
             <span className="bg-blue-600 text-white px-3 py-1 rounded-lg text-sm font-bold">
               {coaches.length}
             </span>
           </div>
-          <p className="text-gray-600 mt-1">View and manage coaching staff</p>
+          <p className="text-gray-600 mt-1">{labels.subtitle}</p>
         </div>
       </div>
 
@@ -132,6 +138,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile })
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Team</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Sub Status</th>
+                {isAdmin && <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">{isInternsMode ? 'Make Coach' : 'Make Intern'}</th>}
               </tr>
             </thead>
             <tbody>
@@ -171,6 +178,20 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile })
                         isAdmin={isAdmin}
                       />
                     </td>
+                    {isAdmin && (
+                      <td className="py-3 px-3">
+                        <button
+                          onClick={() => {
+                            const next = !coach.is_intern;
+                            handleInlineUpdate(coach.id, 'is_intern', next);
+                            setCoaches(prev => prev.filter(c => c.id !== coach.id));
+                          }}
+                          className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
+                        >
+                          {coach.is_intern ? 'Move to Coaches' : 'Move to Interns'}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -179,7 +200,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile })
           {displayCoaches.length === 0 && (
             <div className="text-center py-8 text-gray-500">
               <Users size={40} className="mx-auto mb-3 text-gray-300" />
-              <p>No coaches found matching your filters.</p>
+              <p>{labels.empty}</p>
             </div>
           )}
         </div>

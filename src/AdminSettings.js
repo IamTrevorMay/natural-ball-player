@@ -837,6 +837,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
     email: user.email || '',
     phone: user.phone || '',
     role: user.role || 'player',
+    secondary_role: user.secondary_role || '',
     height: user.height || '',
     weight: user.weight || '',
     jersey_number: profile?.jersey_number || '',
@@ -882,6 +883,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
           email: formData.email,
           phone: formData.phone || null,
           role: formData.role,
+          secondary_role: formData.secondary_role || null,
           height: formData.height || null,
           weight: formData.weight || null,
         })
@@ -1010,6 +1012,19 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
                 <option value="player">Player</option>
                 <option value="coach">Coach</option>
                 <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Secondary Role <span className="text-xs text-gray-500 font-normal">(lets the user toggle views)</span></label>
+              <select
+                value={formData.secondary_role || ''}
+                onChange={(e) => setFormData({...formData, secondary_role: e.target.value})}
+                className={inputClass}
+              >
+                <option value="">None</option>
+                {['player', 'coach', 'admin'].filter(r => r !== formData.role).map(r => (
+                  <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                ))}
               </select>
             </div>
             <div>

@@ -22,7 +22,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const fetchPlayers = async () => {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, player_profiles(position, jersey_number), team_members(team_id, teams(name))')
+      .select('id, full_name, email, player_profiles(position, jersey_number, level), team_members(team_id, teams(name))')
       .eq('role', 'player')
       .order('full_name');
     if (!error) setPlayers(data);
@@ -107,17 +107,24 @@ function ScheduleTab({ teams }) {
     }
   };
 
+  const teamNameById = Object.fromEntries((teams || []).map(t => [t.id, t.name]));
+  const teamIdsFor = (ev) => {
+    const ids = Array.isArray(ev.team_ids) && ev.team_ids.length > 0 ? ev.team_ids : (ev.team_id ? [ev.team_id] : []);
+    return ids;
+  };
+
   const todayStr = fmtLocalDate(new Date());
   const filteredEvents = events.filter(ev => {
-    if (filterTeam !== 'All' && ev.team_id !== filterTeam) return false;
+    if (filterTeam !== 'All' && !teamIdsFor(ev).includes(filterTeam)) return false;
     if (filterType !== 'All' && ev.event_type !== filterType) return false;
     if (filterTimeframe === 'upcoming' && ev.event_date < todayStr) return false;
     if (filterTimeframe === 'past' && ev.event_date >= todayStr) return false;
     const q = searchQuery.trim().toLowerCase();
     if (q) {
+      const teamNames = teamIdsFor(ev).map(id => teamNameById[id]).filter(Boolean).join(' ');
       const haystack = [
         ev.title, ev.opponent, ev.location, ev.address, ev.notes,
-        ev.teams?.name, ev.event_type
+        teamNames, ev.event_type
       ].filter(Boolean).join(' ').toLowerCase();
       if (!haystack.includes(q)) return false;
     }
@@ -196,7 +203,13 @@ function ScheduleTab({ teams }) {
                 {event.location && ` • ${event.location}`}
                 {event.recurrence_rule && ` • ${event.recurrence_rule.charAt(0).toUpperCase() + event.recurrence_rule.slice(1)}`}
               </div>
-              {event.teams && <div className="text-xs text-gray-500 mt-1">Team: {event.teams.name}</div>}
+              {(() => {
+                const ids = teamIdsFor(event);
+                if (ids.length === 0) return null;
+                const names = ids.map(id => teamNameById[id]).filter(Boolean);
+                if (names.length === 0) return null;
+                return <div className="text-xs text-gray-500 mt-1">{names.length > 1 ? 'Teams' : 'Team'}: {names.join(', ')}</div>;
+              })()}
               {event.lanes && event.lanes.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {event.lanes.map(lane => (
@@ -311,18 +324,20 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
     const { team_id: _ignored, ...rest } = formData;
     const baseShared = {
       ...rest,
+      team_id: selectedTeamIds[0],
+      team_ids: selectedTeamIds,
       event_time: timeTBD ? null : (formData.event_time || null),
       event_end_time: timeTBD ? null : (formData.event_end_time || null),
       home_away: formData.event_type === 'game' ? formData.home_away : null,
       lanes: formData.lanes.length > 0 ? formData.lanes : null,
     };
-    const rowsForTeams = (extra = {}) => selectedTeamIds.map(tid => ({ ...baseShared, ...extra, team_id: tid }));
 
     if (recurrence === 'none') {
-      const { error: insertError } = await supabase.from('schedule_events').insert(rowsForTeams());
+      const { error: insertError } = await supabase.from('schedule_events').insert(baseShared);
       if (insertError) { setError(insertError.message); setLoading(false); return; }
       setLoading(false);
-      alert(`Created ${selectedTeamIds.length} event${selectedTeamIds.length > 1 ? 's' : ''}!`);
+      const teamWord = selectedTeamIds.length > 1 ? `${selectedTeamIds.length} teams` : '1 team';
+      alert(`Created event for ${teamWord}!`);
       onSuccess();
       return;
     }
@@ -336,35 +351,31 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
     const dates = generateRecurrenceDates(formData.event_date, recurrence, customInterval, recurrenceEndDate, customUnit, customDays);
     if (dates.length === 0) { setError('No occurrences generated.'); setLoading(false); return; }
 
-    let totalCreated = 0;
-    for (const tid of selectedTeamIds) {
-      const parentRow = {
-        ...baseShared,
-        team_id: tid,
-        event_date: dates[0],
-        recurrence_rule: recurrence,
-        recurrence_interval: recurrence === 'custom' ? parseInt(customInterval) || 1 : null,
-        recurrence_end_date: recurrenceEndDate,
-      };
-      const { data: parent, error: parentErr } = await supabase.from('schedule_events').insert(parentRow).select('id').single();
-      if (parentErr) { setError(parentErr.message); setLoading(false); return; }
-      totalCreated++;
+    const parentRow = {
+      ...baseShared,
+      event_date: dates[0],
+      recurrence_rule: recurrence,
+      recurrence_interval: recurrence === 'custom' ? parseInt(customInterval) || 1 : null,
+      recurrence_end_date: recurrenceEndDate,
+    };
+    const { data: parent, error: parentErr } = await supabase.from('schedule_events').insert(parentRow).select('id').single();
+    if (parentErr) { setError(parentErr.message); setLoading(false); return; }
+    let totalCreated = 1;
 
-      if (dates.length > 1) {
-        const children = dates.slice(1).map(d => ({
-          ...baseShared,
-          team_id: tid,
-          event_date: d,
-          recurrence_parent_id: parent.id,
-        }));
-        const { error: childErr } = await supabase.from('schedule_events').insert(children);
-        if (childErr) { setError(childErr.message); setLoading(false); return; }
-        totalCreated += children.length;
-      }
+    if (dates.length > 1) {
+      const children = dates.slice(1).map(d => ({
+        ...baseShared,
+        event_date: d,
+        recurrence_parent_id: parent.id,
+      }));
+      const { error: childErr } = await supabase.from('schedule_events').insert(children);
+      if (childErr) { setError(childErr.message); setLoading(false); return; }
+      totalCreated += children.length;
     }
 
     setLoading(false);
-    alert(`Created ${totalCreated} event${totalCreated !== 1 ? 's' : ''}!`);
+    const teamWord = selectedTeamIds.length > 1 ? `${selectedTeamIds.length} teams` : '1 team';
+    alert(`Created ${totalCreated} occurrence${totalCreated !== 1 ? 's' : ''} for ${teamWord}!`);
     onSuccess();
   };
 
@@ -407,7 +418,7 @@ function CreateScheduleModal({ teams, onClose, onSuccess }) {
                 ))}
               </div>
               {selectedTeamIds.length > 0 && (
-                <p className="text-xs text-gray-500 mt-1">{selectedTeamIds.length} team{selectedTeamIds.length > 1 ? 's' : ''} selected — one event per team will be created</p>
+                <p className="text-xs text-gray-500 mt-1">{selectedTeamIds.length} team{selectedTeamIds.length > 1 ? 's' : ''} selected — {selectedTeamIds.length > 1 ? 'one shared event will be created and shown to all selected teams' : 'one event will be created'}</p>
               )}
             </div>
             <div>
@@ -1871,36 +1882,93 @@ function AddExerciseModal({ dayId, currentCount, onClose, onSuccess }) {
 function AssignTrainingProgramModal({ program, teams, players, onClose, onSuccess }) {
   const [assignType, setAssignType] = useState('team');
   const [teamId, setTeamId] = useState('');
-  const [playerId, setPlayerId] = useState('');
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState([]);
+  const [levelFilter, setLevelFilter] = useState('All');
+  const [playerSearch, setPlayerSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const playerLevel = (p) => {
+    const prof = Array.isArray(p.player_profiles) ? p.player_profiles[0] : p.player_profiles;
+    return prof?.level || '';
+  };
+
+  const availableLevels = [...new Set(players.map(playerLevel).filter(Boolean))].sort();
+
+  const filteredPlayers = players.filter(p => {
+    if (levelFilter !== 'All' && playerLevel(p) !== levelFilter) return false;
+    const q = playerSearch.trim().toLowerCase();
+    if (q && !(p.full_name || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const togglePlayer = (id) => {
+    setSelectedPlayerIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const selectAllFiltered = () => {
+    const ids = filteredPlayers.map(p => p.id);
+    const allSelected = ids.every(id => selectedPlayerIds.includes(id));
+    if (allSelected) {
+      setSelectedPlayerIds(prev => prev.filter(id => !ids.includes(id)));
+    } else {
+      setSelectedPlayerIds(prev => [...new Set([...prev, ...ids])]);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
     const { data: { user } } = await supabase.auth.getUser();
-    const { error: insertError } = await supabase.from('training_program_assignments').insert({
+
+    if (assignType === 'team') {
+      if (!teamId) { setError('Please select a team.'); setLoading(false); return; }
+      const { error: insertError } = await supabase.from('training_program_assignments').insert({
+        program_id: program.id,
+        team_id: teamId,
+        player_id: null,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        assigned_by: user?.id,
+      });
+      if (insertError) { setError(insertError.message); setLoading(false); return; }
+      onSuccess();
+      return;
+    }
+
+    if (selectedPlayerIds.length === 0) {
+      setError('Please select at least one player.');
+      setLoading(false);
+      return;
+    }
+
+    const rows = selectedPlayerIds.map(pid => ({
       program_id: program.id,
-      player_id: assignType === 'player' ? playerId : null,
-      team_id: assignType === 'team' ? teamId : null,
-      start_date: startDate || null, end_date: endDate || null,
-      assigned_by: user?.id
-    });
-    if (insertError) { setError(insertError.message); setLoading(false); } else { onSuccess(); }
+      player_id: pid,
+      team_id: null,
+      start_date: startDate || null,
+      end_date: endDate || null,
+      assigned_by: user?.id,
+    }));
+    const { error: insertError } = await supabase.from('training_program_assignments').insert(rows);
+    if (insertError) { setError(insertError.message); setLoading(false); return; }
+    onSuccess();
   };
+
+  const allFilteredSelected = filteredPlayers.length > 0 && filteredPlayers.every(p => selectedPlayerIds.includes(p.id));
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="text-xl font-bold text-gray-900">Assign Program</h3>
             <p className="text-sm text-gray-600 mt-1">{program.name}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Assign To</label>
@@ -1908,8 +1976,8 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
               <button type="button" onClick={() => setAssignType('team')} className={`flex-1 flex items-center justify-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${assignType === 'team' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                 <Users size={16} /><span>Team</span>
               </button>
-              <button type="button" onClick={() => setAssignType('player')} className={`flex-1 flex items-center justify-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${assignType === 'player' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <User size={16} /><span>Player</span>
+              <button type="button" onClick={() => setAssignType('players')} className={`flex-1 flex items-center justify-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${assignType === 'players' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                <User size={16} /><span>Players</span>
               </button>
             </div>
           </div>
@@ -1922,12 +1990,47 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
               </select>
             </div>
           ) : (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Select Player *</label>
-              <select required value={playerId} onChange={(e) => setPlayerId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Choose a player</option>
-                {players.map(player => <option key={player.id} value={player.id}>{player.full_name}</option>)}
-              </select>
+            <div className="space-y-2">
+              <div className="flex items-end justify-between gap-2">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Players *</label>
+                  <p className="text-xs text-gray-500">{selectedPlayerIds.length} selected of {players.length}</p>
+                </div>
+                <select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)} className="px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                  <option value="All">All levels</option>
+                  {availableLevels.map(lvl => <option key={lvl} value={lvl}>{lvl}</option>)}
+                </select>
+              </div>
+              <input
+                type="text"
+                value={playerSearch}
+                onChange={(e) => setPlayerSearch(e.target.value)}
+                placeholder="Search players..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button type="button" onClick={selectAllFiltered} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                {allFilteredSelected ? 'Deselect' : 'Select'} all {filteredPlayers.length} {levelFilter !== 'All' ? `at ${levelFilter}` : 'shown'}
+              </button>
+              <div className="border border-gray-200 rounded-lg max-h-60 overflow-y-auto bg-white">
+                {filteredPlayers.length === 0 && (
+                  <p className="text-sm text-gray-500 p-3 text-center">No players match.</p>
+                )}
+                {filteredPlayers.map(p => {
+                  const lvl = playerLevel(p);
+                  return (
+                    <label key={p.id} className="flex items-center space-x-2 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedPlayerIds.includes(p.id)}
+                        onChange={() => togglePlayer(p.id)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-gray-900 flex-1 truncate">{p.full_name}</span>
+                      {lvl && <span className="text-xs text-gray-500">{lvl}</span>}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -1942,7 +2045,9 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
           </div>
           <div className="flex space-x-3 pt-4">
             <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Assigning...' : 'Assign Program'}</button>
+            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">
+              {loading ? 'Assigning...' : assignType === 'team' ? 'Assign Program' : `Assign to ${selectedPlayerIds.length || ''} player${selectedPlayerIds.length === 1 ? '' : 's'}`}
+            </button>
           </div>
         </form>
       </div>

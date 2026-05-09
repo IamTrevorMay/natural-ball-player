@@ -106,6 +106,23 @@ export default function WorkSchedule({ userId, userRole }) {
     return items;
   };
 
+  const staffHoursByDay = (date) => {
+    const dayStr = fmtLocalDate(date);
+    const totals = {};
+    staffEvents
+      .filter(e => fmtLocalDate(new Date(e.start_at)) === dayStr)
+      .forEach(e => {
+        const hours = Math.max(0, (new Date(e.end_at) - new Date(e.start_at)) / 3600000);
+        const evAssigns = assignmentsByEvent[e.id] || [];
+        evAssigns.forEach(a => {
+          const key = a.user_id;
+          if (!totals[key]) totals[key] = { name: a.user?.full_name || 'Unknown', hours: 0 };
+          totals[key].hours += hours;
+        });
+      });
+    return Object.values(totals).sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   const weekRangeLabel = (() => {
     const a = weekStart;
     const b = addDays(weekStart, 6);
@@ -193,14 +210,42 @@ export default function WorkSchedule({ userId, userRole }) {
                         </p>
                         {it.e.location && <p className="text-gray-600 truncate">{it.e.location}</p>}
                         {eventAssigns.length > 0 && (
-                          <p className="text-gray-500 mt-0.5 truncate">
-                            {eventAssigns.length} assigned
-                          </p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {eventAssigns.slice(0, 4).map(a => (
+                              <span
+                                key={a.id}
+                                className="inline-flex items-center bg-white text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200 truncate max-w-[88px] text-[10px]"
+                                title={a.user?.full_name || 'Unknown'}
+                              >
+                                {(a.user?.full_name || '?').split(' ')[0]}
+                              </span>
+                            ))}
+                            {eventAssigns.length > 4 && (
+                              <span className="text-[10px] text-gray-500 self-center">+{eventAssigns.length - 4}</span>
+                            )}
+                          </div>
                         )}
                       </button>
                     );
                   })}
                 </div>
+                {(() => {
+                  const summary = staffHoursByDay(day);
+                  if (summary.length === 0) return null;
+                  return (
+                    <div className="border-t border-gray-100 px-2 py-1.5 bg-gray-50/60">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Staff hours</p>
+                      <div className="space-y-0.5">
+                        {summary.map(s => (
+                          <div key={s.name} className="flex items-center justify-between text-[11px] text-gray-700">
+                            <span className="truncate pr-1">{s.name}</span>
+                            <span className="font-semibold tabular-nums">{(Math.round(s.hours * 10) / 10).toString().replace(/\.0$/, '')}h</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

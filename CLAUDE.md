@@ -37,6 +37,9 @@ When creating new tables:
 - `custom_status_options` — custom status dropdowns for Manage Athletes/Coaches
 - `facility_events` — facility calendar events with lane reservations
 - `event_signups` — player sign-ups for facility events (per occurrence: `event_id` + `event_date` + `user_id` unique). RLS: own-only insert/update/delete + staff-read-all + admin-delete-any. Surfaced in `FacilityEventDetail` (Schedule.js): players see a Yes/No + notes prompt, staff see a sign-ups list. MonthView/WeekView take an `allowEventClick` prop so players can open the modal without manage rights
+- `schedule_events.team_ids uuid[]` — multi-team events. Backfilled from `team_id`; existing `team_id` is kept as the primary/legacy team (set to first selected team on insert). Filter team-scoped queries with `.contains('team_ids', [teamId])` (or `.overlaps('team_ids', teamIds)` for multi-team scopes). One row per shared event — do NOT create one row per team
+- `users.is_intern boolean default false` — flips a coach into the Manage Interns view (`<ManageCoaches mode="interns" />`). Interns are still `role='coach'` for permissions; only the management list is partitioned
+- `users.secondary_role text` (CHECK in admin/coach/player) — when set, MainApp adds a "View as <role>" toggle to the sidebar; `effectiveRole` flows to every child component instead of the primary `userRole`. Permissions in RLS still use the actual `role` — this is UI scoping only
 
 ### Work Portal tables (added 2026-05-03, coach + admin only)
 The Work Portal is a separate shell at the same URL (toggled via the bottom of the sidebar) for staff-only HR/ops. Players cannot access these. The shell lives in `src/WorkPortal.js`; per-feature pages are `src/Work*.js`.

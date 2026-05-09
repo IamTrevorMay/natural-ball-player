@@ -155,7 +155,7 @@ export default function Schedule({ userId, userRole }) {
     const { data } = await supabase
       .from('schedule_events')
       .select('*')
-      .eq('team_id', selectedTeam)
+      .contains('team_ids', [selectedTeam])
       .gte('event_date', fmtLocalDate(startOfMonth))
       .lte('event_date', fmtLocalDate(endOfMonth));
 

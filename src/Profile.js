@@ -564,8 +564,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
       if (teamIds.length > 0) {
         const { data: teamEvents } = await supabase
           .from('schedule_events')
-          .select('id, event_type, event_date, opponent, title, team_id')
-          .in('team_id', teamIds)
+          .select('id, event_type, event_date, opponent, title, team_id, team_ids')
+          .overlaps('team_ids', teamIds)
           .is('player_id', null)
           .in('event_type', ['game', 'practice'])
           .lte('event_date', today);
