@@ -36,6 +36,7 @@ When creating new tables:
 - `assessment_templates` / `assessment_submissions` — assessment system
 - `custom_status_options` — custom status dropdowns for Manage Athletes/Coaches
 - `facility_events` — facility calendar events with lane reservations
+- `event_signups` — player sign-ups for facility events (per occurrence: `event_id` + `event_date` + `user_id` unique). RLS: own-only insert/update/delete + staff-read-all + admin-delete-any. Surfaced in `FacilityEventDetail` (Schedule.js): players see a Yes/No + notes prompt, staff see a sign-ups list. MonthView/WeekView take an `allowEventClick` prop so players can open the modal without manage rights
 
 ### Work Portal tables (added 2026-05-03, coach + admin only)
 The Work Portal is a separate shell at the same URL (toggled via the bottom of the sidebar) for staff-only HR/ops. Players cannot access these. The shell lives in `src/WorkPortal.js`; per-feature pages are `src/Work*.js`.

@@ -509,7 +509,7 @@ export default function Schedule({ userId, userRole }) {
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
                   />
                 ) : viewMode === 'month' ? (
-                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} onEventDrop={async (eventId, newDate) => {
+                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} onEventDrop={async (eventId, newDate) => {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
@@ -517,7 +517,7 @@ export default function Schedule({ userId, userRole }) {
                     fetchFacilityEvents();
                   }} />
                 ) : (
-                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} onEventDrop={async (eventId, newDate) => {
+                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} allowEventClick={true} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} onEventDrop={async (eventId, newDate) => {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
@@ -775,6 +775,8 @@ export default function Schedule({ userId, userRole }) {
       {showFacilityEventDetail && selectedFacilityEvent && (
         <FacilityEventDetail
           event={selectedFacilityEvent}
+          userId={userId}
+          userRole={userRole}
           onClose={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); }}
           onUpdate={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents(); }}
           onDelete={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents(); }}
@@ -804,7 +806,8 @@ export default function Schedule({ userId, userRole }) {
 // MONTH VIEW
 // ============================================
 
-function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop }) {
+function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick }) {
+  const eventsAreClickable = canManage || allowEventClick;
   const year = selectedDate.getFullYear();
   const month = selectedDate.getMonth();
 
@@ -855,6 +858,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
       case 'game': return 'bg-blue-100 text-blue-700 border-blue-200';
       case 'practice': return 'bg-green-100 text-green-700 border-green-200';
       case 'workout': return 'bg-purple-100 text-purple-700 border-purple-200';
+      case 'tryout': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
       case 'meal': return 'bg-orange-100 text-orange-700 border-orange-200';
       default: return 'bg-gray-100 text-gray-700 border-gray-200';
     }
@@ -922,12 +926,12 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (canManage) {
+                      if (eventsAreClickable && setSelectedEvent && setShowEventDetail) {
                         setSelectedEvent(event);
                         setShowEventDetail(true);
                       }
                     }}
-                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${canManage ? 'cursor-pointer hover:opacity-75' : ''}`}
+                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''}`}
                     title={canManage ? `Drag to reschedule, click to edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
                     <span className="truncate">{event.title || event.opponent || event.event_type}</span>
@@ -963,7 +967,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
 // WEEK VIEW
 // ============================================
 
-function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop }) {
+function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick }) {
   // Get the week containing selectedDate
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
@@ -1033,7 +1037,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
                     event={event}
                     compact
                     eventColorFn={eventColorFn}
-                    onClick={canManage && onEventClick ? onEventClick : undefined}
+                    onClick={(canManage || allowEventClick) && onEventClick ? onEventClick : undefined}
                     draggable={canManage && !event._is_virtual && !!onEventDrop}
                   />
                 ))}
@@ -1063,6 +1067,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
       case 'game': return 'border-l-4 border-blue-500 bg-blue-50';
       case 'practice': return 'border-l-4 border-green-500 bg-green-50';
       case 'workout': return 'border-l-4 border-purple-500 bg-purple-50';
+      case 'tryout': return 'border-l-4 border-yellow-500 bg-yellow-50';
       case 'meal': return 'border-l-4 border-orange-500 bg-orange-50';
       default: return 'border-l-4 border-gray-500 bg-gray-50';
     }
@@ -3164,16 +3169,89 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 // FACILITY EVENT DETAIL
 // ============================================
 
-function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
+function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal' });
 
+  const isStaff = userRole === 'admin' || userRole === 'coach';
+  const isPlayer = userRole === 'player';
+  const eventMasterId = event._master_id || event.id;
+  const occurrenceDate = event.event_date;
+
+  const [signups, setSignups] = useState([]);
+  const [mySignup, setMySignup] = useState(null);
+  const [signupNotes, setSignupNotes] = useState('');
+  const [signupLoading, setSignupLoading] = useState(false);
+  const [signupsLoading, setSignupsLoading] = useState(true);
+
+  const fetchSignups = async () => {
+    setSignupsLoading(true);
+    if (isStaff) {
+      const { data, error } = await supabase
+        .from('event_signups')
+        .select('id, notes, created_at, user_id, users:user_id(id, full_name, avatar_url)')
+        .eq('event_id', eventMasterId)
+        .eq('event_date', occurrenceDate)
+        .order('created_at', { ascending: true });
+      if (!error) setSignups(data || []);
+      const myRow = (data || []).find(r => r.user_id === userId);
+      setMySignup(myRow || null);
+    } else {
+      const { data } = await supabase
+        .from('event_signups')
+        .select('id, notes, created_at')
+        .eq('event_id', eventMasterId)
+        .eq('event_date', occurrenceDate)
+        .eq('user_id', userId)
+        .maybeSingle();
+      setMySignup(data || null);
+    }
+    setSignupsLoading(false);
+  };
+
+  useEffect(() => {
+    fetchSignups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventMasterId, occurrenceDate]);
+
+  const handleSignup = async () => {
+    setSignupLoading(true);
+    try {
+      const { error } = await supabase.from('event_signups').insert({
+        event_id: eventMasterId,
+        event_date: occurrenceDate,
+        user_id: userId,
+        notes: signupNotes.trim() || null,
+      });
+      if (error) throw error;
+      setSignupNotes('');
+      await fetchSignups();
+    } catch (err) {
+      alert('Error signing up: ' + err.message);
+    } finally {
+      setSignupLoading(false);
+    }
+  };
+
+  const handleCancelSignup = async (signupId) => {
+    if (!window.confirm('Cancel your sign up for this event?')) return;
+    setSignupLoading(true);
+    try {
+      const { error } = await supabase.from('event_signups').delete().eq('id', signupId);
+      if (error) throw error;
+      await fetchSignups();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    } finally {
+      setSignupLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     setLoading(true);
     try {
-      const eventId = event._master_id || event.id;
-      const { error } = await supabase.from('facility_events').update({ title: formData.title, description: formData.description || null, start_time: formData.start_time || null, end_time: formData.end_time || null, location: formData.location || null, color: formData.color || null }).eq('id', eventId);
+      const { error } = await supabase.from('facility_events').update({ title: formData.title, description: formData.description || null, start_time: formData.start_time || null, end_time: formData.end_time || null, location: formData.location || null, color: formData.color || null }).eq('id', eventMasterId);
       if (error) throw error;
       onUpdate();
     } catch (err) { alert('Error: ' + err.message); } finally { setLoading(false); }
@@ -3182,8 +3260,7 @@ function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
   const handleDelete = async () => {
     if (!window.confirm('Delete this event?')) return;
     try {
-      const eventId = event._master_id || event.id;
-      const { error } = await supabase.from('facility_events').delete().eq('id', eventId);
+      const { error } = await supabase.from('facility_events').delete().eq('id', eventMasterId);
       if (error) throw error;
       onDelete();
     } catch (err) { alert('Error: ' + err.message); }
@@ -3244,10 +3321,93 @@ function FacilityEventDetail({ event, onClose, onUpdate, onDelete }) {
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
+
+              {isPlayer && (
+                <div className="pt-4 border-t border-gray-200">
+                  {signupsLoading ? (
+                    <p className="text-sm text-gray-500">Loading…</p>
+                  ) : mySignup ? (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center space-x-2 text-green-700 text-sm font-semibold">
+                        <Check size={16} />
+                        <span>You're signed up</span>
+                      </div>
+                      {mySignup.notes && <p className="text-xs text-gray-700 whitespace-pre-wrap">Notes: {mySignup.notes}</p>}
+                      <button
+                        onClick={() => handleCancelSignup(mySignup.id)}
+                        disabled={signupLoading}
+                        className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
+                      >
+                        {signupLoading ? 'Cancelling…' : 'Cancel sign up'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-gray-900">Would you like to sign up for this event?</p>
+                      <textarea
+                        value={signupNotes}
+                        onChange={(e) => setSignupNotes(e.target.value)}
+                        placeholder="Notes (optional)"
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
+                      />
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={onClose}
+                          className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition text-sm"
+                        >
+                          No
+                        </button>
+                        <button
+                          onClick={handleSignup}
+                          disabled={signupLoading}
+                          className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50 text-sm"
+                        >
+                          {signupLoading ? 'Signing up…' : 'Yes, sign me up'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isStaff && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                    Sign ups {signups.length > 0 && <span className="ml-1 text-gray-700">({signups.length})</span>}
+                  </h4>
+                  {signupsLoading ? (
+                    <p className="text-sm text-gray-500">Loading…</p>
+                  ) : signups.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic">No sign ups yet.</p>
+                  ) : (
+                    <ul className="space-y-2 max-h-40 overflow-y-auto">
+                      {signups.map(s => (
+                        <li key={s.id} className="flex items-start space-x-2 bg-gray-50 rounded-lg p-2">
+                          {s.users?.avatar_url ? (
+                            <img src={s.users.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0"><User size={14} className="text-gray-500" /></div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{s.users?.full_name || 'Unknown'}</p>
+                            {s.notes && <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{s.notes}</p>}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               <div className="flex space-x-3 pt-4 border-t border-gray-200">
                 <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
-                <button onClick={() => setEditing(true)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition flex items-center justify-center space-x-1"><Edit2 size={16} /><span>Edit</span></button>
-                <button onClick={handleDelete} className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition flex items-center justify-center space-x-1"><Trash2 size={16} /><span>Delete</span></button>
+                {isStaff && (
+                  <>
+                    <button onClick={() => setEditing(true)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition flex items-center justify-center space-x-1"><Edit2 size={16} /><span>Edit</span></button>
+                    <button onClick={handleDelete} className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition flex items-center justify-center space-x-1"><Trash2 size={16} /><span>Delete</span></button>
+                  </>
+                )}
               </div>
             </div>
           )}

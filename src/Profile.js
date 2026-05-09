@@ -1368,14 +1368,14 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
           {activeProfileTab === 'armcare' && (
             <div>
-              <div className="flex flex-wrap gap-2 mb-6">
-                {['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder'].map(type => (
+              <div className="flex flex-wrap gap-1.5 mb-6">
+                {['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder', 'Catching', 'Hitting'].map(type => (
                   <button
                     key={type}
                     onClick={() => addArmCareRoutine(type)}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2 text-sm"
+                    className="bg-blue-600 text-white px-2.5 py-1 rounded-md font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-xs"
                   >
-                    <Plus size={16} />
+                    <Plus size={12} />
                     <span>{type} Routine</span>
                   </button>
                 ))}

@@ -2970,19 +2970,44 @@ function InventoryTab() {
 // WAIVERS TAB
 // ============================================
 function WaiversTab({ players, waiverSignatures }) {
+  const [statusFilter, setStatusFilter] = useState('all');
+
   const waiverMap = {};
   waiverSignatures.forEach(w => { waiverMap[w.user_id] = w; });
 
-  const sorted = [...players].sort((a, b) => {
+  const filtered = players.filter(p => {
+    if (statusFilter === 'signed') return !!waiverMap[p.id];
+    if (statusFilter === 'unsigned') return !waiverMap[p.id];
+    return true;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
     const aHas = waiverMap[a.id] ? 1 : 0;
     const bHas = waiverMap[b.id] ? 1 : 0;
     if (aHas !== bHas) return aHas - bHas; // unsigned first
     return (a.full_name || '').localeCompare(b.full_name || '');
   });
 
+  const signedCount = players.filter(p => waiverMap[p.id]).length;
+  const unsignedCount = players.length - signedCount;
+
   return (
     <div>
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Player Waiver Status</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">Player Waiver Status</h3>
+        <div className="flex items-center space-x-2">
+          <span className="text-xs text-gray-500">{signedCount} signed &middot; {unsignedCount} unsigned</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            <option value="all">All players</option>
+            <option value="signed">Signed</option>
+            <option value="unsigned">Unsigned</option>
+          </select>
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
