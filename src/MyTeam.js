@@ -45,7 +45,7 @@ export default function MyTeam({ userId, userRole }) {
             full_name,
             email,
             phone,
-            player_profiles(
+            player_profiles!player_profiles_user_id_fkey(
               jersey_number,
               position,
               grade,

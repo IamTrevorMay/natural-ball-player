@@ -22,7 +22,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const fetchPlayers = async () => {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, player_profiles(position, jersey_number, level), team_members(team_id, teams(name))')
+      .select('id, full_name, email, player_profiles!player_profiles_user_id_fkey(position, jersey_number, level), team_members(team_id, teams(name))')
       .eq('role', 'player')
       .order('full_name');
     if (!error) setPlayers(data);
@@ -632,7 +632,7 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, phone, avatar_url, player_profiles(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
+      .select('id, full_name, phone, avatar_url, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
       .eq('role', 'player')
       .order('full_name');
 

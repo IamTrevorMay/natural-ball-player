@@ -28,7 +28,7 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
         .from('users')
         .select(`
           *,
-          player_profiles(*),
+          player_profiles!player_profiles_user_id_fkey(*),
           team_members(
             team_id,
             teams(*)
