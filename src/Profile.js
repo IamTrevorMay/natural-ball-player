@@ -1984,15 +1984,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                 <span>Natural Ballplayer Store</span>
                 <ExternalLink size={18} />
               </a>
-              <a
-                href="https://www.dudesbaseball.club/product/gear/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-between bg-gray-900 text-white px-4 py-3 rounded-lg font-medium hover:bg-gray-800 transition"
-              >
-                <span>NBP Dudes Store</span>
-                <ExternalLink size={18} />
-              </a>
             </div>
           </div>
 

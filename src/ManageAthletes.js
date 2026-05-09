@@ -4,7 +4,7 @@ import { Users, Search, Edit2, X } from 'lucide-react';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
 
 const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo', 'Base Running', 'Physical Therapy', 'Recovery', 'Mobility', 'Meal Planning', 'Stretching'];
-const LEVEL_OPTIONS = ['8u', '9u', '10u', '11u', '12u', '13u', '14u', '15u', '16u', '17u', '18u', 'A', 'A+', 'AA', 'AAA', 'MLB', 'KBO', 'MEX', 'NPB'];
+const LEVEL_OPTIONS = ['8u', '9u', '10u', '11u', '12u', '13u', '14u', '15u', '16u', '17u', '18u', 'College', 'A', 'A+', 'AA', 'AAA', 'MLB', 'KBO', 'MEX', 'NPB'];
 const SUB_STATUS_OPTIONS = ['Catcher', 'Infielder', 'Outfielder', 'Pitcher'];
 
 const LEVEL_COLORS = {
