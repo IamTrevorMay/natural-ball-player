@@ -1235,6 +1235,9 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
     setError('');
 
     try {
+      const isIntern = formData.role === 'intern';
+      const dbRole = isIntern ? 'coach' : formData.role;
+
       // Save admin session before signUp (signUp switches the active session)
       const { data: { session: adminSession } } = await supabase.auth.getSession();
 
@@ -1245,7 +1248,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
         options: {
           data: {
             full_name: formData.full_name,
-            role: formData.role
+            role: dbRole
           }
         }
       });
@@ -1282,7 +1285,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
             options: {
               data: {
                 full_name: formData.full_name,
-                role: formData.role
+                role: dbRole
               }
             }
           });
@@ -1322,7 +1325,8 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
           id: authData.user.id,
           email: formData.email,
           full_name: formData.full_name,
-          role: formData.role,
+          role: dbRole,
+          is_intern: isIntern,
           phone: formData.phone || null,
           height: formData.height || null,
           weight: formData.weight || null
@@ -1331,7 +1335,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
       if (userError) throw userError;
 
       // 3. If player, create player profile
-      if (formData.role === 'player') {
+      if (dbRole === 'player') {
         const { error: profileError } = await supabase
           .from('player_profiles')
           .insert({
@@ -1353,7 +1357,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
           .insert({
             team_id: formData.team_id,
             user_id: authData.user.id,
-            role: formData.role === 'admin' ? 'coach' : formData.role
+            role: dbRole === 'admin' ? 'coach' : dbRole
           });
 
         if (teamError) throw teamError;
@@ -1440,6 +1444,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
               >
                 <option value="player">Player</option>
                 <option value="coach">Coach</option>
+                <option value="intern">Intern</option>
                 <option value="admin">Admin</option>
               </select>
             </div>
