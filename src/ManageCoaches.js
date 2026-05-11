@@ -35,7 +35,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
     const { data, error } = await supabase
       .from('users')
       .select('id, full_name, email, phone, avatar_url, coach_status, coach_sub_status, is_intern, team_members(team_id, teams(name))')
-      .eq('role', 'coach')
+      .or('role.eq.coach,secondary_role.eq.coach')
       .eq('is_intern', isInternsMode)
       .order('full_name');
 

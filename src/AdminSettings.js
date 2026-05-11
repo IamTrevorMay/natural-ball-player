@@ -807,6 +807,11 @@ function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
             <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
               {user.role}
             </span>
+            {user.secondary_role && user.secondary_role !== user.role && (
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.secondary_role)} ring-1 ring-inset ring-gray-300`}>
+                +{user.secondary_role}
+              </span>
+            )}
             <Edit2 size={16} className="text-gray-400" />
           </div>
         </div>

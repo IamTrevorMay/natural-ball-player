@@ -64,7 +64,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     const { data, error } = await supabase
       .from('users')
       .select('id, full_name, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id), team_members(team_id, teams(name))')
-      .eq('role', 'player')
+      .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
     if (error) { console.error(error); setLoading(false); return; }
