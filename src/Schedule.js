@@ -120,7 +120,7 @@ export default function Schedule({ userId, userRole }) {
         full_name,
         team_members(team_id, teams(name))
       `)
-      .eq('role', 'player')
+      .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
     // If coach, only show players from their teams
@@ -189,20 +189,23 @@ export default function Schedule({ userId, userRole }) {
     const endStr = fmtLocalDate(endOfMonth);
 
     // Fetch schedule events
-    const { data } = await supabase.from('schedule_events').select('*')
+    const { data, error: evErr } = await supabase.from('schedule_events').select('*')
       .eq('player_id', userId).gte('event_date', startStr).lte('event_date', endStr);
+    if (evErr) console.error('Error fetching schedule events:', evErr);
 
     // Fetch direct meal plan assignments
-    const { data: directMpa } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
+    const { data: directMpa, error: mpaErr } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
       .eq('player_id', userId).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
+    if (mpaErr) console.error('Error fetching meal plan assignments:', mpaErr);
 
     // Fetch team-based meal plan assignments
     const { data: myTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
     const teamIds = (myTeams || []).map(t => t.team_id);
     let teamMpa = [];
     if (teamIds.length > 0) {
-      const { data: tMpa } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
+      const { data: tMpa, error: tErr } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
         .in('team_id', teamIds).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
+      if (tErr) console.error('Error fetching team meal plan assignments:', tErr);
       teamMpa = (tMpa || []).map(a => ({ ...a, player_id: userId }));
     }
 
@@ -1419,6 +1422,11 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
     })();
 
     try {
+      // Guard: meal/workout events require a player
+      if ((eventType === 'workout' || eventType === 'meal') && !playerId) {
+        throw new Error('No player selected. Please select a player first.');
+      }
+
       if (eventType === 'team-event') {
         // Create team event
         const { error } = await supabase
@@ -2429,10 +2437,13 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             onClick={handleSubmit}
             disabled={loading || !eventType ||
               (eventType === 'team-event' && !teamEventData.opponent) ||
+              (eventType === 'workout' && !workoutType) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'existing' && !selectedDayId) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'create' && !newWorkoutData.title) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'template' && !selectedTemplateId) ||
               (eventType === 'workout' && workoutType === 'program' && !selectedProgramId) ||
+              (eventType === 'meal' && !mealType) ||
+              (eventType === 'meal' && mealType === 'single-meal' && !mealSelectionMode) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'existing' && !selectedMealId) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'create' && !newMealData.name) ||
               (eventType === 'meal' && mealType === 'plan' && !selectedMealPlanId)
