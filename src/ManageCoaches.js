@@ -96,7 +96,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-white rounded-lg shadow">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

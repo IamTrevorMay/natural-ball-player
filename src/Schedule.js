@@ -3,6 +3,15 @@ import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 
+// Categorize workout events by title for color-coding
+function getWorkoutCategory(title) {
+  const t = (title || '').toLowerCase();
+  if (t.includes('pitch') || t.includes('throw') || t.includes('mound') || t.includes('bullpen') || t.includes('long toss') || t.includes('velo') || t.includes('pen ') || t.includes(' pen')) return 'pitching';
+  if (t.includes('hit') || t.includes('tee') || t.includes('bp ') || t.includes('batting') || t.includes('swing') || t.includes(' bp')) return 'hitting';
+  if (t.includes('warm') || t.includes('mobil') || t.includes('stretch') || t.includes('cars') || t.includes('foam') || t.includes('band') || t.includes('recovery') || t.includes('yoga') || t.includes('cool')) return 'warmup';
+  return 'general';
+}
+
 function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
   const events = [];
   for (const a of assignments) {
@@ -733,7 +742,7 @@ export default function Schedule({ userId, userRole }) {
           date={showAddPanel}
           view={view}
           teamId={selectedTeam}
-          playerId={selectedPlayer}
+          playerIds={selectedPlayers.length > 0 ? selectedPlayers : (selectedPlayer ? [selectedPlayer] : [])}
           onClose={() => setShowAddPanel(null)}
           onSuccess={() => {
             setShowAddPanel(null);
@@ -856,13 +865,22 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
     return events.filter(e => e.event_date === dateStr);
   };
 
-  const getEventColor = (eventType) => {
+  const getEventColor = (event) => {
+    const eventType = typeof event === 'string' ? event : event?.event_type;
+    if (eventType === 'workout') {
+      const cat = getWorkoutCategory(typeof event === 'string' ? '' : event?.title);
+      switch(cat) {
+        case 'pitching': return 'bg-green-100 text-green-700 border-green-200';
+        case 'hitting': return 'bg-blue-100 text-blue-700 border-blue-200';
+        case 'warmup': return 'bg-purple-100 text-purple-700 border-purple-200';
+        default: return 'bg-orange-100 text-orange-700 border-orange-200';
+      }
+    }
     switch(eventType) {
-      case 'game': return 'bg-blue-100 text-blue-700 border-blue-200';
+      case 'game': return 'bg-slate-100 text-slate-700 border-slate-200';
       case 'practice': return 'bg-green-100 text-green-700 border-green-200';
-      case 'workout': return 'bg-purple-100 text-purple-700 border-purple-200';
-      case 'tryout': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-      case 'meal': return 'bg-orange-100 text-orange-700 border-orange-200';
+      case 'tryout': return 'bg-amber-100 text-amber-700 border-amber-200';
+      case 'meal': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
       default: return 'bg-gray-100 text-gray-700 border-gray-200';
     }
   };
@@ -934,7 +952,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                         setShowEventDetail(true);
                       }
                     }}
-                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''}`}
+                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''}`}
                     title={canManage ? `Drag to reschedule, click to edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
                     <span className="truncate">{event.title || event.opponent || event.event_type}</span>
@@ -1065,13 +1083,22 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
 }
 
 function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
-  const getEventColor = (eventType) => {
+  const getEventColor = (ev) => {
+    const eventType = typeof ev === 'string' ? ev : ev?.event_type;
+    if (eventType === 'workout') {
+      const cat = getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
+      switch(cat) {
+        case 'pitching': return 'border-l-4 border-green-500 bg-green-50';
+        case 'hitting': return 'border-l-4 border-blue-500 bg-blue-50';
+        case 'warmup': return 'border-l-4 border-purple-500 bg-purple-50';
+        default: return 'border-l-4 border-orange-500 bg-orange-50';
+      }
+    }
     switch(eventType) {
-      case 'game': return 'border-l-4 border-blue-500 bg-blue-50';
+      case 'game': return 'border-l-4 border-slate-500 bg-slate-50';
       case 'practice': return 'border-l-4 border-green-500 bg-green-50';
-      case 'workout': return 'border-l-4 border-purple-500 bg-purple-50';
-      case 'tryout': return 'border-l-4 border-yellow-500 bg-yellow-50';
-      case 'meal': return 'border-l-4 border-orange-500 bg-orange-50';
+      case 'tryout': return 'border-l-4 border-amber-500 bg-amber-50';
+      case 'meal': return 'border-l-4 border-yellow-500 bg-yellow-50';
       default: return 'border-l-4 border-gray-500 bg-gray-50';
     }
   };
@@ -1081,7 +1108,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
 
   return (
     <div
-      className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event.event_type)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''}`}
+      className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''}`}
       onClick={clickable ? (e) => { e.stopPropagation(); onClick(event); } : undefined}
       draggable={!!draggable}
       onDragStart={draggable ? (e) => {
@@ -1306,7 +1333,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
 // ADD EVENT PANEL
 // ============================================
 
-function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
+function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess }) {
   const [eventType, setEventType] = useState(null); // 'team-event', 'workout', 'meal'
   const [workoutType, setWorkoutType] = useState(null); // 'single-day', 'program'
   const [mealType, setMealType] = useState(null); // 'single-meal', 'plan'
@@ -1348,6 +1375,8 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
     carbs_g: '',
     fat_g: ''
   });
+  const [programEndDate, setProgramEndDate] = useState('');
+  const [programWeekdays, setProgramWeekdays] = useState([false, true, true, true, true, true, false]); // Mon-Fri default
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -1422,8 +1451,8 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
     })();
 
     try {
-      // Guard: meal/workout events require a player
-      if ((eventType === 'workout' || eventType === 'meal') && !playerId) {
+      // Guard: meal/workout events require at least one player
+      if ((eventType === 'workout' || eventType === 'meal') && playerIds.length === 0) {
         throw new Error('No player selected. Please select a player first.');
       }
 
@@ -1459,15 +1488,14 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               ).join('\n') : ''
             ].filter(Boolean).join('\n');
 
-            const { error } = await supabase
-              .from('schedule_events')
-              .insert({
-                player_id: playerId,
-                event_type: 'workout',
-                event_date: dateStr,
-                title: newWorkoutData.title,
-                notes: notesWithExercises || null
-              });
+            const rows = playerIds.map(pid => ({
+              player_id: pid,
+              event_type: 'workout',
+              event_date: dateStr,
+              title: newWorkoutData.title,
+              notes: notesWithExercises || null
+            }));
+            const { error } = await supabase.from('schedule_events').insert(rows);
 
             if (error) {
               console.error('Error creating new workout:', error);
@@ -1485,29 +1513,27 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                 ).join('\n') : ''
               ].filter(Boolean).join('\n');
 
-              const { error } = await supabase
-                .from('schedule_events')
-                .insert({
-                  player_id: playerId,
-                  event_type: 'workout',
-                  event_date: dateStr,
-                  title: template.name,
-                  notes: notesWithExercises || null
-                });
+              const rows = playerIds.map(pid => ({
+                player_id: pid,
+                event_type: 'workout',
+                event_date: dateStr,
+                title: template.name,
+                notes: notesWithExercises || null
+              }));
+              const { error } = await supabase.from('schedule_events').insert(rows);
               if (error) throw error;
             }
           } else {
             // Create single workout day event from existing program
             const day = trainingDays.find(d => d.id === selectedDayId);
-            const { error } = await supabase
-              .from('schedule_events')
-              .insert({
-                player_id: playerId,
-                event_type: 'workout',
-                event_date: dateStr,
-                title: day?.title || `Day ${day?.day_number}`,
-                training_day_id: selectedDayId
-              });
+            const rows = playerIds.map(pid => ({
+              player_id: pid,
+              event_type: 'workout',
+              event_date: dateStr,
+              title: day?.title || `Day ${day?.day_number}`,
+              training_day_id: selectedDayId
+            }));
+            const { error } = await supabase.from('schedule_events').insert(rows);
 
             if (error) {
               console.error('Error creating workout event:', error);
@@ -1515,18 +1541,59 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             }
           }
         } else if (workoutType === 'program') {
-          // Assign full training program
+          // Assign full training program to all selected players
           const { data: { user } } = await supabase.auth.getUser();
-          const { error } = await supabase
-            .from('training_program_assignments')
-            .insert({
-              program_id: selectedProgramId,
-              player_id: playerId,
-              start_date: dateStr,
-              assigned_by: user?.id
-            });
+          const endDateVal = programEndDate || null;
+          const assignRows = playerIds.map(pid => ({
+            program_id: selectedProgramId,
+            player_id: pid,
+            start_date: dateStr,
+            end_date: endDateVal,
+            assigned_by: user?.id
+          }));
+          const { error } = await supabase.from('training_program_assignments').insert(assignRows);
 
           if (error) throw error;
+
+          // Generate calendar events if end date and weekdays are set
+          if (programEndDate && programWeekdays.some(Boolean)) {
+            const { data: days } = await supabase
+              .from('training_days')
+              .select('id, day_number, title')
+              .eq('program_id', selectedProgramId)
+              .order('day_number');
+            const sortedDays = days || [];
+            if (sortedDays.length > 0) {
+              const program = trainingPrograms.find(p => p.id === selectedProgramId);
+              const start = new Date(dateStr + 'T00:00:00');
+              const end = new Date(programEndDate + 'T00:00:00');
+              const matchingDates = [];
+              for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                if (programWeekdays[d.getDay()]) matchingDates.push(fmtLocalDate(d));
+              }
+              const rows = [];
+              matchingDates.forEach((ds, idx) => {
+                const day = sortedDays[idx % sortedDays.length];
+                playerIds.forEach(pid => {
+                  rows.push({
+                    player_id: pid,
+                    event_type: 'workout',
+                    event_date: ds,
+                    title: day.title || `${program?.name || 'Program'} - Day ${day.day_number}`,
+                    training_program_id: selectedProgramId,
+                    training_day_id: day.id,
+                  });
+                });
+              });
+              if (rows.length > 0) {
+                const BATCH = 500;
+                for (let i = 0; i < rows.length; i += BATCH) {
+                  const { error: insErr } = await supabase.from('schedule_events').insert(rows.slice(i, i + BATCH));
+                  if (insErr) throw insErr;
+                }
+              }
+            }
+          }
         }
 
       } else if (eventType === 'meal') {
@@ -1554,33 +1621,31 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               throw mealError;
             }
 
-            // Now create schedule event referencing the new meal
-            const { error: scheduleError } = await supabase
-              .from('schedule_events')
-              .insert({
-                player_id: playerId,
-                event_type: 'meal',
-                event_date: dateStr,
-                title: newMeal.name,
-                meal_id: newMeal.id
-              });
+            // Now create schedule events referencing the new meal for all selected players
+            const mealEventRows = playerIds.map(pid => ({
+              player_id: pid,
+              event_type: 'meal',
+              event_date: dateStr,
+              title: newMeal.name,
+              meal_id: newMeal.id
+            }));
+            const { error: scheduleError } = await supabase.from('schedule_events').insert(mealEventRows);
 
             if (scheduleError) {
               console.error('Error creating meal event:', scheduleError);
               throw scheduleError;
             }
           } else {
-            // Create single meal event from existing meal
+            // Create single meal event from existing meal for all selected players
             const meal = meals.find(m => m.id === selectedMealId);
-            const { error } = await supabase
-              .from('schedule_events')
-              .insert({
-                player_id: playerId,
-                event_type: 'meal',
-                event_date: dateStr,
-                title: meal?.name,
-                meal_id: selectedMealId
-              });
+            const mealRows = playerIds.map(pid => ({
+              player_id: pid,
+              event_type: 'meal',
+              event_date: dateStr,
+              title: meal?.name,
+              meal_id: selectedMealId
+            }));
+            const { error } = await supabase.from('schedule_events').insert(mealRows);
 
             if (error) {
               console.error('Error creating meal event:', error);
@@ -1588,24 +1653,24 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
             }
           }
         } else if (mealType === 'plan') {
-          // Assign full meal plan
+          // Assign full meal plan to all selected players
           const { data: { user } } = await supabase.auth.getUser();
-          const { error } = await supabase
-            .from('meal_plan_assignments')
-            .insert({
-              meal_plan_id: selectedMealPlanId,
-              player_id: playerId,
-              start_date: dateStr,
-              assigned_by: user?.id,
-              meals_per_day: mealsPerDay,
-            });
+          const planRows = playerIds.map(pid => ({
+            meal_plan_id: selectedMealPlanId,
+            player_id: pid,
+            start_date: dateStr,
+            assigned_by: user?.id,
+            meals_per_day: mealsPerDay,
+          }));
+          const { error } = await supabase.from('meal_plan_assignments').insert(planRows);
 
           if (error) throw error;
         }
       }
 
       // Success! Close modal and refresh
-      alert('Event added successfully!');
+      const playerCount = (eventType === 'workout' || eventType === 'meal') ? playerIds.length : 1;
+      alert(playerCount > 1 ? `Event added for ${playerCount} players!` : 'Event added successfully!');
       onSuccess();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
@@ -2175,8 +2240,35 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  Program will start on {new Date(date).toLocaleDateString()}
+                  Program starts on {(typeof date === 'string' ? new Date(date + 'T00:00:00') : date).toLocaleDateString()}
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">End Date *</label>
+                <input
+                  type="date"
+                  value={programEndDate}
+                  onChange={(e) => setProgramEndDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                <p className="text-sm font-medium text-gray-700 mb-2">Repeat on:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((label, i) => (
+                    <button
+                      type="button"
+                      key={label}
+                      onClick={() => setProgramWeekdays(prev => { const next = [...prev]; next[i] = !next[i]; return next; })}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${programWeekdays[i] ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-50'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">Cycles through the program's days; loops back to Day 1 when it runs out.</p>
               </div>
             </div>
           )}
@@ -2441,7 +2533,7 @@ function AddEventPanel({ date, view, teamId, playerId, onClose, onSuccess }) {
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'existing' && !selectedDayId) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'create' && !newWorkoutData.title) ||
               (eventType === 'workout' && workoutType === 'single-day' && workoutSelectionMode === 'template' && !selectedTemplateId) ||
-              (eventType === 'workout' && workoutType === 'program' && !selectedProgramId) ||
+              (eventType === 'workout' && workoutType === 'program' && (!selectedProgramId || !programEndDate)) ||
               (eventType === 'meal' && !mealType) ||
               (eventType === 'meal' && mealType === 'single-meal' && !mealSelectionMode) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'existing' && !selectedMealId) ||
@@ -2651,12 +2743,21 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
     }
   };
 
-  const getEventColor = (eventType) => {
+  const getEventColor = (ev) => {
+    const eventType = typeof ev === 'string' ? ev : ev?.event_type;
+    if (eventType === 'workout') {
+      const cat = getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
+      switch(cat) {
+        case 'pitching': return 'from-green-50 to-green-100 border-green-200';
+        case 'hitting': return 'from-blue-50 to-blue-100 border-blue-200';
+        case 'warmup': return 'from-purple-50 to-purple-100 border-purple-200';
+        default: return 'from-orange-50 to-orange-100 border-orange-200';
+      }
+    }
     switch(eventType) {
-      case 'game': return 'from-blue-50 to-blue-100 border-blue-200';
+      case 'game': return 'from-slate-50 to-slate-100 border-slate-200';
       case 'practice': return 'from-green-50 to-green-100 border-green-200';
-      case 'workout': return 'from-purple-50 to-purple-100 border-purple-200';
-      case 'meal': return 'from-orange-50 to-orange-100 border-orange-200';
+      case 'meal': return 'from-yellow-50 to-yellow-100 border-yellow-200';
       default: return 'from-gray-50 to-gray-100 border-gray-200';
     }
   };
@@ -2664,7 +2765,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <div className={`bg-gradient-to-br ${getEventColor(event.event_type)} border-2 p-6 rounded-t-lg`}>
+        <div className={`bg-gradient-to-br ${getEventColor(event)} border-2 p-6 rounded-t-lg`}>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1">

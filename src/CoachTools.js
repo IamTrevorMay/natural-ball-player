@@ -23,7 +23,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
     const { data, error } = await supabase
       .from('users')
       .select('id, full_name, email, player_profiles!player_profiles_user_id_fkey(position, jersey_number, level), team_members(team_id, teams(name))')
-      .eq('role', 'player')
+      .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
     if (!error) setPlayers(data);
   };
@@ -187,11 +187,11 @@ function ScheduleTab({ teams }) {
               <div className="flex items-center space-x-3">
                 <span className="font-semibold text-gray-900">{event.title || event.opponent}</span>
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                  event.event_type === 'game' ? 'bg-blue-100 text-blue-700' :
+                  event.event_type === 'game' ? 'bg-slate-100 text-slate-700' :
                   event.event_type === 'practice' ? 'bg-green-100 text-green-700' :
-                  event.event_type === 'workout' ? 'bg-purple-100 text-purple-700' :
-                  event.event_type === 'tryout' ? 'bg-yellow-100 text-yellow-700' :
-                  event.event_type === 'meal' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-700'
+                  event.event_type === 'workout' ? 'bg-orange-100 text-orange-700' :
+                  event.event_type === 'tryout' ? 'bg-amber-100 text-amber-700' :
+                  event.event_type === 'meal' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'
                 }`}>{event.event_type}</span>
                 {event.is_optional && <span className="px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">Optional - RSVP</span>}
               </div>

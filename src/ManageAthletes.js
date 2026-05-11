@@ -131,7 +131,10 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     const player = rosterPlayers.find(p => p.id === playerId);
     if (!player) return;
     const profileId = await ensureProfile(player);
-    if (!profileId) return;
+    if (!profileId) {
+      alert('Could not update: failed to locate or create player profile.');
+      return;
+    }
     const { error } = await supabase.from('player_profiles').update({ [field]: value || null }).eq('id', profileId);
     if (error) {
       console.error(`Failed to update ${field}:`, error);
@@ -255,7 +258,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-white rounded-lg shadow">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
