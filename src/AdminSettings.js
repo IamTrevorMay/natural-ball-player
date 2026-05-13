@@ -2334,6 +2334,7 @@ function CreateProspectModal({ teams, onClose, onSuccess }) {
 
     try {
       const { error: insertError } = await supabase.from('prospects').insert({
+        name: formData.full_name,
         full_name: formData.full_name,
         email: formData.email || null,
         phone: formData.phone || null,
@@ -2465,6 +2466,7 @@ function EditProspectModal({ prospect, teams, onClose, onSuccess }) {
     setError('');
     try {
       const { error: updateError } = await supabase.from('prospects').update({
+        name: formData.full_name,
         full_name: formData.full_name,
         email: formData.email || null,
         phone: formData.phone || null,
