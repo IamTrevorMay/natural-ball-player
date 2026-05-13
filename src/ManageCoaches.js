@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Search } from 'lucide-react';
+import { Users, Search, Check } from 'lucide-react';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
 
 const STATUS_COLORS = {
@@ -32,12 +32,13 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
 
   const fetchCoaches = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from('users')
       .select('id, full_name, email, phone, avatar_url, coach_status, coach_sub_status, is_intern, team_members(team_id, teams(name))')
-      .or('role.eq.coach,secondary_role.eq.coach')
-      .eq('is_intern', isInternsMode)
-      .order('full_name');
+      .or('role.eq.coach,secondary_role.eq.coach');
+    if (isInternsMode) query = query.eq('is_intern', true);
+    query = query.order('full_name');
+    const { data, error } = await query;
 
     if (error) { console.error(error); setLoading(false); return; }
     setCoaches(data || []);
@@ -47,7 +48,11 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
   const handleInlineUpdate = async (coachId, field, value) => {
     const { error } = await supabase.from('users').update({ [field]: value }).eq('id', coachId);
     if (!error) {
-      setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, [field]: value } : c));
+      if (isInternsMode && field === 'is_intern' && !value) {
+        setCoaches(prev => prev.filter(c => c.id !== coachId));
+      } else {
+        setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, [field]: value } : c));
+      }
     }
   };
 
@@ -138,7 +143,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Team</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Sub Status</th>
-                {isAdmin && <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">{isInternsMode ? 'Make Coach' : 'Make Intern'}</th>}
+                {isAdmin && <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Intern Status</th>}
               </tr>
             </thead>
             <tbody>
@@ -149,12 +154,17 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
                 return (
                   <tr key={coach.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-3">
-                      <button
-                        onClick={() => onNavigateToProfile && onNavigateToProfile(coach.id)}
-                        className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        {firstName}
-                      </button>
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          onClick={() => onNavigateToProfile && onNavigateToProfile(coach.id)}
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {firstName}
+                        </button>
+                        {!isInternsMode && coach.is_intern && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Intern</span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 px-3 font-semibold text-gray-900">{lastName}</td>
                     <td className="py-3 px-3 text-gray-600 text-xs">{teamNames.join(', ') || '—'}</td>
@@ -180,16 +190,25 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
                     </td>
                     {isAdmin && (
                       <td className="py-3 px-3">
-                        <button
-                          onClick={() => {
-                            const next = !coach.is_intern;
-                            handleInlineUpdate(coach.id, 'is_intern', next);
-                            setCoaches(prev => prev.filter(c => c.id !== coach.id));
-                          }}
-                          className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
-                        >
-                          {coach.is_intern ? 'Move to Coaches' : 'Move to Interns'}
-                        </button>
+                        {isInternsMode ? (
+                          <button
+                            onClick={() => handleInlineUpdate(coach.id, 'is_intern', false)}
+                            className="text-xs px-2 py-1 rounded-full bg-red-50 text-red-600 hover:bg-red-100 transition"
+                          >
+                            Remove Intern Flag
+                          </button>
+                        ) : coach.is_intern ? (
+                          <span className="inline-flex items-center text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700">
+                            <Check size={12} className="mr-1" /> Intern
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleInlineUpdate(coach.id, 'is_intern', true)}
+                            className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
+                          >
+                            Mark as Intern
+                          </button>
+                        )}
                       </td>
                     )}
                   </tr>

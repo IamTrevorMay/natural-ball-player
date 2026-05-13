@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail } from 'lucide-react';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -3027,6 +3027,7 @@ function InventoryTab() {
 // ============================================
 function WaiversTab({ players, waiverSignatures }) {
   const [statusFilter, setStatusFilter] = useState('all');
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
   const waiverMap = {};
   waiverSignatures.forEach(w => { waiverMap[w.user_id] = w; });
@@ -3046,6 +3047,21 @@ function WaiversTab({ players, waiverSignatures }) {
 
   const signedCount = players.filter(p => waiverMap[p.id]).length;
   const unsignedCount = players.length - signedCount;
+  const unsignedPlayers = players.filter(p => !waiverMap[p.id]);
+  const unsignedEmails = unsignedPlayers.map(p => p.email).filter(Boolean);
+
+  const handleCopyEmails = () => {
+    navigator.clipboard.writeText(unsignedEmails.join(', '));
+    setCopyFeedback(true);
+    setTimeout(() => setCopyFeedback(false), 2000);
+  };
+
+  const handleEmailAll = () => {
+    const bcc = unsignedEmails.join(',');
+    const subject = encodeURIComponent('Reminder: Please Sign Your Waiver');
+    const body = encodeURIComponent('Hi,\n\nThis is a reminder to please sign your waiver at your earliest convenience.\n\nThank you!');
+    window.open(`mailto:?bcc=${bcc}&subject=${subject}&body=${body}`);
+  };
 
   return (
     <div>
@@ -3064,6 +3080,24 @@ function WaiversTab({ players, waiverSignatures }) {
           </select>
         </div>
       </div>
+      {unsignedEmails.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            onClick={handleCopyEmails}
+            className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition"
+          >
+            <ClipboardList size={13} />
+            <span>{copyFeedback ? 'Copied!' : 'Copy Unsigned Emails'}</span>
+          </button>
+          <button
+            onClick={handleEmailAll}
+            className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+          >
+            <Mail size={13} />
+            <span>Email All Unsigned</span>
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -3072,6 +3106,7 @@ function WaiversTab({ players, waiverSignatures }) {
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Email</th>
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Status</th>
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Date Signed</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -3097,12 +3132,23 @@ function WaiversTab({ players, waiverSignatures }) {
                   <td className="py-3 px-4 text-sm text-gray-600">
                     {waiver ? new Date(waiver.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
                   </td>
+                  <td className="py-3 px-4">
+                    {!waiver && player.email && (
+                      <a
+                        href={`mailto:${player.email}?subject=${encodeURIComponent('Reminder: Please Sign Your Waiver')}&body=${encodeURIComponent(`Hi ${player.full_name || ''},\n\nThis is a reminder to please sign your waiver at your earliest convenience.\n\nThank you!`)}`}
+                        className="inline-flex items-center space-x-1 text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        <Mail size={12} />
+                        <span>Remind</span>
+                      </a>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-8 text-center text-gray-500">No players found.</td>
+                <td colSpan={5} className="py-8 text-center text-gray-500">No players found.</td>
               </tr>
             )}
           </tbody>

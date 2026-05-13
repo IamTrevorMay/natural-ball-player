@@ -45,6 +45,9 @@ export default function WorkSchedule({ userId, userRole }) {
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [viewMode, setViewMode] = useState('week');
+  const [selectedDay, setSelectedDay] = useState(() => new Date());
+
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -81,9 +84,28 @@ export default function WorkSchedule({ userId, userRole }) {
     return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); };
   }, [fetchAll]);
 
-  const goPrev = () => setWeekStart(addDays(weekStart, -7));
-  const goNext = () => setWeekStart(addDays(weekStart, 7));
-  const goToday = () => setWeekStart(startOfWeek(new Date()));
+  const goPrev = () => {
+    if (viewMode === 'day') {
+      const nd = addDays(selectedDay, -1);
+      setSelectedDay(nd);
+      if (fmtLocalDate(nd) < fmtLocalDate(weekStart)) setWeekStart(startOfWeek(nd));
+    } else {
+      setWeekStart(addDays(weekStart, -7));
+    }
+  };
+  const goNext = () => {
+    if (viewMode === 'day') {
+      const nd = addDays(selectedDay, 1);
+      setSelectedDay(nd);
+      if (fmtLocalDate(nd) > fmtLocalDate(addDays(weekStart, 6))) setWeekStart(startOfWeek(nd));
+    } else {
+      setWeekStart(addDays(weekStart, 7));
+    }
+  };
+  const goToday = () => {
+    setWeekStart(startOfWeek(new Date()));
+    setSelectedDay(new Date());
+  };
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
@@ -138,9 +160,27 @@ export default function WorkSchedule({ userId, userRole }) {
           <button onClick={goPrev} className="p-2 hover:bg-gray-100 rounded-lg" title="Previous week"><ChevronLeft size={18} /></button>
           <button onClick={goToday} className="px-3 py-1.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 rounded-lg">Today</button>
           <button onClick={goNext} className="p-2 hover:bg-gray-100 rounded-lg" title="Next week"><ChevronRight size={18} /></button>
-          <h3 className="text-lg font-semibold text-gray-900 ml-2">{weekRangeLabel}</h3>
+          <h3 className="text-lg font-semibold text-gray-900 ml-2">
+            {viewMode === 'day'
+              ? selectedDay.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
+              : weekRangeLabel}
+          </h3>
         </div>
         <div className="flex items-center space-x-3">
+          <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('week')}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode === 'week' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              Week
+            </button>
+            <button
+              onClick={() => { setViewMode('day'); setSelectedDay(new Date()); }}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode === 'day' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              Day
+            </button>
+          </div>
           <div className="hidden md:flex items-center space-x-3 text-xs text-gray-600">
             <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-indigo-500 inline-block" /><span>Staff</span></span>
             <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /><span>Facility</span></span>
@@ -160,6 +200,17 @@ export default function WorkSchedule({ userId, userRole }) {
 
       {loading ? (
         <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">Loading...</div>
+      ) : viewMode === 'day' ? (
+        <DailyTimeline
+          day={selectedDay}
+          staffEvents={staffEvents}
+          facilityEvents={facilityEvents}
+          staff={staff}
+          assignments={assignments}
+          assignmentsByEvent={assignmentsByEvent}
+          myAssignedEventIds={myAssignedEventIds}
+          onSelectEvent={setSelectedEvent}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
           {days.map((day, idx) => {
@@ -273,6 +324,157 @@ export default function WorkSchedule({ userId, userRole }) {
           createdBy={userId}
         />
       )}
+    </div>
+  );
+}
+
+function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, onSelectEvent }) {
+  const dayStr = fmtLocalDate(day);
+  const START_HOUR = 6;
+  const END_HOUR = 22;
+  const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
+  const HOUR_HEIGHT = 60;
+
+  const dayStaffEvents = staffEvents.filter(e => fmtLocalDate(new Date(e.start_at)) === dayStr);
+  const dayFacilityEvents = facilityEvents.filter(f => f.event_date === dayStr);
+
+  const staffWithEvents = {};
+  dayStaffEvents.forEach(ev => {
+    const evAssigns = assignmentsByEvent[ev.id] || [];
+    if (evAssigns.length === 0) {
+      const key = '__unassigned__';
+      if (!staffWithEvents[key]) staffWithEvents[key] = { name: 'Unassigned', avatar_url: null, events: [] };
+      staffWithEvents[key].events.push(ev);
+    } else {
+      evAssigns.forEach(a => {
+        const key = a.user_id;
+        if (!staffWithEvents[key]) staffWithEvents[key] = { name: a.user?.full_name || 'Unknown', avatar_url: a.user?.avatar_url, events: [] };
+        staffWithEvents[key].events.push(ev);
+      });
+    }
+  });
+
+  const staffRows = staff.map(s => ({
+    id: s.id,
+    name: s.full_name,
+    avatar_url: s.avatar_url,
+    events: staffWithEvents[s.id]?.events || [],
+  }));
+
+  const scheduledCount = staffRows.filter(r => r.events.length > 0).length;
+  const unscheduledCount = staffRows.length - scheduledCount;
+
+  const getPosition = (startISO, endISO) => {
+    const s = new Date(startISO);
+    const e = new Date(endISO);
+    const startMin = s.getHours() * 60 + s.getMinutes();
+    const endMin = e.getHours() * 60 + e.getMinutes();
+    const top = Math.max(0, (startMin - START_HOUR * 60)) * (HOUR_HEIGHT / 60);
+    const height = Math.max(HOUR_HEIGHT / 4, (endMin - startMin) * (HOUR_HEIGHT / 60));
+    return { top, height };
+  };
+
+  const isToday = fmtLocalDate(day) === fmtLocalDate(new Date());
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const nowTop = (nowMin - START_HOUR * 60) * (HOUR_HEIGHT / 60);
+  const showNowLine = isToday && nowMin >= START_HOUR * 60 && nowMin <= END_HOUR * 60;
+
+  return (
+    <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="overflow-x-auto">
+        <div className="min-w-[700px]">
+          {/* Header row with staff names */}
+          <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
+            <div className="w-16 flex-shrink-0 p-2 text-xs font-semibold text-gray-500 border-r border-gray-200">Time</div>
+            {staffRows.map(row => (
+              <div key={row.id} className="flex-1 min-w-[120px] p-2 border-r border-gray-100 text-center">
+                <div className="flex flex-col items-center">
+                  {row.avatar_url ? (
+                    <img src={row.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover mb-1" />
+                  ) : (
+                    <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold mb-1">
+                      {row.name.charAt(0)}
+                    </div>
+                  )}
+                  <span className="text-xs font-medium text-gray-700 truncate max-w-[100px]">{row.name.split(' ')[0]}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Timeline body */}
+          <div className="flex relative" style={{ height: HOURS.length * HOUR_HEIGHT }}>
+            {/* Time labels */}
+            <div className="w-16 flex-shrink-0 border-r border-gray-200 relative">
+              {HOURS.map(h => (
+                <div key={h} className="absolute w-full text-right pr-2 text-[10px] text-gray-400 -translate-y-1/2" style={{ top: (h - START_HOUR) * HOUR_HEIGHT }}>
+                  {h % 12 || 12}{h >= 12 ? 'p' : 'a'}
+                </div>
+              ))}
+            </div>
+
+            {/* Staff columns */}
+            {staffRows.map(row => (
+              <div key={row.id} className="flex-1 min-w-[120px] border-r border-gray-100 relative">
+                {/* Hour grid lines */}
+                {HOURS.map(h => (
+                  <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - START_HOUR) * HOUR_HEIGHT }} />
+                ))}
+                {/* Event blocks */}
+                {row.events.map(ev => {
+                  const { top, height } = getPosition(ev.start_at, ev.end_at);
+                  const assigned = myAssignedEventIds.has(ev.id);
+                  const durationH = (new Date(ev.end_at) - new Date(ev.start_at)) / 3600000;
+                  return (
+                    <button
+                      key={ev.id}
+                      onClick={() => onSelectEvent(ev)}
+                      className={`absolute left-1 right-1 rounded-md px-1.5 py-0.5 text-[10px] overflow-hidden hover:shadow-md transition z-[5] ${
+                        assigned ? 'bg-indigo-200 border border-indigo-400 text-indigo-800' : 'bg-indigo-100 border border-indigo-300 text-indigo-700'
+                      }`}
+                      style={{ top, height: Math.max(height, 20) }}
+                      title={`${ev.title} (${Math.round(durationH * 10) / 10}h)`}
+                    >
+                      <div className="font-medium truncate">{ev.title}</div>
+                      {height > 30 && (
+                        <div className="text-indigo-500 truncate">
+                          {formatTimeFromTS(ev.start_at)} – {formatTimeFromTS(ev.end_at)}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+
+            {/* Now line */}
+            {showNowLine && (
+              <div className="absolute left-0 right-0 z-20 flex items-center pointer-events-none" style={{ top: nowTop }}>
+                <div className="w-2 h-2 bg-red-500 rounded-full -ml-1" />
+                <div className="flex-1 border-t-2 border-red-500" />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Summary footer */}
+      <div className="border-t border-gray-200 p-3 bg-gray-50 flex items-center justify-between text-xs text-gray-600">
+        <div className="flex items-center space-x-4">
+          <span className="flex items-center space-x-1">
+            <span className="w-2.5 h-2.5 rounded bg-indigo-500 inline-block" />
+            <span>{scheduledCount} scheduled</span>
+          </span>
+          <span className="text-gray-400">{unscheduledCount} unscheduled</span>
+        </div>
+        {dayFacilityEvents.length > 0 && (
+          <div className="flex items-center space-x-1 text-purple-600">
+            <Building size={12} />
+            <span>{dayFacilityEvents.length} facility event{dayFacilityEvents.length !== 1 ? 's' : ''}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

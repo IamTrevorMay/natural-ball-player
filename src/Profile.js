@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 
@@ -22,6 +22,7 @@ const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 
 const PROFILE_TABS = [
   { key: 'general', label: 'General' },
+  { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
   { key: 'whoop', label: 'Whoop' },
   { key: 'hittrax', label: 'Hittrax' },
@@ -114,6 +115,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [editingPtVisitId, setEditingPtVisitId] = useState(null);
   const [ptDraft, setPtDraft] = useState({ visit_date: '', visit_type: 'Treatment', body_area: '', pain_level: '', content: '', exercises: [], follow_up_at: '' });
   const [savingPtVisit, setSavingPtVisit] = useState(false);
+  const [scheduleEvents, setScheduleEvents] = useState([]);
+  const [scheduleDate, setScheduleDate] = useState(new Date());
+  const [scheduleSelectedDay, setScheduleSelectedDay] = useState(null);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -632,6 +636,56 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     }
   };
 
+  const fetchScheduleEvents = async (refDate) => {
+    try {
+      const d = refDate || scheduleDate;
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const start = new Date(year, month, 1).toISOString().split('T')[0];
+      const end = new Date(year, month + 1, 0).toISOString().split('T')[0];
+      const { data, error } = await supabase
+        .from('schedule_events')
+        .select('*')
+        .contains('player_ids', [userId])
+        .gte('event_date', start)
+        .lte('event_date', end)
+        .order('event_date');
+      if (error) throw error;
+      setScheduleEvents(data || []);
+    } catch (error) {
+      console.error('Error fetching schedule events:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (activeProfileTab === 'schedule') fetchScheduleEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfileTab, scheduleDate, userId]);
+
+  const parseExerciseNotesProfile = (notes) => {
+    if (!notes) return { general: '', exercises: [] };
+    const delimiter = '--- Exercises ---';
+    const idx = notes.indexOf(delimiter);
+    if (idx === -1) return { general: notes.trim(), exercises: [] };
+    const general = notes.slice(0, idx).trim();
+    const exerciseBlock = notes.slice(idx + delimiter.length).trim();
+    const exercises = exerciseBlock.split('\n').filter(Boolean).map(line => {
+      const parts = line.split('|').map(s => s.trim());
+      const name = parts[0] || '';
+      let sets = '', reps = '', link = '';
+      if (parts[1]) {
+        const match = parts[1].match(/(\d+)\s*x\s*(\d+)/i);
+        if (match) { sets = match[1]; reps = match[2]; }
+        else { sets = parts[1]; }
+      }
+      if (parts[2] && (parts[2].startsWith('http') || parts[2].startsWith('www'))) {
+        link = parts[2];
+      }
+      return { name, sets, reps, link };
+    }).filter(e => e.name);
+    return { general, exercises };
+  };
+
   const startNewPtVisit = () => {
     setEditingPtVisitId('new');
     const today = new Date().toISOString().split('T')[0];
@@ -1111,7 +1165,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -2022,6 +2076,151 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
               )}
             </div>
           )}
+
+          {activeProfileTab === 'schedule' && (() => {
+            const year = scheduleDate.getFullYear();
+            const month = scheduleDate.getMonth();
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const calendarCells = [];
+            for (let i = 0; i < firstDay; i++) calendarCells.push(null);
+            for (let d = 1; d <= daysInMonth; d++) calendarCells.push(d);
+            const eventsByDay = {};
+            scheduleEvents.forEach(ev => {
+              const day = parseInt(ev.event_date?.split('-')[2], 10);
+              if (!eventsByDay[day]) eventsByDay[day] = [];
+              eventsByDay[day].push(ev);
+            });
+            const dotColor = (type) => {
+              switch (type) {
+                case 'workout': return 'bg-orange-400';
+                case 'game': return 'bg-slate-500';
+                case 'practice': return 'bg-green-400';
+                case 'meal': return 'bg-yellow-400';
+                default: return 'bg-blue-400';
+              }
+            };
+            const today = new Date();
+            const isToday = (d) => d && today.getFullYear() === year && today.getMonth() === month && today.getDate() === d;
+
+            return (
+              <div className="space-y-4">
+                {/* Month Navigation */}
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => { const nd = new Date(year, month - 1, 1); setScheduleDate(nd); setScheduleSelectedDay(null); }}
+                    className="p-1 rounded hover:bg-gray-100"
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
+                  <h4 className="text-lg font-semibold text-gray-900">
+                    {scheduleDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </h4>
+                  <button
+                    onClick={() => { const nd = new Date(year, month + 1, 1); setScheduleDate(nd); setScheduleSelectedDay(null); }}
+                    className="p-1 rounded hover:bg-gray-100"
+                  >
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
+
+                {/* Calendar Grid */}
+                <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden border border-gray-200">
+                  {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                    <div key={d} className="bg-gray-50 text-center text-xs font-semibold text-gray-500 py-2">{d}</div>
+                  ))}
+                  {calendarCells.map((day, i) => {
+                    const dayEvents = day ? (eventsByDay[day] || []) : [];
+                    const selected = scheduleSelectedDay === day;
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => day && setScheduleSelectedDay(day === scheduleSelectedDay ? null : day)}
+                        className={`bg-white min-h-[52px] p-1 cursor-pointer transition ${
+                          !day ? 'bg-gray-50' : ''
+                        } ${selected ? 'ring-2 ring-blue-500 ring-inset' : ''} ${
+                          isToday(day) ? 'bg-blue-50' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        {day && (
+                          <>
+                            <div className={`text-xs font-medium ${isToday(day) ? 'text-blue-700 font-bold' : 'text-gray-700'}`}>{day}</div>
+                            {dayEvents.length > 0 && (
+                              <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                {dayEvents.slice(0, 4).map((ev, j) => (
+                                  <div key={j} className={`w-1.5 h-1.5 rounded-full ${dotColor(ev.event_type)}`} title={ev.title} />
+                                ))}
+                                {dayEvents.length > 4 && <span className="text-[8px] text-gray-400">+{dayEvents.length - 4}</span>}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Selected Day Events */}
+                {scheduleSelectedDay && (
+                  <div className="space-y-2">
+                    <h5 className="text-sm font-semibold text-gray-700">
+                      {new Date(year, month, scheduleSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                    </h5>
+                    {(eventsByDay[scheduleSelectedDay] || []).length === 0 ? (
+                      <p className="text-sm text-gray-400 py-4 text-center">No events scheduled</p>
+                    ) : (
+                      (eventsByDay[scheduleSelectedDay] || []).map((ev, i) => {
+                        const { general, exercises } = parseExerciseNotesProfile(ev.notes);
+                        return (
+                          <div key={i} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <div className={`w-2.5 h-2.5 rounded-full ${dotColor(ev.event_type)}`} />
+                              <span className="font-medium text-sm text-gray-900">{ev.title || ev.opponent || ev.event_type}</span>
+                              <span className="text-xs text-gray-400 capitalize">{ev.event_type}</span>
+                            </div>
+                            {ev.start_time && (
+                              <div className="text-xs text-gray-500">
+                                {ev.start_time}{ev.end_time ? ` – ${ev.end_time}` : ''}
+                              </div>
+                            )}
+                            {general && (
+                              <div className="text-xs text-gray-600 bg-gray-50 rounded p-2 whitespace-pre-wrap">{general}</div>
+                            )}
+                            {exercises.length > 0 && (
+                              <div className="p-2 bg-blue-50 rounded border border-blue-100 space-y-1.5">
+                                <div className="text-xs font-semibold text-blue-700">Exercises</div>
+                                {exercises.map((ex, j) => (
+                                  <div key={j} className="bg-white rounded p-2 border border-blue-100 flex items-center justify-between text-xs">
+                                    <div>
+                                      <span className="font-medium text-gray-900">{ex.name}</span>
+                                      {(ex.sets || ex.reps) && (
+                                        <span className="text-gray-500 ml-1.5">
+                                          {ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {ex.link && (
+                                      <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2">
+                                        <ExternalLink size={12} />
+                                      </a>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {scheduleEvents.length === 0 && !scheduleSelectedDay && (
+                  <p className="text-center text-gray-400 text-sm py-4">No events this month</p>
+                )}
+              </div>
+            );
+          })()}
 
           {activeProfileTab === 'general' && (
           <>

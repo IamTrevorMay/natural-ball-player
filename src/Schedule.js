@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 
 // Categorize workout events by title for color-coding
@@ -1682,8 +1682,8 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between z-10">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+        <div className="bg-white border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <div>
             <h3 className="text-xl font-bold text-gray-900">Add Event</h3>
             <p className="text-sm text-gray-600 mt-1">
@@ -1695,7 +1695,7 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
           {/* Event Type Selection */}
           {!eventType && (
             <div className="space-y-3">
@@ -2518,7 +2518,7 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
         </div>
 
         {/* Action Buttons */}
-        <div className="border-t border-gray-200 p-6 flex space-x-3">
+        <div className="border-t border-gray-200 p-6 flex space-x-3 flex-shrink-0">
           <button
             onClick={onClose}
             className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition"
@@ -2542,12 +2542,42 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
             }
             className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
           >
-            {loading ? 'Adding...' : 'Add Event'}
+            {loading ? 'Saving...' : eventType === 'workout' ? 'Save Programming' : 'Add Event'}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+// ============================================
+// EXERCISE NOTES PARSER
+// ============================================
+
+function parseExerciseNotes(notes) {
+  if (!notes) return { general: '', exercises: [] };
+  const delimiter = '--- Exercises ---';
+  const idx = notes.indexOf(delimiter);
+  if (idx === -1) return { general: notes.trim(), exercises: [] };
+  const general = notes.slice(0, idx).trim();
+  const exerciseBlock = notes.slice(idx + delimiter.length).trim();
+  const exercises = exerciseBlock.split('\n').filter(Boolean).map(line => {
+    // Format: "Exercise Name | 3x10 | https://link" or "Exercise Name | 3 sets x 10 reps"
+    const parts = line.split('|').map(s => s.trim());
+    const name = parts[0] || '';
+    let sets = '', reps = '', link = '';
+    if (parts[1]) {
+      const setsReps = parts[1];
+      const match = setsReps.match(/(\d+)\s*x\s*(\d+)/i);
+      if (match) { sets = match[1]; reps = match[2]; }
+      else { sets = setsReps; }
+    }
+    if (parts[2] && (parts[2].startsWith('http') || parts[2].startsWith('www'))) {
+      link = parts[2];
+    }
+    return { name, sets, reps, link };
+  }).filter(e => e.name);
+  return { general, exercises };
 }
 
 // ============================================
@@ -2764,8 +2794,8 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <div className={`bg-gradient-to-br ${getEventColor(event)} border-2 p-6 rounded-t-lg`}>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
+        <div className={`bg-gradient-to-br ${getEventColor(event)} border-2 p-6 rounded-t-lg flex-shrink-0`}>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1">
@@ -2781,7 +2811,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
           </div>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {editing ? (
             // EDIT MODE
             <div className="space-y-4">
@@ -3011,12 +3041,49 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
                 </div>
               )}
 
-              {event.notes && (
-                <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="text-xs font-semibold text-gray-600 mb-1">Notes</div>
-                  <div className="text-sm text-gray-900">{event.notes}</div>
-                </div>
-              )}
+              {event.notes && (() => {
+                const { general, exercises } = parseExerciseNotes(event.notes);
+                return (
+                  <div className="mt-4 space-y-3">
+                    {general && (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <div className="text-xs font-semibold text-gray-600 mb-1">Notes</div>
+                        <div className="text-sm text-gray-900 whitespace-pre-wrap">{general}</div>
+                      </div>
+                    )}
+                    {exercises.length > 0 && (
+                      <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                        <div className="text-xs font-semibold text-blue-700 mb-2">Exercises</div>
+                        <div className="space-y-2">
+                          {exercises.map((ex, i) => (
+                            <div key={i} className="bg-white rounded-md p-2.5 border border-blue-100 flex items-center justify-between">
+                              <div>
+                                <div className="text-sm font-medium text-gray-900">{ex.name}</div>
+                                {(ex.sets || ex.reps) && (
+                                  <div className="text-xs text-gray-500 mt-0.5">
+                                    {ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}
+                                  </div>
+                                )}
+                              </div>
+                              {ex.link && (
+                                <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2 flex-shrink-0">
+                                  <ExternalLink size={14} />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {!general && exercises.length === 0 && (
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                        <div className="text-xs font-semibold text-gray-600 mb-1">Notes</div>
+                        <div className="text-sm text-gray-900 whitespace-pre-wrap">{event.notes}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="flex space-x-3 pt-4 border-t border-gray-200">
                 <button
