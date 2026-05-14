@@ -65,6 +65,8 @@ export default function Schedule({ userId, userRole }) {
   const [laneDate, setLaneDate] = useState(fmtLocalDate(new Date()));
   const [coachesCollapsed, setCoachesCollapsed] = useState(false);
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
+  const [staffScheduleEvents, setStaffScheduleEvents] = useState([]);
+  const [staffAssignments, setStaffAssignments] = useState([]);
 
   useEffect(() => {
     fetchTeams();
@@ -93,6 +95,13 @@ export default function Schedule({ userId, userRole }) {
       fetchCoaches();
     }
   }, [view, selectedDate]);
+
+  // Fetch staff schedule for lane view
+  useEffect(() => {
+    if (view === 'facility' && viewMode === 'lanes' && laneDate) {
+      fetchStaffSchedule(laneDate);
+    }
+  }, [view, viewMode, laneDate]);
 
   // Sync selectedDate month when laneDate changes to a different month
   useEffect(() => {
@@ -238,6 +247,18 @@ export default function Schedule({ userId, userRole }) {
   const fetchCoaches = async () => {
     const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role').in('role', ['coach', 'admin']).order('full_name');
     setCoaches(data || []);
+  };
+
+  const fetchStaffSchedule = async (dateStr) => {
+    // Build day boundaries in UTC for the given local date
+    const dayStart = new Date(dateStr + 'T00:00:00');
+    const dayEnd = new Date(dateStr + 'T23:59:59');
+    const [evRes, asgRes] = await Promise.all([
+      supabase.from('staff_schedule_events').select('*').gte('start_at', dayStart.toISOString()).lte('start_at', dayEnd.toISOString()).order('start_at'),
+      supabase.from('staff_schedule_assignments').select('id, event_id, user_id, role, user:user_id(full_name, avatar_url)'),
+    ]);
+    setStaffScheduleEvents(evRes.data || []);
+    setStaffAssignments(asgRes.data || []);
   };
 
   const fetchCoachSlots = async (coachId) => {
@@ -519,6 +540,9 @@ export default function Schedule({ userId, userRole }) {
                     canManage={canManageCalendar()}
                     onCellClick={(prefill) => canManageCalendar() && setShowAddFacilityEvent(prefill)}
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
+                    staffEvents={staffScheduleEvents}
+                    staffAssignments={staffAssignments}
+                    coaches={coaches}
                   />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} onEventDrop={async (eventId, newDate) => {
@@ -1153,8 +1177,8 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick }) {
-  const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coaches = [] }) {
+  const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
   // Generate 15-minute time slots from 6:00 AM to 10:00 PM
   const timeSlots = [];
@@ -1339,6 +1363,82 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                 </tr>
               ));
             })}
+            {/* Staff Schedule separator */}
+            {coaches.length > 0 && (
+              <tr>
+                <td
+                  colSpan={timeSlots.length + 1}
+                  className="bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 sticky left-0"
+                >
+                  Staff Schedule
+                </td>
+              </tr>
+            )}
+            {/* Staff rows */}
+            {coaches.map((coach) => {
+              // Find events assigned to this coach
+              const coachEventIds = staffAssignments
+                .filter(a => a.user_id === coach.id)
+                .map(a => a.event_id);
+              const coachStaffEvents = staffEvents.filter(ev => coachEventIds.includes(ev.id));
+
+              // Convert ISO timestamps to slot indices
+              const entries = coachStaffEvents.map(ev => {
+                const start = new Date(ev.start_at);
+                const end = new Date(ev.end_at);
+                const startIdx = (start.getHours() - 6) * 4 + Math.floor(start.getMinutes() / 15);
+                const endIdx = (end.getHours() - 6) * 4 + Math.floor(end.getMinutes() / 15);
+                return { startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), event: ev };
+              }).filter(e => e.startIdx >= 0 && e.startIdx < timeSlots.length);
+
+              const tracks = assignTracks(entries);
+              const renderTracks = tracks.length === 0 ? [[]] : tracks;
+
+              return renderTracks.map((track, trackIdx) => (
+                <tr key={`staff-${coach.id}-${trackIdx}`}>
+                  {trackIdx === 0 && (
+                    <td
+                      rowSpan={renderTracks.length}
+                      className="border border-indigo-200 bg-indigo-50 px-2 py-2 text-xs font-semibold text-indigo-700 sticky left-0 z-10"
+                      style={{ width: 130, minWidth: 130 }}
+                    >
+                      {coach.full_name.split(' ')[0]}
+                    </td>
+                  )}
+                  {timeSlots.map((slot, slotIdx) => {
+                    const entry = track.find(e => e.startIdx === slotIdx);
+                    if (entry) {
+                      return (
+                        <td
+                          key={slot}
+                          colSpan={entry.span}
+                          className="border border-indigo-200 p-0.5 align-top"
+                          style={{ width: SLOT_WIDTH * entry.span }}
+                        >
+                          <div className="bg-indigo-100 text-indigo-800 border border-indigo-300 rounded px-1 py-1 h-full w-full text-left">
+                            <div className="font-semibold truncate text-xs">{entry.event.title}</div>
+                            <div className="truncate text-[10px] opacity-80">
+                              {new Date(entry.event.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                              {entry.event.end_at ? `–${new Date(entry.event.end_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
+                            </div>
+                          </div>
+                        </td>
+                      );
+                    }
+                    const covered = track.some(e => slotIdx > e.startIdx && slotIdx < e.startIdx + e.span);
+                    if (covered) return null;
+                    const isHour = slot.endsWith(':00');
+                    return (
+                      <td
+                        key={slot}
+                        className={`border border-indigo-100 ${isHour ? 'bg-indigo-50/30' : ''}`}
+                        style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                      />
+                    );
+                  })}
+                </tr>
+              ));
+            })}
           </tbody>
         </table>
       </div>
@@ -1355,7 +1455,7 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
   const [workoutType, setWorkoutType] = useState(null); // 'single-day', 'program'
   const [mealType, setMealType] = useState(null); // 'single-meal', 'plan'
   
-  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
   const [teamEventData, setTeamEventData] = useState({
     event_type: 'practice',
     opponent: '',
@@ -3448,7 +3548,7 @@ const PLAYER_OVERLAY_PALETTE = [
 // ============================================
 
 function AddFacilityEventPanel({ date, onClose, onSuccess }) {
-  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
   const prefill = (() => {
     if (date && typeof date === 'object' && !(date instanceof Date)) {

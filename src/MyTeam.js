@@ -12,27 +12,72 @@ export default function MyTeam({ userId, userRole }) {
   const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [recentAnnouncements, setRecentAnnouncements] = useState([]);
   const [activeTab, setActiveTab] = useState('roster');
+  const [availableTeams, setAvailableTeams] = useState([]);
+  const [selectedTeamId, setSelectedTeamId] = useState(null);
 
+  // Phase 1: Fetch teams the user has access to
   useEffect(() => {
-    fetchTeamData();
+    fetchMyTeams();
   }, [userId]);
 
-  const fetchTeamData = async () => {
+  // Phase 2: When a team is selected, fetch its details
+  useEffect(() => {
+    if (selectedTeamId) {
+      fetchTeamDetails(selectedTeamId);
+    }
+  }, [selectedTeamId]);
+
+  const fetchMyTeams = async () => {
     try {
-      // Get user's team
-      const { data: membership } = await supabase
+      // Get user's team memberships
+      const { data: memberships } = await supabase
         .from('team_members')
         .select('team_id, teams(*)')
-        .eq('user_id', userId)
-        .single();
+        .eq('user_id', userId);
 
-      if (!membership) {
+      const memberTeams = (memberships || []).map(m => m.teams).filter(Boolean);
+
+      if (memberTeams.length === 1) {
+        // Exactly one team — auto-select
+        setAvailableTeams(memberTeams);
+        setSelectedTeamId(memberTeams[0].id);
         setLoading(false);
         return;
       }
 
-      const teamId = membership.team_id;
-      setTeamData(membership.teams);
+      if (memberTeams.length > 1) {
+        // Multiple teams — show picker, auto-select first
+        setAvailableTeams(memberTeams);
+        setSelectedTeamId(memberTeams[0].id);
+        setLoading(false);
+        return;
+      }
+
+      // 0 team memberships
+      if (userRole === 'admin') {
+        // Admin with no team membership — fetch ALL teams
+        const { data: allTeams } = await supabase
+          .from('teams')
+          .select('*')
+          .order('name');
+
+        if (allTeams && allTeams.length > 0) {
+          setAvailableTeams(allTeams);
+          setSelectedTeamId(allTeams[0].id);
+        }
+      }
+      // Players/coaches with 0 teams fall through to "No Team" state
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching teams:', error);
+      setLoading(false);
+    }
+  };
+
+  const fetchTeamDetails = async (teamId) => {
+    try {
+      const team = availableTeams.find(t => t.id === teamId);
+      if (team) setTeamData(team);
 
       // Get roster (all players on team)
       const { data: players } = await supabase
@@ -127,8 +172,6 @@ export default function MyTeam({ userId, userRole }) {
 
     } catch (error) {
       console.error('Error fetching team data:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -140,7 +183,7 @@ export default function MyTeam({ userId, userRole }) {
     );
   }
 
-  if (!teamData) {
+  if (!teamData && !selectedTeamId) {
     return (
       <div className="bg-white rounded-lg shadow p-12 text-center">
         <Users size={48} className="mx-auto text-gray-300 mb-4" />
@@ -160,8 +203,8 @@ export default function MyTeam({ userId, userRole }) {
               <Users size={40} />
             </div>
             <div>
-              <h1 className="text-4xl font-bold">{teamData.name}</h1>
-              {teamData.description && (
+              <h1 className="text-4xl font-bold">{teamData?.name || 'Select a Team'}</h1>
+              {teamData?.description && (
                 <p className="text-blue-100 mt-2 text-lg">{teamData.description}</p>
               )}
               <div className="flex items-center space-x-4 mt-3 text-blue-100">
@@ -177,6 +220,18 @@ export default function MyTeam({ userId, userRole }) {
               </div>
             </div>
           </div>
+          {availableTeams.length > 1 && (
+            <select
+              value={selectedTeamId || ''}
+              onChange={(e) => setSelectedTeamId(e.target.value)}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-white/20 text-white border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 appearance-none cursor-pointer"
+              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', paddingRight: '36px' }}
+            >
+              {availableTeams.map(t => (
+                <option key={t.id} value={t.id} className="text-gray-900">{t.name}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
