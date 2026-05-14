@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
+import EmailComposeModal from './EmailComposeModal';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -36,6 +37,7 @@ const PROFILE_TABS = [
   { key: 'goals', label: 'Goals' },
   { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
+  { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
 ];
 
 const PT_STATUS_OPTIONS = ['Active', 'Pending Eval', 'In Treatment', 'Maintenance', 'Discharged'];
@@ -120,6 +122,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [scheduleDate, setScheduleDate] = useState(new Date());
   const [programmingData, setProgrammingData] = useState({ programs: [], mealPlans: [], assessments: [], loading: false });
   const [scheduleSelectedDay, setScheduleSelectedDay] = useState(null);
+  const [showEmailCompose, setShowEmailCompose] = useState(false);
+  const [communicationLogs, setCommunicationLogs] = useState([]);
+  const [loadingComms, setLoadingComms] = useState(false);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -132,6 +137,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     fetchPlayerNotes();
     fetchAssessmentData();
     fetchPtVisits();
+    fetchCommunicationLogs();
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
 
@@ -638,6 +644,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     }
   };
 
+  const fetchCommunicationLogs = async () => {
+    setLoadingComms(true);
+    try {
+      const { data, error } = await supabase
+        .from('communication_logs')
+        .select('*, sender:sent_by(full_name)')
+        .eq('player_id', userId)
+        .order('sent_at', { ascending: false });
+      if (error) throw error;
+      setCommunicationLogs(data || []);
+    } catch (error) {
+      console.error('Error fetching communication logs:', error);
+    } finally {
+      setLoadingComms(false);
+    }
+  };
+
   const fetchScheduleEvents = async (refDate) => {
     try {
       const d = refDate || scheduleDate;
@@ -1097,15 +1120,26 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             <p className="text-gray-600 mt-1">{onBack ? 'Viewing player profile' : 'Manage your personal information'}</p>
           </div>
         </div>
-        {!editing && (
-          <button
-            onClick={() => setEditing(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
-          >
-            <Edit2 size={18} />
-            <span>Edit Profile</span>
-          </button>
-        )}
+        <div className="flex items-center space-x-2">
+          {onBack && userData.email && (userRole === 'admin' || userRole === 'coach') && (
+            <button
+              onClick={() => setShowEmailCompose(true)}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition flex items-center space-x-2"
+            >
+              <Mail size={18} />
+              <span>Email Player</span>
+            </button>
+          )}
+          {!editing && (
+            <button
+              onClick={() => setEditing(true)}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+            >
+              <Edit2 size={18} />
+              <span>Edit Profile</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Profile Card */}
@@ -1240,7 +1274,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -2420,6 +2454,60 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             );
           })()}
 
+          {activeProfileTab === 'communication' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Communication History</h3>
+                {userData.email && (
+                  <button
+                    onClick={() => setShowEmailCompose(true)}
+                    className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center space-x-1"
+                  >
+                    <Mail size={16} />
+                    <span>New Email</span>
+                  </button>
+                )}
+              </div>
+
+              {loadingComms ? (
+                <p className="text-gray-500 text-sm text-center py-8">Loading communication history...</p>
+              ) : communicationLogs.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Mail size={40} className="mx-auto mb-3 text-gray-300" />
+                  <p>No emails sent yet.</p>
+                  <p className="text-sm mt-1">Use the "New Email" button to send the first email.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {communicationLogs.map(log => (
+                    <div key={log.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <h4 className="font-semibold text-gray-900 text-sm">{log.subject}</h4>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              log.status === 'sent' ? 'bg-green-100 text-green-700' :
+                              log.status === 'delivered' ? 'bg-blue-100 text-blue-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {log.status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600 whitespace-pre-wrap">{log.body}</p>
+                          <div className="flex items-center space-x-3 mt-2 text-xs text-gray-400">
+                            <span>To: {log.recipient_name} &lt;{log.recipient_email}&gt;</span>
+                            <span>By: {log.sender?.full_name || 'Unknown'}</span>
+                            <span>{new Date(log.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {activeProfileTab === 'general' && (
           <>
           {/* Contact Information */}
@@ -2751,6 +2839,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
           )}
         </div>
       </div>
+
+      {showEmailCompose && userData.email && (
+        <EmailComposeModal
+          recipientName={userData.full_name}
+          recipientEmail={userData.email}
+          playerId={userData.id}
+          onClose={() => setShowEmailCompose(false)}
+          onSent={() => fetchCommunicationLogs()}
+        />
+      )}
     </div>
   );
 }

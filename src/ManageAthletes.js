@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Search, Edit2, X, Save, AlertTriangle } from 'lucide-react';
+import { Users, Search, Edit2, X, Save, AlertTriangle, Mail } from 'lucide-react';
+import EmailComposeModal from './EmailComposeModal';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
 
 const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo', 'Base Running', 'Physical Therapy', 'Recovery', 'Mobility', 'Meal Planning', 'Stretching'];
@@ -52,6 +53,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const [teamCoachMap, setTeamCoachMap] = useState({});
   const [pendingEdits, setPendingEdits] = useState({});
   const [saving, setSaving] = useState(false);
+  const [emailTarget, setEmailTarget] = useState(null);
 
   const { options: statusOptions, addOption: addStatusOption } = useStatusOptions('status');
   const isAdmin = userRole === 'admin';
@@ -65,7 +67,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id), team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id), team_members(team_id, teams(name))')
       .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
@@ -523,22 +525,33 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                       </select>
                     </td>
                     <td className="py-3 px-2">
-                      <button
-                        onClick={() => {
-                          setEditingPlayer(player);
-                          setEditForm({
-                            position: profile.position || '',
-                            jersey_number: profile.jersey_number || '',
-                            grade: profile.grade || '',
-                            bats: profile.bats || '',
-                            throws: profile.throws || '',
-                          });
-                        }}
-                        className="text-gray-500 hover:text-blue-600 transition"
-                        title="Edit info"
-                      >
-                        <Edit2 size={14} />
-                      </button>
+                      <div className="flex items-center space-x-1">
+                        {player.email && (
+                          <button
+                            onClick={() => setEmailTarget(player)}
+                            className="text-gray-500 hover:text-blue-600 transition"
+                            title="Email player"
+                          >
+                            <Mail size={14} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            setEditingPlayer(player);
+                            setEditForm({
+                              position: profile.position || '',
+                              jersey_number: profile.jersey_number || '',
+                              grade: profile.grade || '',
+                              bats: profile.bats || '',
+                              throws: profile.throws || '',
+                            });
+                          }}
+                          className="text-gray-500 hover:text-blue-600 transition"
+                          title="Edit info"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -595,6 +608,16 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
             </div>
           </div>
         </div>
+      )}
+
+      {emailTarget && (
+        <EmailComposeModal
+          recipientName={emailTarget.full_name}
+          recipientEmail={emailTarget.email}
+          playerId={emailTarget.id}
+          onClose={() => setEmailTarget(null)}
+          onSent={() => {}}
+        />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus } from 'lucide-react';
+import EmailComposeModal from './EmailComposeModal';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -593,6 +594,7 @@ function ProspectsTab({ teamId, userId, roster }) {
   const [editingId, setEditingId] = useState(null);
   const [editNotes, setEditNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [emailTarget, setEmailTarget] = useState(null);
 
   useEffect(() => {
     fetchProspects();
@@ -602,7 +604,7 @@ function ProspectsTab({ teamId, userId, roster }) {
     try {
       const { data, error } = await supabase
         .from('prospects')
-        .select('*, users:player_id(full_name)')
+        .select('*, users:player_id(full_name, email)')
         .eq('team_id', teamId)
         .order('created_at', { ascending: false });
 
@@ -854,6 +856,15 @@ function ProspectsTab({ teamId, userId, roster }) {
                   >
                     <Edit2 size={16} />
                   </button>
+                  {prospect.users?.email && (
+                    <button
+                      onClick={() => setEmailTarget({ name: prospect.name, email: prospect.users.email, prospectId: prospect.id, playerId: prospect.player_id })}
+                      className="p-1.5 text-gray-400 hover:text-blue-600 transition"
+                      title="Email prospect"
+                    >
+                      <Mail size={16} />
+                    </button>
+                  )}
                   <button
                     onClick={() => handleDeleteProspect(prospect.id)}
                     className="p-1.5 text-gray-400 hover:text-red-600 transition"
@@ -866,6 +877,17 @@ function ProspectsTab({ teamId, userId, roster }) {
             </div>
           ))}
         </div>
+      )}
+
+      {emailTarget && (
+        <EmailComposeModal
+          recipientName={emailTarget.name}
+          recipientEmail={emailTarget.email}
+          playerId={emailTarget.playerId || null}
+          prospectId={emailTarget.prospectId || null}
+          onClose={() => setEmailTarget(null)}
+          onSent={() => {}}
+        />
       )}
     </div>
   );
