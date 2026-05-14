@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Search, Edit2, X } from 'lucide-react';
+import { Users, Search, Edit2, X, Save, AlertTriangle } from 'lucide-react';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
 
 const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo', 'Base Running', 'Physical Therapy', 'Recovery', 'Mobility', 'Meal Planning', 'Stretching'];
@@ -50,6 +50,8 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const [editingPlayer, setEditingPlayer] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [teamCoachMap, setTeamCoachMap] = useState({});
+  const [pendingEdits, setPendingEdits] = useState({});
+  const [saving, setSaving] = useState(false);
 
   const { options: statusOptions, addOption: addStatusOption } = useStatusOptions('status');
   const isAdmin = userRole === 'admin';
@@ -127,26 +129,80 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     return data.id;
   };
 
-  const handleInlineUpdate = async (playerId, field, value) => {
-    const player = rosterPlayers.find(p => p.id === playerId);
-    if (!player) return;
-    const profileId = await ensureProfile(player);
-    if (!profileId) {
-      alert('Could not update: failed to locate or create player profile.');
-      return;
-    }
-    const { error } = await supabase.from('player_profiles').update({ [field]: value || null }).eq('id', profileId);
-    if (error) {
-      console.error(`Failed to update ${field}:`, error);
-      alert(`Could not save ${field}: ${error.message}`);
-      return;
-    }
-    setRosterPlayers(prev => prev.map(p => {
-      if (p.id !== playerId) return p;
-      const prevProfile = p.player_profiles?.[0] || { id: profileId };
-      return { ...p, player_profiles: [{ ...prevProfile, id: profileId, [field]: value || null }] };
-    }));
+  const stageEdit = (playerId, field, value) => {
+    setPendingEdits(prev => {
+      const player = rosterPlayers.find(p => p.id === playerId);
+      const currentValue = player?.player_profiles?.[0]?.[field] ?? null;
+      const normalized = value === '' ? null : value;
+      const playerEdits = { ...(prev[playerId] || {}) };
+      if (normalized === currentValue) {
+        delete playerEdits[field];
+      } else {
+        playerEdits[field] = normalized;
+      }
+      const next = { ...prev };
+      if (Object.keys(playerEdits).length === 0) {
+        delete next[playerId];
+      } else {
+        next[playerId] = playerEdits;
+      }
+      return next;
+    });
   };
+
+  const stagedField = (playerId, field, fallback) => {
+    const edits = pendingEdits[playerId];
+    if (edits && Object.prototype.hasOwnProperty.call(edits, field)) {
+      return edits[field] ?? '';
+    }
+    return fallback ?? '';
+  };
+
+  const pendingChangeCount = Object.values(pendingEdits).reduce((sum, edits) => sum + Object.keys(edits).length, 0);
+  const pendingPlayerCount = Object.keys(pendingEdits).length;
+
+  const discardAll = () => {
+    if (pendingChangeCount === 0) return;
+    if (!window.confirm(`Discard ${pendingChangeCount} unsaved change${pendingChangeCount === 1 ? '' : 's'}?`)) return;
+    setPendingEdits({});
+  };
+
+  const saveAll = async () => {
+    if (pendingChangeCount === 0 || saving) return;
+    setSaving(true);
+    const entries = Object.entries(pendingEdits);
+    const updatedRoster = [...rosterPlayers];
+    for (const [playerId, edits] of entries) {
+      const player = updatedRoster.find(p => p.id === playerId);
+      if (!player) continue;
+      const profileId = await ensureProfile(player);
+      if (!profileId) {
+        alert(`Could not save ${player.full_name}: failed to locate or create player profile.`);
+        setSaving(false);
+        return;
+      }
+      const { error } = await supabase.from('player_profiles').update(edits).eq('id', profileId);
+      if (error) {
+        alert(`Failed to save ${player.full_name}: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    }
+    await fetchRosterPlayers();
+    setPendingEdits({});
+    setSaving(false);
+  };
+
+  useEffect(() => {
+    if (pendingChangeCount === 0) return undefined;
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [pendingChangeCount]);
 
   const handleAddTeam = async (playerId, teamId) => {
     if (!teamId) return;
@@ -256,6 +312,31 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
           </div>
           <p className="text-gray-600 mt-1">View and manage athlete roster</p>
         </div>
+        {pendingChangeCount > 0 && (
+          <div className="flex items-center space-x-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+            <AlertTriangle size={16} className="text-yellow-600" />
+            <span className="text-sm text-yellow-800 font-medium">
+              {pendingChangeCount} unsaved change{pendingChangeCount === 1 ? '' : 's'} across {pendingPlayerCount} athlete{pendingPlayerCount === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              onClick={discardAll}
+              disabled={saving}
+              className="px-3 py-1 text-xs font-medium text-gray-700 border border-gray-300 rounded hover:bg-gray-50 transition disabled:opacity-50"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              onClick={saveAll}
+              disabled={saving}
+              className="inline-flex items-center space-x-1 px-3 py-1 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 transition disabled:opacity-50"
+            >
+              <Save size={14} />
+              <span>{saving ? 'Saving...' : 'Save All'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow">
@@ -381,11 +462,11 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                         </select>
                       )}
                     </td>
-                    <td className="py-3 px-3">
+                    <td className={`py-3 px-3 ${pendingEdits[player.id]?.trainer_id !== undefined ? 'bg-yellow-50' : ''}`}>
                       {isAdmin ? (
                         <select
-                          value={profile.trainer_id || ''}
-                          onChange={(e) => handleInlineUpdate(player.id, 'trainer_id', e.target.value || null)}
+                          value={stagedField(player.id, 'trainer_id', profile.trainer_id) || ''}
+                          onChange={(e) => stageEdit(player.id, 'trainer_id', e.target.value || null)}
                           className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                           title={!profile.trainer_id ? `Auto: ${trainerName || '—'}` : ''}
                         >
@@ -402,39 +483,39 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3">
+                    <td className={`py-3 px-3 ${pendingEdits[player.id]?.program !== undefined ? 'bg-yellow-50' : ''}`}>
                       <select
-                        value={profile.program || ''}
-                        onChange={(e) => handleInlineUpdate(player.id, 'program', e.target.value)}
+                        value={stagedField(player.id, 'program', profile.program) || ''}
+                        onChange={(e) => stageEdit(player.id, 'program', e.target.value)}
                         className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                       >
                         <option value="">—</option>
                         {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
                     </td>
-                    <td className="py-3 px-3">
+                    <td className={`py-3 px-3 ${pendingEdits[player.id]?.level !== undefined ? 'bg-yellow-50' : ''}`}>
                       <StatusBadgeSelect
-                        value={profile.level}
+                        value={stagedField(player.id, 'level', profile.level) || ''}
                         options={LEVEL_OPTIONS}
                         colors={LEVEL_COLORS}
-                        onChange={(val) => handleInlineUpdate(player.id, 'level', val)}
+                        onChange={(val) => stageEdit(player.id, 'level', val)}
                         isAdmin={false}
                       />
                     </td>
-                    <td className="py-3 px-3">
+                    <td className={`py-3 px-3 ${pendingEdits[player.id]?.status !== undefined ? 'bg-yellow-50' : ''}`}>
                       <StatusBadgeSelect
-                        value={profile.status}
+                        value={stagedField(player.id, 'status', profile.status) || ''}
                         options={statusOptions}
                         colors={STATUS_COLORS}
-                        onChange={(val) => handleInlineUpdate(player.id, 'status', val)}
+                        onChange={(val) => stageEdit(player.id, 'status', val)}
                         onAddOption={addStatusOption}
                         isAdmin={isAdmin}
                       />
                     </td>
-                    <td className="py-3 px-3">
+                    <td className={`py-3 px-3 ${pendingEdits[player.id]?.sub_status !== undefined ? 'bg-yellow-50' : ''}`}>
                       <select
-                        value={profile.sub_status || ''}
-                        onChange={(e) => handleInlineUpdate(player.id, 'sub_status', e.target.value)}
+                        value={stagedField(player.id, 'sub_status', profile.sub_status) || ''}
+                        onChange={(e) => stageEdit(player.id, 'sub_status', e.target.value)}
                         className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                       >
                         <option value="">—</option>

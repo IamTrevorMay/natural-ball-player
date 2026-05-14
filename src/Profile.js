@@ -22,6 +22,7 @@ const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 
 const PROFILE_TABS = [
   { key: 'general', label: 'General' },
+  { key: 'programming', label: 'Programming', roles: ['admin', 'coach'] },
   { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
   { key: 'whoop', label: 'Whoop' },
@@ -117,6 +118,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [savingPtVisit, setSavingPtVisit] = useState(false);
   const [scheduleEvents, setScheduleEvents] = useState([]);
   const [scheduleDate, setScheduleDate] = useState(new Date());
+  const [programmingData, setProgrammingData] = useState({ programs: [], mealPlans: [], assessments: [], loading: false });
   const [scheduleSelectedDay, setScheduleSelectedDay] = useState(null);
   const avatarInputRef = useRef(null);
 
@@ -643,22 +645,95 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
       const month = d.getMonth();
       const start = new Date(year, month, 1).toISOString().split('T')[0];
       const end = new Date(year, month + 1, 0).toISOString().split('T')[0];
-      const { data, error } = await supabase
+      const { data: teamRows } = await supabase
+        .from('team_members')
+        .select('team_id')
+        .eq('user_id', userId);
+      const teamIds = (teamRows || []).map(r => r.team_id);
+      const playerQuery = supabase
         .from('schedule_events')
         .select('*')
-        .contains('player_ids', [userId])
+        .eq('player_id', userId)
         .gte('event_date', start)
-        .lte('event_date', end)
-        .order('event_date');
-      if (error) throw error;
-      setScheduleEvents(data || []);
+        .lte('event_date', end);
+      const teamQuery = teamIds.length > 0
+        ? supabase
+            .from('schedule_events')
+            .select('*')
+            .overlaps('team_ids', teamIds)
+            .gte('event_date', start)
+            .lte('event_date', end)
+        : Promise.resolve({ data: [] });
+      const [playerRes, teamRes] = await Promise.all([playerQuery, teamQuery]);
+      const merged = [...(playerRes.data || []), ...(teamRes.data || [])];
+      const dedup = Array.from(new Map(merged.map(e => [e.id, e])).values())
+        .sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
+      setScheduleEvents(dedup);
     } catch (error) {
       console.error('Error fetching schedule events:', error);
     }
   };
 
+  const fetchProgrammingData = async () => {
+    setProgrammingData(prev => ({ ...prev, loading: true }));
+    try {
+      const { data: teamRows } = await supabase
+        .from('team_members')
+        .select('team_id')
+        .eq('user_id', userId);
+      const teamIds = (teamRows || []).map(r => r.team_id);
+
+      const programPlayerQ = supabase
+        .from('training_program_assignments')
+        .select('id, program_id, team_id, start_date, end_date, created_at, training_programs(id, name, description, duration_weeks)')
+        .eq('player_id', userId);
+      const programTeamQ = teamIds.length > 0
+        ? supabase
+            .from('training_program_assignments')
+            .select('id, program_id, team_id, start_date, end_date, created_at, training_programs(id, name, description, duration_weeks)')
+            .in('team_id', teamIds)
+        : Promise.resolve({ data: [] });
+
+      const mealPlayerQ = supabase
+        .from('meal_plan_assignments')
+        .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description)')
+        .eq('player_id', userId);
+      const mealTeamQ = teamIds.length > 0
+        ? supabase
+            .from('meal_plan_assignments')
+            .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description)')
+            .in('team_id', teamIds)
+        : Promise.resolve({ data: [] });
+
+      const assessmentsQ = supabase
+        .from('assessment_submissions')
+        .select('id, template_id, assessment_date, notes, created_at, assessment_templates(id, name, short_name)')
+        .eq('player_id', userId)
+        .order('assessment_date', { ascending: false })
+        .limit(10);
+
+      const [pPlayer, pTeam, mPlayer, mTeam, aRes] = await Promise.all([
+        programPlayerQ, programTeamQ, mealPlayerQ, mealTeamQ, assessmentsQ,
+      ]);
+
+      const programs = Array.from(new Map(
+        [...(pPlayer.data || []), ...(pTeam.data || [])].map(r => [r.id, r])
+      ).values()).sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''));
+
+      const mealPlans = Array.from(new Map(
+        [...(mPlayer.data || []), ...(mTeam.data || [])].map(r => [r.id, r])
+      ).values()).sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''));
+
+      setProgrammingData({ programs, mealPlans, assessments: aRes.data || [], loading: false });
+    } catch (error) {
+      console.error('Error fetching programming data:', error);
+      setProgrammingData(prev => ({ ...prev, loading: false }));
+    }
+  };
+
   useEffect(() => {
     if (activeProfileTab === 'schedule') fetchScheduleEvents();
+    if (activeProfileTab === 'programming') fetchProgrammingData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProfileTab, scheduleDate, userId]);
 
@@ -1165,7 +1240,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -2217,6 +2292,129 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
                 {scheduleEvents.length === 0 && !scheduleSelectedDay && (
                   <p className="text-center text-gray-400 text-sm py-4">No events this month</p>
+                )}
+              </div>
+            );
+          })()}
+
+          {activeProfileTab === 'programming' && (() => {
+            const today = new Date().toISOString().split('T')[0];
+            const isActive = (a) => {
+              if (!a.start_date && !a.end_date) return true;
+              if (a.start_date && a.start_date > today) return false;
+              if (a.end_date && a.end_date < today) return false;
+              return true;
+            };
+            const activePrograms = (programmingData.programs || []).filter(isActive);
+            const pastPrograms = (programmingData.programs || []).filter(p => !isActive(p));
+            const activeMealPlans = (programmingData.mealPlans || []).filter(isActive);
+            const fmtDate = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+            return (
+              <div className="space-y-6">
+                {programmingData.loading && (
+                  <p className="text-sm text-gray-500">Loading programming...</p>
+                )}
+
+                {profile?.program && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">Primary Program</div>
+                    <div className="text-lg font-bold text-blue-900">{profile.program}</div>
+                  </div>
+                )}
+
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
+                    <ClipboardList size={18} className="mr-2 text-gray-500" />
+                    Active Training Programs
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-normal">{activePrograms.length}</span>
+                  </h4>
+                  {activePrograms.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-3">No active training programs.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {activePrograms.map(a => (
+                        <div key={a.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900">{a.training_programs?.name || 'Untitled program'}</div>
+                              {a.training_programs?.description && <div className="text-xs text-gray-500 mt-0.5">{a.training_programs.description}</div>}
+                            </div>
+                            <div className="text-right text-xs text-gray-500 flex-shrink-0">
+                              <div>{fmtDate(a.start_date)} – {fmtDate(a.end_date)}</div>
+                              {a.team_id && <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Team</div>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
+                    <Calendar size={18} className="mr-2 text-gray-500" />
+                    Active Meal Plans
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-normal">{activeMealPlans.length}</span>
+                  </h4>
+                  {activeMealPlans.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-3">No active meal plans.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {activeMealPlans.map(a => (
+                        <div key={a.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900">{a.meal_plans?.name || 'Untitled meal plan'}</div>
+                              {a.meal_plans?.description && <div className="text-xs text-gray-500 mt-0.5">{a.meal_plans.description}</div>}
+                            </div>
+                            <div className="text-right text-xs text-gray-500 flex-shrink-0">
+                              <div>{fmtDate(a.start_date)} – {fmtDate(a.end_date)}</div>
+                              {a.team_id && <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Team</div>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
+                    <FileText size={18} className="mr-2 text-gray-500" />
+                    Recent Assessments
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-normal">{(programmingData.assessments || []).length}</span>
+                  </h4>
+                  {(programmingData.assessments || []).length === 0 ? (
+                    <p className="text-sm text-gray-400 py-3">No assessments submitted.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {programmingData.assessments.map(a => (
+                        <div key={a.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900">{a.assessment_templates?.name || a.assessment_templates?.short_name || 'Assessment'}</div>
+                              {a.notes && <div className="text-xs text-gray-500 mt-0.5 whitespace-pre-wrap line-clamp-2">{a.notes}</div>}
+                            </div>
+                            <div className="text-xs text-gray-500 flex-shrink-0">{fmtDate(a.assessment_date)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {pastPrograms.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-500 mb-2 uppercase tracking-wide">Past Programs</h4>
+                    <div className="space-y-1.5">
+                      {pastPrograms.map(a => (
+                        <div key={a.id} className="text-xs text-gray-500 px-3 py-1.5 border border-gray-100 rounded bg-gray-50">
+                          {a.training_programs?.name || 'Untitled'} — {fmtDate(a.start_date)} to {fmtDate(a.end_date)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             );

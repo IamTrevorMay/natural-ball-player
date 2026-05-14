@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
@@ -754,25 +754,42 @@ export default function Schedule({ userId, userRole }) {
 
       {/* Event Detail/Edit Modal */}
       {showEventDetail && selectedEvent && (
-        <EventDetailModal
-          event={selectedEvent}
-          onClose={() => {
-            setShowEventDetail(false);
-            setSelectedEvent(null);
-          }}
-          onDelete={() => {
-            setShowEventDetail(false);
-            setSelectedEvent(null);
-            if (view === 'team') fetchTeamEvents();
-            else fetchPlayerEvents();
-          }}
-          onUpdate={() => {
-            setShowEventDetail(false);
-            setSelectedEvent(null);
-            if (view === 'team') fetchTeamEvents();
-            else fetchPlayerEvents();
-          }}
-        />
+        selectedEvent.event_type === 'workout' ? (
+          <WorkoutDetailModal
+            event={selectedEvent}
+            userRole={userRole}
+            onClose={() => {
+              setShowEventDetail(false);
+              setSelectedEvent(null);
+            }}
+            onDelete={() => {
+              setShowEventDetail(false);
+              setSelectedEvent(null);
+              if (view === 'team') fetchTeamEvents();
+              else fetchPlayerEvents();
+            }}
+          />
+        ) : (
+          <EventDetailModal
+            event={selectedEvent}
+            onClose={() => {
+              setShowEventDetail(false);
+              setSelectedEvent(null);
+            }}
+            onDelete={() => {
+              setShowEventDetail(false);
+              setSelectedEvent(null);
+              if (view === 'team') fetchTeamEvents();
+              else fetchPlayerEvents();
+            }}
+            onUpdate={() => {
+              setShowEventDetail(false);
+              setSelectedEvent(null);
+              if (view === 'team') fetchTeamEvents();
+              else fetchPlayerEvents();
+            }}
+          />
+        )
       )}
       </>}
 
@@ -2578,6 +2595,241 @@ function parseExerciseNotes(notes) {
     return { name, sets, reps, link };
   }).filter(e => e.name);
   return { general, exercises };
+}
+
+// ============================================
+// WORKOUT DETAIL MODAL — Traq-style structured workout view
+// ============================================
+
+const CATEGORY_LABEL = {
+  warmup: 'Warm-up',
+  hitting: 'Hitting',
+  pitching: 'Pitching',
+  fielding: 'Fielding',
+  conditioning: 'Conditioning',
+  recovery: 'Recovery',
+  strength: 'Strength',
+  mobility: 'Mobility',
+  other: 'Other',
+  general: 'Workout',
+};
+
+const CATEGORY_BAR = {
+  warmup: 'bg-amber-500',
+  hitting: 'bg-orange-500',
+  pitching: 'bg-blue-500',
+  fielding: 'bg-emerald-500',
+  conditioning: 'bg-red-500',
+  recovery: 'bg-purple-500',
+  strength: 'bg-slate-700',
+  mobility: 'bg-cyan-500',
+  other: 'bg-gray-500',
+  general: 'bg-blue-500',
+};
+
+function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
+  const [exercises, setExercises] = useState([]);
+  const [trainingDay, setTrainingDay] = useState(null);
+  const [program, setProgram] = useState(null);
+  const [generalNotes, setGeneralNotes] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const canManage = userRole === 'admin' || userRole === 'coach';
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      let loadedExercises = [];
+      if (event.training_day_id) {
+        const { data: day } = await supabase
+          .from('training_days')
+          .select('id, day_number, title, notes, program_id, training_programs(id, name, description)')
+          .eq('id', event.training_day_id)
+          .single();
+        if (day) {
+          setTrainingDay(day);
+          setProgram(day.training_programs || null);
+          if (day.notes) setGeneralNotes(day.notes);
+        }
+        const { data: ex } = await supabase
+          .from('training_exercises')
+          .select('id, day_id, category, name, description, sets, reps, weight, video_url, image_url, sort_order, rest, load, super_set')
+          .eq('day_id', event.training_day_id)
+          .order('sort_order', { ascending: true });
+        loadedExercises = ex || [];
+      }
+      if (loadedExercises.length === 0 && event.notes) {
+        const parsed = parseExerciseNotes(event.notes);
+        if (parsed.general) setGeneralNotes(parsed.general);
+        loadedExercises = (parsed.exercises || []).map((e, i) => ({
+          id: `n-${i}`,
+          name: e.name,
+          sets: e.sets,
+          reps: e.reps,
+          video_url: e.link,
+          category: 'general',
+        }));
+      }
+      setExercises(loadedExercises);
+      setLoading(false);
+    };
+    load();
+  }, [event]);
+
+  const groupedByCategory = useMemo(() => {
+    const groups = {};
+    exercises.forEach(ex => {
+      const cat = (ex.category || 'general').toLowerCase();
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(ex);
+    });
+    return groups;
+  }, [exercises]);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    const { error } = await supabase.from('schedule_events').delete().eq('id', event.id);
+    setDeleting(false);
+    if (error) {
+      alert('Could not delete: ' + error.message);
+      return;
+    }
+    onDelete && onDelete();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-5 flex items-start justify-between flex-shrink-0">
+          <div className="flex items-start space-x-3 min-w-0">
+            <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
+              <Dumbbell size={22} className="text-orange-600" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold text-gray-900 truncate">{event.title || 'Workout'}</h2>
+              <div className="text-sm text-gray-600 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>{new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                {event.event_time && <span>• {event.event_time}</span>}
+                {program?.name && <span>• {program.name}{trainingDay?.day_number ? ` — Day ${trainingDay.day_number}` : ''}</span>}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <X size={22} />
+          </button>
+        </div>
+
+        <div className="p-5 overflow-y-auto flex-1">
+          {loading ? (
+            <div className="text-center py-10 text-gray-500 text-sm">Loading workout...</div>
+          ) : (
+            <>
+              {generalNotes && (
+                <div className="mb-5 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide">Notes</div>
+                  <div className="text-sm text-gray-800 whitespace-pre-wrap">{generalNotes}</div>
+                </div>
+              )}
+
+              {exercises.length === 0 ? (
+                <div className="text-center py-10 text-gray-400 text-sm">No exercises in this workout.</div>
+              ) : (
+                Object.entries(groupedByCategory).map(([cat, exs]) => {
+                  const label = CATEGORY_LABEL[cat] || cat.charAt(0).toUpperCase() + cat.slice(1);
+                  const bar = CATEGORY_BAR[cat] || 'bg-gray-500';
+                  return (
+                    <div key={cat} className="mb-5">
+                      <div className="flex items-center mb-2">
+                        <div className={`w-1.5 h-5 rounded-sm mr-2 ${bar}`} />
+                        <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide">{label}</h3>
+                        <span className="ml-2 text-xs text-gray-400">({exs.length})</span>
+                      </div>
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-50">
+                            <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                              <th className="px-3 py-2">Exercise</th>
+                              <th className="px-3 py-2 w-16 text-center">Sets</th>
+                              <th className="px-3 py-2 w-20 text-center">Reps</th>
+                              <th className="px-3 py-2 w-24 text-center">Load</th>
+                              <th className="px-3 py-2 w-20 text-center">Rest</th>
+                              <th className="px-3 py-2 w-12 text-center">Video</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {exs.map((ex, i) => (
+                              <tr key={ex.id || i} className="border-t border-gray-100 hover:bg-gray-50">
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center">
+                                    {ex.super_set && (
+                                      <span className="mr-2 inline-flex items-center justify-center w-5 h-5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase">
+                                        {ex.super_set}
+                                      </span>
+                                    )}
+                                    <div>
+                                      <div className="font-medium text-gray-900">{ex.name}</div>
+                                      {ex.description && <div className="text-xs text-gray-500 mt-0.5">{ex.description}</div>}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{ex.sets || '—'}</td>
+                                <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{ex.reps || '—'}</td>
+                                <td className="px-3 py-2 text-center text-gray-700">{ex.load || ex.weight || '—'}</td>
+                                <td className="px-3 py-2 text-center text-gray-700">{ex.rest || '—'}</td>
+                                <td className="px-3 py-2 text-center">
+                                  {ex.video_url ? (
+                                    <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center text-blue-500 hover:text-blue-700" title="Open video">
+                                      <ExternalLink size={14} />
+                                    </a>
+                                  ) : (
+                                    <span className="text-gray-300">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="border-t border-gray-200 p-4 flex space-x-3 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50 transition">
+            Close
+          </button>
+          {canManage && (
+            <button onClick={() => setConfirmDelete(true)} disabled={deleting} className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50 flex items-center space-x-2">
+              <Trash2 size={16} />
+              <span>{deleting ? 'Deleting...' : 'Delete'}</span>
+            </button>
+          )}
+        </div>
+
+        {confirmDelete && (
+          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center rounded-lg">
+            <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Delete workout?</h3>
+              <p className="text-gray-700 text-sm mb-4">"{event.title || 'Workout'}" will be removed from the calendar. The underlying training program is not affected.</p>
+              <div className="flex space-x-3">
+                <button onClick={() => setConfirmDelete(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50 transition">
+                  Cancel
+                </button>
+                <button onClick={() => { setConfirmDelete(false); handleDelete(); }} disabled={deleting} className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50">
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ============================================

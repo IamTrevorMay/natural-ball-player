@@ -70,6 +70,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    const hash = window.location.hash || '';
+    if (hash.includes('type=recovery')) {
+      setPasswordRecovery(true);
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
@@ -200,7 +205,7 @@ function LoginPage({ onLogin }) {
     e.preventDefault();
     setForgotLoading(true);
     const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-      redirectTo: window.location.origin,
+      redirectTo: `${window.location.origin}/?type=recovery`,
     });
     setForgotLoading(false);
     if (error) {
