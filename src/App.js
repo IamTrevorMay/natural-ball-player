@@ -397,11 +397,11 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     else { setWorkPortalView(view); setCurrentPortal('work'); }
   };
 
-  if (currentPortal === 'work' && (effectiveRole === 'coach' || effectiveRole === 'admin')) {
+  if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
       <WorkPortalShell
         userId={userId}
-        userRole={effectiveRole}
+        userRole={userRole}
         userName={userName}
         userAvatar={userAvatar}
         onLogout={onLogout}
@@ -458,8 +458,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
             {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'manage-coaches' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'manage-interns' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}

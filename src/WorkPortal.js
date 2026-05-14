@@ -86,15 +86,15 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
       case 'work-messages':
         return <WorkMessages userId={userId} userRole={userRole} />;
       case 'work-admin-announcements':
-        return <WorkAdminAnnouncements userId={userId} />;
+        return userRole === 'admin' ? <WorkAdminAnnouncements userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-docs':
-        return <WorkAdminDocs userId={userId} />;
+        return userRole === 'admin' ? <WorkAdminDocs userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-payroll':
-        return <WorkAdminPayroll userId={userId} />;
+        return userRole === 'admin' ? <WorkAdminPayroll userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-hours':
-        return <WorkAdminHours userId={userId} />;
+        return userRole === 'admin' ? <WorkAdminHours userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-time-off':
-        return <WorkAdminTimeOff userId={userId} />;
+        return userRole === 'admin' ? <WorkAdminTimeOff userId={userId} /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }

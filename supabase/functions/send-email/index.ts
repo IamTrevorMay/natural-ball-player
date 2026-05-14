@@ -95,7 +95,13 @@ Deno.serve(async (req) => {
       }),
     });
 
-    const resendData = await resendRes.json();
+    // deno-lint-ignore no-explicit-any
+    let resendData: any;
+    try {
+      resendData = await resendRes.json();
+    } catch {
+      resendData = { message: `Resend returned status ${resendRes.status} with non-JSON body` };
+    }
 
     // Log to communication_logs
     const logEntry = {
@@ -111,7 +117,10 @@ Deno.serve(async (req) => {
       error_message: resendRes.ok ? null : (resendData.message || JSON.stringify(resendData)),
     };
 
-    await serviceClient.from("communication_logs").insert(logEntry);
+    const { error: logError } = await serviceClient.from("communication_logs").insert(logEntry);
+    if (logError) {
+      console.error("Failed to log communication:", logError.message);
+    }
 
     if (!resendRes.ok) {
       return new Response(

@@ -148,7 +148,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                   <div className="mt-0.5"><Plane size={16} className="text-yellow-500" /></div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-gray-900">
-                      <span className="font-medium">{t.submitter?.full_name || 'A coach'}</span> requested {t.type.toUpperCase()}
+                      <span className="font-medium">{t.submitter?.full_name || 'A coach'}</span> requested {(t.type || 'time off').toUpperCase()}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{fmtDate(t.start_date)}{t.end_date !== t.start_date && ` – ${fmtDate(t.end_date)}`}</p>
                   </div>

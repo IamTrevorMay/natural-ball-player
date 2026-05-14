@@ -140,7 +140,7 @@ export default function MyTeam({ userId, userRole }) {
       const { data: events } = await supabase
         .from('schedule_events')
         .select('*')
-        .eq('team_id', teamId)
+        .contains('team_ids', [teamId])
         .gte('event_date', fmtLocalDate(new Date()))
         .order('event_date', { ascending: true })
         .limit(5);
