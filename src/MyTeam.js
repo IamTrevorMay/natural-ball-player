@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus } from 'lucide-react';
+import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -15,6 +15,43 @@ export default function MyTeam({ userId, userRole }) {
   const [activeTab, setActiveTab] = useState('roster');
   const [availableTeams, setAvailableTeams] = useState([]);
   const [selectedTeamId, setSelectedTeamId] = useState(null);
+  const [prospects, setProspects] = useState([]);
+
+  const fetchProspects = async (teamId) => {
+    if (userRole !== 'admin' && userRole !== 'coach') return;
+    try {
+      const { data } = await supabase
+        .from('prospects')
+        .select('*, users:player_id(full_name, email)')
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: false });
+      setProspects(data || []);
+    } catch (err) {
+      console.error('Error fetching prospects:', err);
+    }
+  };
+
+  const handleProspectToggle = async (player) => {
+    const existing = prospects.find(p => p.player_id === player.id);
+    try {
+      if (existing) {
+        await supabase.from('prospects').delete().eq('id', existing.id);
+      } else {
+        await supabase.from('prospects').insert({
+          team_id: selectedTeamId,
+          player_id: player.id,
+          name: player.full_name,
+          position: player.player_profile?.position || null,
+          added_by: userId,
+        });
+      }
+      await fetchProspects(selectedTeamId);
+    } catch (err) {
+      console.error('Error toggling prospect:', err);
+    }
+  };
+
+  const prospectPlayerIds = prospects.filter(p => p.player_id).map(p => p.player_id);
 
   // Phase 1: Fetch teams the user has access to
   useEffect(() => {
@@ -171,6 +208,8 @@ export default function MyTeam({ userId, userRole }) {
         setRecentAnnouncements(announcements);
       }
 
+      await fetchProspects(teamId);
+
     } catch (error) {
       console.error('Error fetching team data:', error);
     }
@@ -264,12 +303,12 @@ export default function MyTeam({ userId, userRole }) {
         </div>
 
         <div className="p-6">
-          {activeTab === 'roster' && <RosterTab roster={roster} />}
+          {activeTab === 'roster' && <RosterTab roster={roster} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} />}
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
           {activeTab === 'prospects' && (userRole === 'admin' || userRole === 'coach') && (
-            <ProspectsTab teamId={teamData.id} userId={userId} roster={roster} />
+            <ProspectsTab teamId={teamData.id} userId={userId} roster={roster} prospects={prospects} onProspectsChange={() => fetchProspects(selectedTeamId)} />
           )}
         </div>
       </div>
@@ -281,7 +320,7 @@ export default function MyTeam({ userId, userRole }) {
 // ROSTER TAB
 // ============================================
 
-function RosterTab({ roster }) {
+function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle }) {
   const [sortBy, setSortBy] = useState('name');
   const [filterPosition, setFilterPosition] = useState('all');
 
@@ -347,7 +386,13 @@ function RosterTab({ roster }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sortedRoster.map(player => (
-            <PlayerCard key={player.id} player={player} />
+            <PlayerCard
+              key={player.id}
+              player={player}
+              isProspect={prospectPlayerIds?.includes(player.id)}
+              canManageProspects={userRole === 'admin' || userRole === 'coach'}
+              onToggleProspect={() => onProspectToggle(player)}
+            />
           ))}
         </div>
       )}
@@ -355,9 +400,9 @@ function RosterTab({ roster }) {
   );
 }
 
-function PlayerCard({ player }) {
+function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect }) {
   const profile = player.player_profile || {};
-  
+
   return (
     <div className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition border border-gray-200">
       <div className="flex items-start space-x-4">
@@ -365,7 +410,7 @@ function PlayerCard({ player }) {
         <div className="w-16 h-16 bg-blue-600 rounded-lg flex items-center justify-center text-white flex-shrink-0">
           <span className="text-2xl font-bold">{profile.jersey_number || '?'}</span>
         </div>
-        
+
         {/* Player Info */}
         <div className="flex-1 min-w-0">
           <h4 className="font-semibold text-gray-900 truncate">{player.full_name}</h4>
@@ -384,6 +429,17 @@ function PlayerCard({ player }) {
             {profile.throws && <div>Throws: {profile.throws}</div>}
           </div>
         </div>
+
+        {/* Prospect Star Toggle */}
+        {canManageProspects && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleProspect(); }}
+            className={`p-1.5 rounded-full transition flex-shrink-0 ${isProspect ? 'text-yellow-500 hover:text-yellow-600' : 'text-gray-300 hover:text-yellow-400'}`}
+            title={isProspect ? 'Remove from prospects' : 'Add to prospects'}
+          >
+            <Star size={20} fill={isProspect ? 'currentColor' : 'none'} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -585,37 +641,58 @@ function AnnouncementCard({ announcement }) {
 // PROSPECTS TAB (Coach/Admin Only)
 // ============================================
 
-function ProspectsTab({ teamId, userId, roster }) {
-  const [prospects, setProspects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [addMode, setAddMode] = useState(null); // null, 'roster', 'external'
+function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) {
+  const [addMode, setAddMode] = useState(null); // null, 'member', 'external'
   const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '', position: '' });
   const [hoveredPosition, setHoveredPosition] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editNotes, setEditNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [emailTarget, setEmailTarget] = useState(null);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [memberResults, setMemberResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const memberDropdownRef = useRef(null);
+  const searchTimerRef = useRef(null);
 
+  // Debounced member search
   useEffect(() => {
-    fetchProspects();
-  }, [teamId]);
-
-  const fetchProspects = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('prospects')
-        .select('*, users:player_id(full_name, email)')
-        .eq('team_id', teamId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setProspects(data || []);
-    } catch (error) {
-      console.error('Error fetching prospects:', error);
-    } finally {
-      setLoading(false);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!memberSearch.trim() || memberSearch.trim().length < 2) {
+      setMemberResults([]);
+      setSearchLoading(false);
+      return;
     }
-  };
+    setSearchLoading(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const existingPlayerIds = prospects.filter(p => p.player_id).map(p => p.player_id);
+        const { data } = await supabase
+          .from('users')
+          .select('id, full_name, email, role, player_profiles(position)')
+          .ilike('full_name', `%${memberSearch.trim()}%`)
+          .limit(20);
+        const filtered = (data || []).filter(u => !existingPlayerIds.includes(u.id));
+        setMemberResults(filtered);
+      } catch (err) {
+        console.error('Search error:', err);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [memberSearch, prospects]);
+
+  // Click-outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (memberDropdownRef.current && !memberDropdownRef.current.contains(e.target)) {
+        setMemberResults([]);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleAddProspect = async () => {
     if (!newProspect.name.trim()) return;
@@ -635,7 +712,8 @@ function ProspectsTab({ teamId, userId, roster }) {
       if (error) throw error;
       setNewProspect({ name: '', notes: '', player_id: '', position: '' });
       setAddMode(null);
-      await fetchProspects();
+      setMemberSearch('');
+      await onProspectsChange();
     } catch (error) {
       console.error('Error adding prospect:', error);
       alert('Error adding prospect: ' + error.message);
@@ -653,7 +731,7 @@ function ProspectsTab({ teamId, userId, roster }) {
         .eq('id', id);
 
       if (error) throw error;
-      await fetchProspects();
+      await onProspectsChange();
     } catch (error) {
       console.error('Error deleting prospect:', error);
     }
@@ -668,26 +746,11 @@ function ProspectsTab({ teamId, userId, roster }) {
 
       if (error) throw error;
       setEditingId(null);
-      await fetchProspects();
+      await onProspectsChange();
     } catch (error) {
       console.error('Error updating prospect:', error);
     }
   };
-
-  const handleSelectRosterPlayer = (playerId) => {
-    const player = roster.find(p => p.id === playerId);
-    if (player) {
-      setNewProspect({ ...newProspect, name: player.full_name, player_id: playerId });
-    }
-  };
-
-  // Filter out roster players already in prospects
-  const existingPlayerIds = prospects.filter(p => p.player_id).map(p => p.player_id);
-  const availableRoster = roster.filter(p => !existingPlayerIds.includes(p.id));
-
-  if (loading) {
-    return <div className="text-center py-8 text-gray-500">Loading prospects...</div>;
-  }
 
   return (
     <div className="space-y-4">
@@ -696,11 +759,11 @@ function ProspectsTab({ teamId, userId, roster }) {
         {!addMode && (
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => { setAddMode('roster'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); }}
+              onClick={() => { setAddMode('member'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); setMemberSearch(''); setMemberResults([]); }}
               className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center space-x-1"
             >
               <UserPlus size={16} />
-              <span>From Roster</span>
+              <span>Any Member</span>
             </button>
             <button
               onClick={() => { setAddMode('external'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); }}
@@ -717,22 +780,60 @@ function ProspectsTab({ teamId, userId, roster }) {
       {addMode && (
         <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
           <h4 className="font-medium text-gray-900 mb-3">
-            {addMode === 'roster' ? 'Add Roster Player as Prospect' : 'Add External Prospect'}
+            {addMode === 'member' ? 'Add Member as Prospect' : 'Add External Prospect'}
           </h4>
           <div className="space-y-3">
-            {addMode === 'roster' ? (
-              <select
-                value={newProspect.player_id}
-                onChange={(e) => handleSelectRosterPlayer(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select a player...</option>
-                {availableRoster.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name} {p.player_profile?.position ? `(${p.player_profile.position})` : ''}
-                  </option>
-                ))}
-              </select>
+            {addMode === 'member' ? (
+              <div className="relative" ref={memberDropdownRef}>
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={memberSearch}
+                    onChange={(e) => setMemberSearch(e.target.value)}
+                    placeholder="Search by name..."
+                    className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                </div>
+                {memberResults.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+                    {memberResults.map(u => (
+                      <button
+                        key={u.id}
+                        onClick={() => {
+                          setNewProspect({
+                            name: u.full_name,
+                            player_id: u.id,
+                            position: u.player_profiles?.[0]?.position || '',
+                            notes: newProspect.notes,
+                          });
+                          setMemberSearch('');
+                          setMemberResults([]);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center justify-between"
+                      >
+                        <div>
+                          <span className="font-medium text-gray-900">{u.full_name}</span>
+                          <span className="text-xs text-gray-500 ml-2">{u.email}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          u.role === 'player' ? 'bg-blue-100 text-blue-700' : u.role === 'coach' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'
+                        }`}>{u.role}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {searchLoading && <p className="text-xs text-gray-500 mt-1">Searching...</p>}
+                {newProspect.player_id && (
+                  <div className="mt-2 bg-blue-100 text-blue-800 px-3 py-1.5 rounded-lg text-sm flex items-center justify-between">
+                    <span>Selected: <strong>{newProspect.name}</strong></span>
+                    <button onClick={() => setNewProspect({ name: '', notes: newProspect.notes, player_id: '', position: '' })} className="text-blue-600 hover:text-blue-800">
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <input
                 type="text"
@@ -777,7 +878,7 @@ function ProspectsTab({ teamId, userId, roster }) {
                 <span>{saving ? 'Adding...' : 'Add Prospect'}</span>
               </button>
               <button
-                onClick={() => setAddMode(null)}
+                onClick={() => { setAddMode(null); setMemberSearch(''); setMemberResults([]); }}
                 className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center space-x-1"
               >
                 <X size={16} />
@@ -789,7 +890,7 @@ function ProspectsTab({ teamId, userId, roster }) {
       )}
 
       {/* Depth Chart Diagram */}
-      <DepthChartField prospects={prospects} hoveredPosition={hoveredPosition} setHoveredPosition={setHoveredPosition} />
+      <DepthChartField prospects={prospects} roster={roster} hoveredPosition={hoveredPosition} setHoveredPosition={setHoveredPosition} />
 
       {/* Prospects List */}
       {prospects.length === 0 ? (
@@ -813,8 +914,13 @@ function ProspectsTab({ teamId, userId, roster }) {
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                         prospect.player_id ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
                       }`}>
-                        {prospect.player_id ? 'Roster' : 'External'}
+                        {prospect.player_id ? 'Member' : 'External'}
                       </span>
+                      {prospect.position && (
+                        <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+                          {prospect.position}
+                        </span>
+                      )}
                     </div>
                     {editingId === prospect.id ? (
                       <div className="mt-2 flex items-center space-x-2">
@@ -893,7 +999,7 @@ function ProspectsTab({ teamId, userId, roster }) {
   );
 }
 
-function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
+function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPosition }) {
   const POSITIONS = [
     { code: 'P',  label: 'Pitcher',      x: 200, y: 215 },
     { code: 'C',  label: 'Catcher',      x: 200, y: 305 },
@@ -906,20 +1012,40 @@ function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
     { code: 'RF', label: 'Right Field',  x: 325, y: 70  },
   ];
 
-  const byPos = {};
-  POSITIONS.forEach(p => { byPos[p.code] = []; });
+  const normalizePosition = (pos) => {
+    if (!pos) return null;
+    const upper = pos.toUpperCase().trim();
+    if (['RHP', 'LHP', 'SP', 'RP', 'CL'].includes(upper)) return 'P';
+    if (upper === 'IF') return 'SS';
+    if (upper === 'OF') return 'CF';
+    return upper;
+  };
+
+  const rosterByPos = {};
+  const prospectByPos = {};
+  POSITIONS.forEach(p => { rosterByPos[p.code] = []; prospectByPos[p.code] = []; });
+
+  (roster || []).forEach(player => {
+    const pos = normalizePosition(player.player_profile?.position);
+    if (pos && rosterByPos[pos]) rosterByPos[pos].push(player);
+  });
   prospects.forEach(pr => {
-    if (pr.position && byPos[pr.position]) byPos[pr.position].push(pr);
+    const pos = normalizePosition(pr.position);
+    if (pos && prospectByPos[pos]) prospectByPos[pos].push(pr);
   });
 
   const hovered = POSITIONS.find(p => p.code === hoveredPosition);
-  const hoveredList = hovered ? byPos[hovered.code] : [];
+  const hoveredRoster = hovered ? rosterByPos[hovered.code] : [];
+  const hoveredProspects = hovered ? prospectByPos[hovered.code] : [];
 
   return (
     <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <h4 className="text-sm font-semibold text-gray-900">Depth Chart</h4>
-        <span className="text-xs text-gray-600">Hover a position to see who's there</span>
+        <div className="flex items-center space-x-3 text-xs text-gray-600">
+          <span className="flex items-center space-x-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span><span>Roster</span></span>
+          <span className="flex items-center space-x-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span><span>Prospects</span></span>
+        </div>
       </div>
       <div className="flex flex-col md:flex-row md:space-x-4">
         <div className="flex-shrink-0 mx-auto" style={{ width: 400, maxWidth: '100%' }}>
@@ -931,8 +1057,10 @@ function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
               <rect key={i} x={b.x - 6} y={b.y - 6} width="12" height="12" fill="white" stroke="#374151" strokeWidth="1" transform={`rotate(45 ${b.x} ${b.y})`} />
             ))}
             {POSITIONS.map(pos => {
-              const count = byPos[pos.code].length;
+              const rCount = rosterByPos[pos.code].length;
+              const pCount = prospectByPos[pos.code].length;
               const isHovered = hoveredPosition === pos.code;
+              const fillColor = rCount > 0 ? '#2563eb' : pCount > 0 ? '#d97706' : '#9ca3af';
               return (
                 <g
                   key={pos.code}
@@ -944,7 +1072,7 @@ function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
                     cx={pos.x}
                     cy={pos.y}
                     r={isHovered ? 22 : 18}
-                    fill={count > 0 ? '#2563eb' : '#9ca3af'}
+                    fill={fillColor}
                     stroke="white"
                     strokeWidth="2"
                   />
@@ -959,13 +1087,23 @@ function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
                   >
                     {pos.code}
                   </text>
-                  {count > 0 && (
-                    <circle cx={pos.x + 14} cy={pos.y - 14} r="9" fill="#dc2626" stroke="white" strokeWidth="1.5" />
+                  {/* Blue badge top-right: roster count */}
+                  {rCount > 0 && (
+                    <>
+                      <circle cx={pos.x + 14} cy={pos.y - 14} r="9" fill="#2563eb" stroke="white" strokeWidth="1.5" />
+                      <text x={pos.x + 14} y={pos.y - 11} textAnchor="middle" fill="white" fontSize="10" fontWeight="700" pointerEvents="none">
+                        {rCount}
+                      </text>
+                    </>
                   )}
-                  {count > 0 && (
-                    <text x={pos.x + 14} y={pos.y - 11} textAnchor="middle" fill="white" fontSize="10" fontWeight="700" pointerEvents="none">
-                      {count}
-                    </text>
+                  {/* Amber badge top-left: prospect count */}
+                  {pCount > 0 && (
+                    <>
+                      <circle cx={pos.x - 14} cy={pos.y - 14} r="9" fill="#d97706" stroke="white" strokeWidth="1.5" />
+                      <text x={pos.x - 14} y={pos.y - 11} textAnchor="middle" fill="white" fontSize="10" fontWeight="700" pointerEvents="none">
+                        {pCount}
+                      </text>
+                    </>
                   )}
                 </g>
               );
@@ -975,23 +1113,51 @@ function DepthChartField({ prospects, hoveredPosition, setHoveredPosition }) {
         <div className="flex-1 mt-3 md:mt-0 bg-white border border-gray-200 rounded-lg p-3 min-h-[120px]">
           {hovered ? (
             <>
-              <div className="text-sm font-semibold text-gray-900 mb-1">{hovered.code} — {hovered.label}</div>
-              <div className="text-xs text-gray-500 mb-2">{hoveredList.length} prospect{hoveredList.length !== 1 ? 's' : ''}</div>
-              {hoveredList.length === 0 ? (
-                <p className="text-sm text-gray-500 italic">No prospects at this position.</p>
-              ) : (
-                <ul className="space-y-1">
-                  {hoveredList.map(p => (
-                    <li key={p.id} className="text-sm text-gray-800 flex items-center space-x-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                      <span>{p.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <div className="text-sm font-semibold text-gray-900 mb-2">{hovered.code} — {hovered.label}</div>
+              {/* On Roster section */}
+              <div className="mb-3">
+                <div className="text-xs font-medium text-blue-700 mb-1 flex items-center space-x-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-600 inline-block"></span>
+                  <span>On Roster ({hoveredRoster.length})</span>
+                </div>
+                {hoveredRoster.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic ml-3">None</p>
+                ) : (
+                  <ul className="space-y-0.5 ml-3">
+                    {hoveredRoster.map(p => (
+                      <li key={p.id} className="text-sm text-gray-800 flex items-center space-x-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                        <span>{p.full_name}</span>
+                        {p.player_profile?.jersey_number && (
+                          <span className="text-xs text-gray-400">#{p.player_profile.jersey_number}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {/* Prospects section */}
+              <div>
+                <div className="text-xs font-medium text-amber-700 mb-1 flex items-center space-x-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+                  <span>Prospects ({hoveredProspects.length})</span>
+                </div>
+                {hoveredProspects.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic ml-3">None</p>
+                ) : (
+                  <ul className="space-y-0.5 ml-3">
+                    {hoveredProspects.map(p => (
+                      <li key={p.id} className="text-sm text-gray-800 flex items-center space-x-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                        <span>{p.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </>
           ) : (
-            <p className="text-sm text-gray-500 italic">Hover any position on the field to see prospects.</p>
+            <p className="text-sm text-gray-500 italic">Hover any position on the field to see roster & prospects.</p>
           )}
         </div>
       </div>
