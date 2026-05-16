@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck } from 'lucide-react';
-import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck, Repeat } from 'lucide-react';
+import { fmtLocalDate, generateOccurrenceDates, expandRecurringEvents } from './scheduleUtils';
 
 function startOfWeek(d) {
   const x = new Date(d);
@@ -35,6 +35,50 @@ function dateToInputValue(iso) {
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const RECURRENCE_DAY_CODES = ['SU','MO','TU','WE','TH','FR','SA'];
+
+function expandStaffRecurring(masters, exceptions, rangeStart, rangeEnd) {
+  const exMap = {};
+  exceptions.forEach(ex => {
+    const key = `${ex.recurrence_parent_id}_${ex.original_date || ex.event_date}`;
+    exMap[key] = ex;
+  });
+  const expanded = [];
+  masters.forEach(master => {
+    if (!master.recurrence_rule) return;
+    const dates = generateOccurrenceDates(master.event_date, master.recurrence_rule, rangeStart, rangeEnd);
+    const masterStart = new Date(master.start_at);
+    const masterEnd = new Date(master.end_at);
+    const timeOfDayStart = masterStart.getHours() * 3600000 + masterStart.getMinutes() * 60000 + masterStart.getSeconds() * 1000;
+    const durationMs = masterEnd - masterStart;
+    dates.forEach((date, index) => {
+      const dateStr = fmtLocalDate(date);
+      const exKey = `${master.id}_${dateStr}`;
+      if (exMap[exKey]) {
+        const ex = exMap[exKey];
+        if (ex.is_cancelled) return;
+        expanded.push({ ...ex, _is_virtual: false, _master_id: master.id, _occurrence_date: dateStr });
+      } else {
+        const dayStart = new Date(date);
+        dayStart.setHours(0, 0, 0, 0);
+        const occStart = new Date(dayStart.getTime() + timeOfDayStart);
+        const occEnd = new Date(occStart.getTime() + durationMs);
+        expanded.push({
+          ...master,
+          id: `${master.id}_${index}`,
+          event_date: dateStr,
+          start_at: occStart.toISOString(),
+          end_at: occEnd.toISOString(),
+          _is_virtual: true,
+          _master_id: master.id,
+          _occurrence_index: index,
+          _occurrence_date: dateStr,
+        });
+      }
+    });
+  });
+  return expanded;
+}
 
 export default function WorkSchedule({ userId, userRole }) {
   const isAdmin = userRole === 'admin';
@@ -54,12 +98,13 @@ export default function WorkSchedule({ userId, userRole }) {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const weekEnd = addDays(weekStart, 7);
     const startStr = fmtLocalDate(weekStart);
     const endStr = fmtLocalDate(addDays(weekStart, 6));
 
-    const [evRes, asgRes, facNonRec, facMasters, facEx, staffRes] = await Promise.all([
-      supabase.from('staff_schedule_events').select('*').gte('start_at', weekStart.toISOString()).lt('start_at', weekEnd.toISOString()).order('start_at'),
+    const [staffNonRec, staffMasters, staffEx, asgRes, facNonRec, facMasters, facEx, staffRes] = await Promise.all([
+      supabase.from('staff_schedule_events').select('*').eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr).order('start_at'),
+      supabase.from('staff_schedule_events').select('*').eq('is_recurring', true).is('recurrence_parent_id', null),
+      supabase.from('staff_schedule_events').select('*').not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr),
       supabase.from('staff_schedule_assignments').select('id, event_id, user_id, role, user:user_id(full_name, avatar_url)'),
       supabase.from('facility_events').select('*').eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr),
       supabase.from('facility_events').select('*').eq('is_recurring', true).is('recurrence_parent_id', null),
@@ -67,12 +112,14 @@ export default function WorkSchedule({ userId, userRole }) {
       supabase.from('users').select('id, full_name, avatar_url, role').in('role', ['admin', 'coach']).order('full_name'),
     ]);
 
-    if (evRes.error) console.error(evRes.error); else setStaffEvents(evRes.data || []);
+    const expandedStaff = expandStaffRecurring(staffMasters.data || [], staffEx.data || [], weekStart, addDays(weekStart, 6));
+    setStaffEvents([...(staffNonRec.data || []), ...expandedStaff]);
+
     if (asgRes.error) console.error(asgRes.error); else setAssignments(asgRes.data || []);
     if (staffRes.error) console.error(staffRes.error); else setStaff(staffRes.data || []);
 
-    const expanded = expandRecurringEvents(facMasters.data || [], facEx.data || [], weekStart, addDays(weekStart, 6));
-    setFacilityEvents([...(facNonRec.data || []), ...expanded]);
+    const expandedFac = expandRecurringEvents(facMasters.data || [], facEx.data || [], weekStart, addDays(weekStart, 6));
+    setFacilityEvents([...(facNonRec.data || []), ...expandedFac]);
 
     setLoading(false);
   }, [weekStart]);
@@ -109,17 +156,27 @@ export default function WorkSchedule({ userId, userRole }) {
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const myAssignedEventIds = new Set(assignments.filter(a => a.user_id === userId).map(a => a.event_id));
   const assignmentsByEvent = assignments.reduce((acc, a) => {
     (acc[a.event_id] = acc[a.event_id] || []).push(a);
     return acc;
   }, {});
 
+  const getEventAssignments = (ev) => {
+    const realId = ev._master_id || ev.id;
+    return assignmentsByEvent[realId] || [];
+  };
+
+  const myAssignedEventIds = new Set(assignments.filter(a => a.user_id === userId).map(a => a.event_id));
+  const isMyAssigned = (ev) => {
+    const realId = ev._master_id || ev.id;
+    return myAssignedEventIds.has(realId);
+  };
+
   const eventsByDay = (date) => {
     const dayStr = fmtLocalDate(date);
     const items = [];
     staffEvents
-      .filter(e => fmtLocalDate(new Date(e.start_at)) === dayStr)
+      .filter(e => (e.event_date || fmtLocalDate(new Date(e.start_at))) === dayStr)
       .forEach(e => items.push({ kind: 'staff', e, time: e.start_at }));
     facilityEvents
       .filter(f => f.event_date === dayStr)
@@ -132,10 +189,10 @@ export default function WorkSchedule({ userId, userRole }) {
     const dayStr = fmtLocalDate(date);
     const totals = {};
     staffEvents
-      .filter(e => fmtLocalDate(new Date(e.start_at)) === dayStr)
+      .filter(e => (e.event_date || fmtLocalDate(new Date(e.start_at))) === dayStr)
       .forEach(e => {
         const hours = Math.max(0, (new Date(e.end_at) - new Date(e.start_at)) / 3600000);
-        const evAssigns = assignmentsByEvent[e.id] || [];
+        const evAssigns = getEventAssignments(e);
         evAssigns.forEach(a => {
           const key = a.user_id;
           if (!totals[key]) totals[key] = { name: a.user?.full_name || 'Unknown', hours: 0 };
@@ -209,6 +266,8 @@ export default function WorkSchedule({ userId, userRole }) {
           assignments={assignments}
           assignmentsByEvent={assignmentsByEvent}
           myAssignedEventIds={myAssignedEventIds}
+          getEventAssignments={getEventAssignments}
+          isMyAssigned={isMyAssigned}
           onSelectEvent={setSelectedEvent}
         />
       ) : (
@@ -242,8 +301,8 @@ export default function WorkSchedule({ userId, userRole }) {
                         </div>
                       );
                     }
-                    const assigned = myAssignedEventIds.has(it.e.id);
-                    const eventAssigns = assignmentsByEvent[it.e.id] || [];
+                    const assigned = isMyAssigned(it.e);
+                    const eventAssigns = getEventAssignments(it.e);
                     return (
                       <button
                         key={`s-${it.e.id}`}
@@ -254,6 +313,7 @@ export default function WorkSchedule({ userId, userRole }) {
                       >
                         <div className="flex items-center space-x-1 text-indigo-700 font-medium">
                           {assigned && <UserCheck size={11} />}
+                          {(it.e._is_virtual || it.e.is_recurring) && <Repeat size={10} className="text-indigo-400 flex-shrink-0" />}
                           <span className="truncate flex-1">{it.e.title}</span>
                         </div>
                         <p className="text-indigo-600 mt-0.5">
@@ -306,10 +366,10 @@ export default function WorkSchedule({ userId, userRole }) {
       {selectedEvent && (
         <EventDetailModal
           event={selectedEvent}
-          assignments={assignmentsByEvent[selectedEvent.id] || []}
+          assignments={getEventAssignments(selectedEvent)}
           isAdmin={isAdmin}
           onClose={() => setSelectedEvent(null)}
-          onEdit={() => { setEditing(selectedEvent); setShowForm(true); setSelectedEvent(null); }}
+          onEdit={(editEvent) => { setEditing(editEvent || selectedEvent); setShowForm(true); setSelectedEvent(null); }}
           onDeleted={() => { setSelectedEvent(null); fetchAll(); }}
         />
       )}
@@ -318,7 +378,7 @@ export default function WorkSchedule({ userId, userRole }) {
         <EventFormModal
           editing={editing}
           staff={staff}
-          existingAssignments={editing ? (assignmentsByEvent[editing.id] || []) : []}
+          existingAssignments={editing ? getEventAssignments(editing) : []}
           onClose={() => { setShowForm(false); setEditing(null); }}
           onSaved={() => { setShowForm(false); setEditing(null); fetchAll(); }}
           createdBy={userId}
@@ -328,19 +388,22 @@ export default function WorkSchedule({ userId, userRole }) {
   );
 }
 
-function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, onSelectEvent }) {
+function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, getEventAssignments, isMyAssigned, onSelectEvent }) {
   const dayStr = fmtLocalDate(day);
   const START_HOUR = 6;
   const END_HOUR = 22;
-  const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
-  const HOUR_HEIGHT = 60;
+  const TOTAL_HOURS = END_HOUR - START_HOUR;
+  const HOURS = Array.from({ length: TOTAL_HOURS }, (_, i) => START_HOUR + i);
+  const TOTAL_MINUTES = TOTAL_HOURS * 60;
+  const ROW_HEIGHT = 56;
+  const STAFF_COL_WIDTH = 160;
 
-  const dayStaffEvents = staffEvents.filter(e => fmtLocalDate(new Date(e.start_at)) === dayStr);
+  const dayStaffEvents = staffEvents.filter(e => (e.event_date || fmtLocalDate(new Date(e.start_at))) === dayStr);
   const dayFacilityEvents = facilityEvents.filter(f => f.event_date === dayStr);
 
   const staffWithEvents = {};
   dayStaffEvents.forEach(ev => {
-    const evAssigns = assignmentsByEvent[ev.id] || [];
+    const evAssigns = getEventAssignments(ev);
     if (evAssigns.length === 0) {
       const key = '__unassigned__';
       if (!staffWithEvents[key]) staffWithEvents[key] = { name: 'Unassigned', avatar_url: null, events: [] };
@@ -369,93 +432,101 @@ function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, a
     const e = new Date(endISO);
     const startMin = s.getHours() * 60 + s.getMinutes();
     const endMin = e.getHours() * 60 + e.getMinutes();
-    const top = Math.max(0, (startMin - START_HOUR * 60)) * (HOUR_HEIGHT / 60);
-    const height = Math.max(HOUR_HEIGHT / 4, (endMin - startMin) * (HOUR_HEIGHT / 60));
-    return { top, height };
+    const clampedStart = Math.max(0, startMin - START_HOUR * 60);
+    const clampedEnd = Math.min(TOTAL_MINUTES, endMin - START_HOUR * 60);
+    const left = (clampedStart / TOTAL_MINUTES) * 100;
+    const width = Math.max(2, ((clampedEnd - clampedStart) / TOTAL_MINUTES) * 100);
+    return { left: left + '%', width: width + '%' };
+  };
+
+  const getTotalHours = (events) => {
+    const total = events.reduce((sum, ev) => sum + (new Date(ev.end_at) - new Date(ev.start_at)), 0);
+    return Math.round((total / 3600000) * 10) / 10;
   };
 
   const isToday = fmtLocalDate(day) === fmtLocalDate(new Date());
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const nowTop = (nowMin - START_HOUR * 60) * (HOUR_HEIGHT / 60);
+  const nowLeft = ((nowMin - START_HOUR * 60) / TOTAL_MINUTES) * 100;
   const showNowLine = isToday && nowMin >= START_HOUR * 60 && nowMin <= END_HOUR * 60;
 
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
       <div className="overflow-x-auto">
-        <div className="min-w-[700px]">
-          {/* Header row with staff names */}
+        <div style={{ minWidth: STAFF_COL_WIDTH + TOTAL_HOURS * 60 }}>
+          {/* Header row with time labels */}
           <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
-            <div className="w-16 flex-shrink-0 p-2 text-xs font-semibold text-gray-500 border-r border-gray-200">Time</div>
-            {staffRows.map(row => (
-              <div key={row.id} className="flex-1 min-w-[120px] p-2 border-r border-gray-100 text-center">
-                <div className="flex flex-col items-center">
-                  {row.avatar_url ? (
-                    <img src={row.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover mb-1" />
-                  ) : (
-                    <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold mb-1">
-                      {row.name.charAt(0)}
-                    </div>
-                  )}
-                  <span className="text-xs font-medium text-gray-700 truncate max-w-[100px]">{row.name.split(' ')[0]}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Timeline body */}
-          <div className="flex relative" style={{ height: HOURS.length * HOUR_HEIGHT }}>
-            {/* Time labels */}
-            <div className="w-16 flex-shrink-0 border-r border-gray-200 relative">
+            <div className="flex-shrink-0 p-2 text-xs font-semibold text-gray-500 border-r border-gray-200" style={{ width: STAFF_COL_WIDTH }}>Staff</div>
+            <div className="flex-1 flex relative">
               {HOURS.map(h => (
-                <div key={h} className="absolute w-full text-right pr-2 text-[10px] text-gray-400 -translate-y-1/2" style={{ top: (h - START_HOUR) * HOUR_HEIGHT }}>
+                <div key={h} className="text-center text-[11px] font-medium text-gray-500 border-r border-gray-100 py-2" style={{ width: (100 / TOTAL_HOURS) + '%' }}>
                   {h % 12 || 12}{h >= 12 ? 'p' : 'a'}
                 </div>
               ))}
             </div>
-
-            {/* Staff columns */}
-            {staffRows.map(row => (
-              <div key={row.id} className="flex-1 min-w-[120px] border-r border-gray-100 relative">
-                {/* Hour grid lines */}
-                {HOURS.map(h => (
-                  <div key={h} className="absolute w-full border-t border-gray-100" style={{ top: (h - START_HOUR) * HOUR_HEIGHT }} />
-                ))}
-                {/* Event blocks */}
-                {row.events.map(ev => {
-                  const { top, height } = getPosition(ev.start_at, ev.end_at);
-                  const assigned = myAssignedEventIds.has(ev.id);
-                  const durationH = (new Date(ev.end_at) - new Date(ev.start_at)) / 3600000;
-                  return (
-                    <button
-                      key={ev.id}
-                      onClick={() => onSelectEvent(ev)}
-                      className={`absolute left-1 right-1 rounded-md px-1.5 py-0.5 text-[10px] overflow-hidden hover:shadow-md transition z-[5] ${
-                        assigned ? 'bg-indigo-200 border border-indigo-400 text-indigo-800' : 'bg-indigo-100 border border-indigo-300 text-indigo-700'
-                      }`}
-                      style={{ top, height: Math.max(height, 20) }}
-                      title={`${ev.title} (${Math.round(durationH * 10) / 10}h)`}
-                    >
-                      <div className="font-medium truncate">{ev.title}</div>
-                      {height > 30 && (
-                        <div className="text-indigo-500 truncate">
-                          {formatTimeFromTS(ev.start_at)} – {formatTimeFromTS(ev.end_at)}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-
-            {/* Now line */}
-            {showNowLine && (
-              <div className="absolute left-0 right-0 z-20 flex items-center pointer-events-none" style={{ top: nowTop }}>
-                <div className="w-2 h-2 bg-red-500 rounded-full -ml-1" />
-                <div className="flex-1 border-t-2 border-red-500" />
-              </div>
-            )}
           </div>
+
+          {/* Staff rows */}
+          {staffRows.map(row => {
+            const totalH = getTotalHours(row.events);
+            return (
+              <div key={row.id} className="flex border-b border-gray-100 group hover:bg-gray-50/50">
+                {/* Staff info cell */}
+                <div className="flex-shrink-0 border-r border-gray-200 px-3 flex items-center space-x-2" style={{ width: STAFF_COL_WIDTH, height: ROW_HEIGHT }}>
+                  {row.avatar_url ? (
+                    <img src={row.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                      {row.name.charAt(0)}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-gray-800 truncate">{row.name.split(' ')[0]}</div>
+                    {totalH > 0 && <div className="text-[10px] text-gray-400">{totalH}h</div>}
+                  </div>
+                </div>
+
+                {/* Timeline cell */}
+                <div className="flex-1 relative" style={{ height: ROW_HEIGHT }}>
+                  {/* Vertical hour grid lines */}
+                  {HOURS.map(h => (
+                    <div key={h} className="absolute top-0 bottom-0 border-l border-gray-100" style={{ left: ((h - START_HOUR) / TOTAL_HOURS * 100) + '%' }} />
+                  ))}
+
+                  {/* Event blocks */}
+                  {row.events.map(ev => {
+                    const pos = getPosition(ev.start_at, ev.end_at);
+                    const assigned = isMyAssigned(ev);
+                    const durationH = (new Date(ev.end_at) - new Date(ev.start_at)) / 3600000;
+                    return (
+                      <button
+                        key={ev.id}
+                        onClick={() => onSelectEvent(ev)}
+                        className={`absolute top-1 bottom-1 rounded-md px-1.5 flex items-center text-[10px] overflow-hidden hover:shadow-md transition z-[5] ${
+                          assigned ? 'bg-indigo-200 border border-indigo-400 text-indigo-800' : 'bg-indigo-100 border border-indigo-300 text-indigo-700'
+                        }`}
+                        style={{ left: pos.left, width: pos.width, minWidth: 24 }}
+                        title={`${ev.title} (${Math.round(durationH * 10) / 10}h)`}
+                      >
+                        <span className="font-medium truncate">{ev.title}</span>
+                        <span className="ml-1 text-indigo-500 truncate hidden sm:inline">
+                          {formatTimeFromTS(ev.start_at)} – {formatTimeFromTS(ev.end_at)}
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  {/* Now line (vertical) */}
+                  {showNowLine && (
+                    <div className="absolute top-0 bottom-0 z-20 pointer-events-none flex flex-col items-center" style={{ left: nowLeft + '%' }}>
+                      <div className="w-2 h-2 bg-red-500 rounded-full -mt-1" />
+                      <div className="w-0.5 flex-1 bg-red-500" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -480,18 +551,66 @@ function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, a
 }
 
 function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDeleted }) {
+  const [showRecurringChoice, setShowRecurringChoice] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const isRecurring = event._is_virtual || event.is_recurring || event.recurrence_parent_id;
+  const masterId = event._master_id || (event.recurrence_parent_id ? event.recurrence_parent_id : event.id);
+  const occurrenceDate = event._occurrence_date || event.event_date;
+
   const handleDelete = async () => {
-    if (!window.confirm(`Delete "${event.title}"?`)) return;
-    const { error } = await supabase.from('staff_schedule_events').delete().eq('id', event.id);
-    if (error) { alert('Delete failed: ' + error.message); return; }
+    if (!isRecurring) {
+      if (!window.confirm(`Delete "${event.title}"?`)) return;
+      const { error } = await supabase.from('staff_schedule_events').delete().eq('id', event.id);
+      if (error) { alert('Delete failed: ' + error.message); return; }
+      onDeleted();
+      return;
+    }
+    setShowRecurringChoice('delete');
+  };
+
+  const handleDeleteThis = async () => {
+    setDeleting(true);
+    const { error } = await supabase.from('staff_schedule_events').insert({
+      title: event.title,
+      start_at: event.start_at,
+      end_at: event.end_at,
+      event_date: occurrenceDate,
+      recurrence_parent_id: masterId,
+      original_date: occurrenceDate,
+      is_cancelled: true,
+      is_recurring: false,
+    });
+    if (error) { alert('Delete failed: ' + error.message); setDeleting(false); return; }
     onDeleted();
+  };
+
+  const handleDeleteFuture = async () => {
+    setDeleting(true);
+    const dayBefore = fmtLocalDate(addDays(new Date(occurrenceDate + 'T12:00:00'), -1));
+    const { data: master } = await supabase.from('staff_schedule_events').select('recurrence_rule').eq('id', masterId).single();
+    const updatedRule = { ...(master?.recurrence_rule || {}), endType: 'until', until: dayBefore };
+    await supabase.from('staff_schedule_events').update({ recurrence_rule: updatedRule }).eq('id', masterId);
+    await supabase.from('staff_schedule_events').delete().not('recurrence_parent_id', 'is', null).eq('recurrence_parent_id', masterId).gte('event_date', occurrenceDate);
+    onDeleted();
+  };
+
+  const handleEditChoice = (mode) => {
+    const editEvent = { ...event, _editMode: mode, _master_id: masterId, _occurrence_date: occurrenceDate };
+    if (mode === 'future') {
+      editEvent.recurrence_rule = event.recurrence_rule;
+    }
+    onEdit(editEvent);
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="text-lg font-semibold text-gray-900">{event.title}</h3>
+          <div className="flex items-center space-x-2">
+            <h3 className="text-lg font-semibold text-gray-900">{event.title}</h3>
+            {isRecurring && <Repeat size={14} className="text-gray-400" />}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
         <div className="p-4 space-y-3">
@@ -506,6 +625,12 @@ function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDele
             <div className="flex items-center space-x-2 text-sm text-gray-700">
               <MapPin size={16} className="text-gray-400" />
               <span>{event.location}</span>
+            </div>
+          )}
+          {isRecurring && (
+            <div className="flex items-center space-x-2 text-sm text-gray-500">
+              <Repeat size={14} className="text-gray-400" />
+              <span>Recurring event</span>
             </div>
           )}
           {event.description && (
@@ -534,7 +659,37 @@ function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDele
             )}
           </div>
         </div>
-        {isAdmin && (
+
+        {showRecurringChoice && (
+          <div className="px-4 pb-4">
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 space-y-3">
+              <p className="text-sm font-medium text-gray-900">
+                {showRecurringChoice === 'delete' ? 'Delete recurring event' : 'Edit recurring event'}
+              </p>
+              <div className="space-y-2">
+                <button
+                  onClick={() => showRecurringChoice === 'delete' ? handleDeleteThis() : handleEditChoice('this')}
+                  disabled={deleting}
+                  className="w-full text-left px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-white transition disabled:opacity-50"
+                >
+                  This event only
+                </button>
+                <button
+                  onClick={() => showRecurringChoice === 'delete' ? handleDeleteFuture() : handleEditChoice('future')}
+                  disabled={deleting}
+                  className="w-full text-left px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-white transition disabled:opacity-50"
+                >
+                  This and all future events
+                </button>
+              </div>
+              <button onClick={() => setShowRecurringChoice(null)} className="text-xs text-gray-500 hover:text-gray-700">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isAdmin && !showRecurringChoice && (
           <div className="flex justify-end space-x-2 p-4 border-t bg-gray-50">
             <button
               onClick={handleDelete}
@@ -544,7 +699,10 @@ function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDele
               <span>Delete</span>
             </button>
             <button
-              onClick={onEdit}
+              onClick={() => {
+                if (isRecurring) { setShowRecurringChoice('edit'); return; }
+                onEdit();
+              }}
               className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition flex items-center space-x-1"
             >
               <Edit2 size={14} />
@@ -558,6 +716,8 @@ function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDele
 }
 
 function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved, createdBy }) {
+  const editRealId = editing && !editing._is_virtual && !editing._editMode ? editing.id : null;
+
   const [title, setTitle] = useState(editing?.title || '');
   const [description, setDescription] = useState(editing?.description || '');
   const [startAt, setStartAt] = useState(editing ? dateToInputValue(editing.start_at) : '');
@@ -566,8 +726,33 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
   const [assignedIds, setAssignedIds] = useState(existingAssignments.map(a => a.user_id));
   const [saving, setSaving] = useState(false);
 
+  const existingRule = editing?.recurrence_rule;
+  const inferRecurrence = () => {
+    if (!existingRule) return 'none';
+    if (existingRule.freq === 'daily' && (existingRule.interval || 1) === 1 && existingRule.endType === 'never') return 'daily';
+    if (existingRule.freq === 'weekly' && (existingRule.interval || 1) === 1 && (!existingRule.byDay || existingRule.byDay.length === 0) && existingRule.endType === 'never') return 'weekly';
+    if (existingRule.freq === 'monthly' && (existingRule.interval || 1) === 1 && existingRule.endType === 'never') return 'monthly';
+    return 'custom';
+  };
+  const showRecurrence = !editing || (!editing._editMode);
+  const [recurrence, setRecurrence] = useState(editing?.is_recurring ? inferRecurrence() : 'none');
+  const [customRule, setCustomRule] = useState(existingRule || { freq: 'weekly', interval: 1, byDay: [], endType: 'never', count: 10, until: '' });
+
   const toggleAssign = (id) => {
     setAssignedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const buildRecurrenceRule = () => {
+    if (recurrence === 'none') return null;
+    if (recurrence === 'custom') return customRule;
+    const rule = { freq: recurrence, interval: 1, endType: 'never' };
+    if (recurrence === 'weekly') {
+      const startDate = new Date(startAt);
+      if (!isNaN(startDate)) {
+        rule.byDay = [RECURRENCE_DAY_CODES[startDate.getDay()]];
+      }
+    }
+    return rule;
   };
 
   const handleSave = async () => {
@@ -576,18 +761,77 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
     if (new Date(endAt) < new Date(startAt)) { alert('End time must be on or after start time.'); return; }
     setSaving(true);
 
+    const startDate = new Date(startAt);
+    const eventDate = fmtLocalDate(startDate);
+    const isRecurring = recurrence !== 'none';
+    const recurrenceRule = buildRecurrenceRule();
+
     const payload = {
       title: title.trim(),
       description: description.trim() || null,
-      start_at: new Date(startAt).toISOString(),
+      start_at: startDate.toISOString(),
       end_at: new Date(endAt).toISOString(),
       location: location.trim() || null,
+      event_date: eventDate,
     };
 
-    let eventId = editing?.id;
+    if (editing?._editMode === 'this') {
+      const masterId = editing._master_id || editing.id;
+      const occDate = editing._occurrence_date || editing.event_date;
+      const { data, error } = await supabase
+        .from('staff_schedule_events')
+        .insert({
+          ...payload,
+          recurrence_parent_id: masterId,
+          original_date: occDate,
+          is_recurring: false,
+          recurrence_rule: null,
+          created_by: createdBy,
+        })
+        .select('id')
+        .single();
+      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      await syncAssignments(data.id);
+      setSaving(false);
+      onSaved();
+      return;
+    }
 
-    if (editing) {
-      const { error } = await supabase.from('staff_schedule_events').update(payload).eq('id', editing.id);
+    if (editing?._editMode === 'future') {
+      const masterId = editing._master_id || editing.id;
+      const occDate = editing._occurrence_date || editing.event_date;
+      const dayBefore = fmtLocalDate(addDays(new Date(occDate + 'T12:00:00'), -1));
+      await supabase.from('staff_schedule_events').update({
+        recurrence_rule: { ...(editing.recurrence_rule || {}), endType: 'until', until: dayBefore },
+      }).eq('id', masterId);
+      await supabase.from('staff_schedule_events').delete().not('recurrence_parent_id', 'is', null).eq('recurrence_parent_id', masterId).gte('event_date', occDate);
+
+      const { data, error } = await supabase
+        .from('staff_schedule_events')
+        .insert({
+          ...payload,
+          is_recurring: isRecurring,
+          recurrence_rule: recurrenceRule,
+          created_by: createdBy,
+        })
+        .select('id')
+        .single();
+      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      await syncAssignments(data.id);
+      setSaving(false);
+      onSaved();
+      return;
+    }
+
+    let eventId = editRealId;
+
+    if (showRecurrence) {
+      payload.is_recurring = isRecurring;
+      payload.recurrence_rule = recurrenceRule;
+    }
+
+    if (editRealId) {
+      const { error } = await supabase.from('staff_schedule_events').update(payload).eq('id', editRealId);
       if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
     } else {
       const { data, error } = await supabase
@@ -599,95 +843,118 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
       eventId = data.id;
     }
 
+    await syncAssignments(eventId);
+    setSaving(false);
+    onSaved();
+  };
+
+  const syncAssignments = async (eventId) => {
     const existingIds = existingAssignments.map(a => a.user_id);
     const toAdd = assignedIds.filter(id => !existingIds.includes(id));
     const toRemove = existingAssignments.filter(a => !assignedIds.includes(a.user_id));
-
     if (toAdd.length > 0) {
-      const { error } = await supabase
-        .from('staff_schedule_assignments')
-        .insert(toAdd.map(uid => ({ event_id: eventId, user_id: uid })));
-      if (error) { console.error('Add assignment error:', error); }
+      await supabase.from('staff_schedule_assignments').insert(toAdd.map(uid => ({ event_id: eventId, user_id: uid })));
     }
     if (toRemove.length > 0) {
-      const { error } = await supabase
-        .from('staff_schedule_assignments')
-        .delete()
-        .in('id', toRemove.map(a => a.id));
-      if (error) { console.error('Remove assignment error:', error); }
+      await supabase.from('staff_schedule_assignments').delete().in('id', toRemove.map(a => a.id));
     }
-
-    setSaving(false);
-    onSaved();
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="text-lg font-semibold text-gray-900">{editing ? 'Edit event' : 'New staff event'}</h3>
+          <h3 className="text-lg font-semibold text-gray-900">
+            {editing?._editMode === 'this' ? 'Edit this occurrence' : editing?._editMode === 'future' ? 'Edit this & future' : editing ? 'Edit event' : 'New staff event'}
+          </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
         <div className="p-4 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. All-staff meeting"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. All-staff meeting" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Start</label>
-              <input
-                type="datetime-local"
-                value={startAt}
-                onChange={(e) => setStartAt(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+              <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">End</label>
-              <input
-                type="datetime-local"
-                value={endAt}
-                onChange={(e) => setEndAt(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+              <input type="datetime-local" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Location (optional)</label>
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={2}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
+          {showRecurrence && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Repeat</label>
+                <div className="flex items-center space-x-2">
+                  <Repeat size={16} className="text-gray-400" />
+                  <select value={recurrence} onChange={(e) => setRecurrence(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="none">Does not repeat</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="custom">Custom...</option>
+                  </select>
+                </div>
+              </div>
+              {recurrence === 'custom' && (
+                <div className="ml-6 p-3 bg-gray-50 rounded-lg space-y-3 border border-gray-200">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-700">Every</span>
+                    <input type="number" min="1" value={customRule.interval} onChange={(e) => setCustomRule({ ...customRule, interval: parseInt(e.target.value) || 1 })} className="w-16 px-2 py-1 border border-gray-300 rounded text-sm" />
+                    <select value={customRule.freq} onChange={(e) => setCustomRule({ ...customRule, freq: e.target.value })} className="px-2 py-1 border border-gray-300 rounded text-sm">
+                      <option value="daily">day(s)</option>
+                      <option value="weekly">week(s)</option>
+                      <option value="monthly">month(s)</option>
+                    </select>
+                  </div>
+                  {customRule.freq === 'weekly' && (
+                    <div className="flex items-center space-x-1.5">
+                      <span className="text-sm text-gray-700">On:</span>
+                      {RECURRENCE_DAY_CODES.map(day => (
+                        <button key={day} type="button" onClick={() => { const days = customRule.byDay || []; setCustomRule({ ...customRule, byDay: days.includes(day) ? days.filter(d => d !== day) : [...days, day] }); }}
+                          className={`w-8 h-8 rounded-full text-xs font-medium transition ${(customRule.byDay || []).includes(day) ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                        >{day.charAt(0)}</button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-700">Ends:</span>
+                    <select value={customRule.endType} onChange={(e) => setCustomRule({ ...customRule, endType: e.target.value })} className="px-2 py-1 border border-gray-300 rounded text-sm">
+                      <option value="never">Never</option>
+                      <option value="count">After</option>
+                      <option value="until">On date</option>
+                    </select>
+                    {customRule.endType === 'count' && (
+                      <>
+                        <input type="number" min="1" value={customRule.count} onChange={(e) => setCustomRule({ ...customRule, count: parseInt(e.target.value) || 1 })} className="w-16 px-2 py-1 border border-gray-300 rounded text-sm" />
+                        <span className="text-sm text-gray-700">occurrences</span>
+                      </>
+                    )}
+                    {customRule.endType === 'until' && (
+                      <input type="date" value={customRule.until} onChange={(e) => setCustomRule({ ...customRule, until: e.target.value })} className="px-2 py-1 border border-gray-300 rounded text-sm" />
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Assign staff</label>
             <div className="border border-gray-300 rounded-lg max-h-48 overflow-y-auto divide-y divide-gray-100">
               {staff.map(s => (
                 <label key={s.id} className="flex items-center space-x-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={assignedIds.includes(s.id)}
-                    onChange={() => toggleAssign(s.id)}
-                    className="rounded"
-                  />
+                  <input type="checkbox" checked={assignedIds.includes(s.id)} onChange={() => toggleAssign(s.id)} className="rounded" />
                   <span className="text-sm text-gray-900">{s.full_name}</span>
                   <span className="text-xs text-gray-500">({s.role})</span>
                 </label>
@@ -698,11 +965,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
         </div>
         <div className="flex justify-end space-x-2 p-4 border-t bg-gray-50">
           <button onClick={onClose} className="px-4 py-2 text-gray-600 hover:text-gray-900 transition">Cancel</button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
-          >
+          <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">
             {saving ? 'Saving...' : editing ? 'Save changes' : 'Create event'}
           </button>
         </div>

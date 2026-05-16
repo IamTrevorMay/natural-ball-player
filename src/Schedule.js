@@ -3,6 +3,31 @@ import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 
+// Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
+function formatTimeDisplay(time) {
+  if (!time) return '';
+  // Already has AM/PM — return as-is
+  if (/[ap]m/i.test(time)) return time;
+  const parts = time.match(/^(\d{1,2}):(\d{2})/);
+  if (!parts) return time;
+  const h = parseInt(parts[1], 10);
+  const m = parts[2];
+  return `${h % 12 || 12}:${m} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+// Get the week range label for a given date (e.g. "May 12 – May 18, 2026")
+function getWeekRangeLabel(date) {
+  const start = new Date(date);
+  start.setDate(start.getDate() - start.getDay());
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const opts = { month: 'short', day: 'numeric' };
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.toLocaleDateString('en-US', opts)} – ${end.getDate()}, ${end.getFullYear()}`;
+  }
+  return `${start.toLocaleDateString('en-US', opts)} – ${end.toLocaleDateString('en-US', opts)}, ${end.getFullYear()}`;
+}
+
 // Categorize workout events by title for color-coding
 function getWorkoutCategory(title) {
   const t = (title || '').toLowerCase();
@@ -396,9 +421,15 @@ export default function Schedule({ userId, userRole }) {
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
-              <h3 className="text-xl font-semibold text-gray-900">{selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
-              <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
+              <button onClick={() => {
+                if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() - 7); setSelectedDate(d); }
+                else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
+              }} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
+              <h3 className="text-xl font-semibold text-gray-900">{viewMode === 'week' ? getWeekRangeLabel(selectedDate) : selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+              <button onClick={() => {
+                if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() + 7); setSelectedDate(d); }
+                else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
+              }} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
             </div>
           </div>
           <div className="p-6">
@@ -504,9 +535,15 @@ export default function Schedule({ userId, userRole }) {
                 </div>
                 {viewMode !== 'lanes' && (
                 <div className="flex items-center justify-between">
-                  <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
-                  <h3 className="text-xl font-semibold text-gray-900">{selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
-                  <button onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
+                  <button onClick={() => {
+                    if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() - 7); setSelectedDate(d); }
+                    else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
+                  }} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
+                  <h3 className="text-xl font-semibold text-gray-900">{viewMode === 'week' ? getWeekRangeLabel(selectedDate) : selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+                  <button onClick={() => {
+                    if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() + 7); setSelectedDate(d); }
+                    else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
+                  }} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
                 </div>
                 )}
               </div>
@@ -678,19 +715,25 @@ export default function Schedule({ userId, userRole }) {
             </div>
           </div>
 
-          {/* Month Navigation */}
+          {/* Month / Week Navigation */}
           <div className="flex items-center justify-between">
             <button
-              onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))}
+              onClick={() => {
+                if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() - 7); setSelectedDate(d); }
+                else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
+              }}
               className="p-2 hover:bg-gray-100 rounded-lg transition"
             >
               <ChevronLeft size={20} />
             </button>
             <h3 className="text-xl font-semibold text-gray-900">
-              {selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              {viewMode === 'week' ? getWeekRangeLabel(selectedDate) : selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
             </h3>
             <button
-              onClick={() => setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))}
+              onClick={() => {
+                if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() + 7); setSelectedDate(d); }
+                else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
+              }}
               className="p-2 hover:bg-gray-100 rounded-lg transition"
             >
               <ChevronRight size={20} />
@@ -996,7 +1039,10 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                     className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''}`}
                     title={canManage ? `Drag to reschedule, click to edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
-                    <span className="truncate">{event.title || event.opponent || event.event_type}</span>
+                    <span className="truncate">
+                      {(event.start_time || event.event_time) && <span className="font-medium">{formatTimeDisplay(event.start_time || event.event_time)} </span>}
+                      {event.title || event.opponent || event.event_type}
+                    </span>
                     {canManage && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
                   </div>
                 ))}
@@ -1165,7 +1211,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
       <div className="text-xs font-semibold text-gray-900 pr-4">
         {displayText}
       </div>
-      <div className="text-xs text-gray-600 mt-1">{event.event_time || 'TBD'}</div>
+      <div className="text-xs text-gray-600 mt-1">{formatTimeDisplay(event.event_time) || 'TBD'}</div>
       {!compact && event.location && (
         <div className="text-xs text-gray-500 mt-1">{event.location}</div>
       )}
@@ -1340,8 +1386,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           >
                             <div className="font-semibold truncate text-xs">{entry.event.title || entry.event.opponent}</div>
                             <div className="truncate text-[10px] opacity-80">
-                              {entry.event.start_time || entry.event.event_time}
-                              {entry.event.end_time ? `–${entry.event.end_time}` : ''}
+                              {formatTimeDisplay(entry.event.start_time || entry.event.event_time)}
+                              {entry.event.end_time ? `–${formatTimeDisplay(entry.event.end_time)}` : ''}
                             </div>
                           </button>
                         </td>
@@ -2810,7 +2856,7 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
               <h2 className="text-xl font-bold text-gray-900 truncate">{event.title || 'Workout'}</h2>
               <div className="text-sm text-gray-600 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>{new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                {event.event_time && <span>• {event.event_time}</span>}
+                {event.event_time && <span>• {formatTimeDisplay(event.event_time)}</span>}
                 {program?.name && <span>• {program.name}{trainingDay?.day_number ? ` — Day ${trainingDay.day_number}` : ''}</span>}
               </div>
             </div>
@@ -3338,7 +3384,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
 
               <div className="flex items-center space-x-3 text-sm">
                 <span className="text-gray-400 font-medium">Time:</span>
-                <span className={event.event_time ? 'text-gray-900' : 'text-yellow-700 font-medium'}>{event.event_time || 'TBD'}</span>
+                <span className={event.event_time ? 'text-gray-900' : 'text-yellow-700 font-medium'}>{formatTimeDisplay(event.event_time) || 'TBD'}</span>
               </div>
 
               {event.location && (
@@ -3584,7 +3630,15 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
       const isRecurring = recurrence !== 'none';
       let recurrenceRule = null;
       if (isRecurring) {
-        recurrenceRule = recurrence === 'custom' ? customRule : { freq: recurrence, interval: 1, endType: 'never' };
+        if (recurrence === 'custom') {
+          const r = { ...customRule };
+          if (r.endType === 'never') { delete r.count; delete r.until; }
+          else if (r.endType === 'count') { delete r.until; }
+          else if (r.endType === 'until') { delete r.count; }
+          recurrenceRule = r;
+        } else {
+          recurrenceRule = { freq: recurrence, interval: 1, endType: 'never' };
+        }
       }
       const { error } = await supabase.from('facility_events').insert({
         title: title.trim(), description: description || null, event_date: eventDate,
@@ -3848,7 +3902,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           ) : (
             <div className="space-y-3">
               <div className="flex items-center space-x-3 text-sm"><CalendarIcon size={16} className="text-gray-400" /><span>{new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span></div>
-              {(event.start_time || event.end_time) && <div className="flex items-center space-x-3 text-sm"><Clock size={16} className="text-gray-400" /><span>{event.start_time}{event.end_time ? ` - ${event.end_time}` : ''}</span></div>}
+              {(event.start_time || event.end_time) && <div className="flex items-center space-x-3 text-sm"><Clock size={16} className="text-gray-400" /><span>{formatTimeDisplay(event.start_time)}{event.end_time ? ` - ${formatTimeDisplay(event.end_time)}` : ''}</span></div>}
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}

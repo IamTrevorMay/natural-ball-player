@@ -2326,6 +2326,50 @@ function CreateProspectModal({ teams, onClose, onSuccess }) {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [userSearch, setUserSearch] = useState('');
+  const [userResults, setUserResults] = useState([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+
+  useEffect(() => {
+    if (userSearch.length < 2) { setUserResults([]); return; }
+    const timeout = setTimeout(async () => {
+      setSearchingUsers(true);
+      const q = userSearch.toLowerCase();
+      const { data: users } = await supabase.from('users').select('id, full_name, email, phone, height, weight, role').ilike('full_name', `%${q}%`).limit(8);
+      if (users && users.length > 0) {
+        const userIds = users.map(u => u.id);
+        const { data: profiles } = await supabase.from('player_profiles').select('user_id, jersey_number, position, grade, bats, throws').in('user_id', userIds);
+        const profileMap = {};
+        (profiles || []).forEach(p => { profileMap[p.user_id] = p; });
+        setUserResults(users.map(u => ({ ...u, profile: profileMap[u.id] || null })));
+      } else {
+        setUserResults([]);
+      }
+      setSearchingUsers(false);
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [userSearch]);
+
+  const selectUser = (user) => {
+    const p = user.profile || {};
+    setFormData({
+      full_name: user.full_name || '',
+      email: user.email || '',
+      phone: user.phone || '',
+      height: user.height || '',
+      weight: user.weight || '',
+      team_id: '',
+      jersey_number: p.jersey_number || '',
+      position: p.position || '',
+      grade: p.grade || '',
+      bats: p.bats || 'Right',
+      throws: p.throws || 'Right',
+    });
+    setSelectedUserId(user.id);
+    setUserSearch('');
+    setUserResults([]);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -2346,6 +2390,7 @@ function CreateProspectModal({ teams, onClose, onSuccess }) {
         grade: formData.grade || null,
         bats: formData.bats,
         throws: formData.throws,
+        player_id: selectedUserId || null,
       });
       if (insertError) throw insertError;
       onSuccess();
@@ -2368,6 +2413,44 @@ function CreateProspectModal({ teams, onClose, onSuccess }) {
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
+
+          {/* Import from existing user */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <label className="block text-sm font-medium text-blue-900 mb-2">
+              <UserPlus size={16} className="inline mr-1 -mt-0.5" />
+              Import from Existing User
+            </label>
+            {selectedUserId ? (
+              <div className="flex items-center justify-between bg-white border border-blue-300 rounded-lg px-3 py-2">
+                <span className="text-sm text-gray-900 font-medium">{formData.full_name} — fields populated below</span>
+                <button type="button" onClick={() => { setSelectedUserId(null); setFormData({ full_name: '', email: '', phone: '', height: '', weight: '', team_id: '', jersey_number: '', position: '', grade: '', bats: 'Right', throws: 'Right' }); }} className="text-xs text-red-600 hover:text-red-800">Clear</button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-400" />
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Search users by name to auto-fill..."
+                  className="w-full pl-9 pr-4 py-2 border border-blue-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                />
+                {userResults.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {userResults.map(u => (
+                      <button key={u.id} type="button" onClick={() => selectUser(u)} className="w-full text-left px-4 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-0">
+                        <div className="text-sm font-medium text-gray-900">{u.full_name}</div>
+                        <div className="text-xs text-gray-500">{u.email}{u.profile?.position ? ` · ${u.profile.position}` : ''}{u.role ? ` · ${u.role}` : ''}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {searchingUsers && <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-sm text-gray-500">Searching...</div>}
+                {userSearch.length >= 2 && !searchingUsers && userResults.length === 0 && <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-sm text-gray-500">No users found</div>}
+              </div>
+            )}
+            <p className="text-xs text-blue-700 mt-2">Search for an existing user to auto-fill their info, or fill in manually below.</p>
+          </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>

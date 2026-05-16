@@ -71,7 +71,8 @@ export default function App() {
 
   useEffect(() => {
     const hash = window.location.hash || '';
-    if (hash.includes('type=recovery')) {
+    const search = window.location.search || '';
+    if (hash.includes('type=recovery') || search.includes('type=recovery')) {
       setPasswordRecovery(true);
     }
 
