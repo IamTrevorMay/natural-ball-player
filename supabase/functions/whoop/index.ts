@@ -219,8 +219,8 @@ async function handleConnect(userId: string): Promise<Response> {
     .update({ whoop_oauth_state: state })
     .eq("id", userId);
 
-  const siteUrl = Deno.env.get("SITE_URL") || Deno.env.get("SUPABASE_URL")!;
-  const callbackUrl = `${siteUrl}/functions/v1/whoop?action=callback`;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const callbackUrl = `${Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app"}/api/whoop/callback`;
 
   const params = new URLSearchParams({
     client_id: Deno.env.get("WHOOP_CLIENT_ID")!,
@@ -260,8 +260,8 @@ async function handleCallback(req: Request): Promise<Response> {
   }
 
   // Exchange code for tokens
-  const siteUrl = Deno.env.get("SITE_URL") || Deno.env.get("SUPABASE_URL")!;
-  const callbackUrl = `${siteUrl}/functions/v1/whoop?action=callback`;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const callbackUrl = `${Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app"}/api/whoop/callback`;
 
   const tokenRes = await fetch(WHOOP_TOKEN_URL, {
     method: "POST",

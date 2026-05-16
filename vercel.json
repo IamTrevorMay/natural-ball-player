@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/whoop/callback",
+      "destination": "https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/whoop-callback"
+    }
+  ]
+}
