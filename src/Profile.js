@@ -4,6 +4,7 @@ import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2,
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
+import WhoopTab from './WhoopTab';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -26,7 +27,7 @@ const PROFILE_TABS = [
   { key: 'programming', label: 'Programming', roles: ['admin', 'coach'] },
   { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
-  { key: 'whoop', label: 'Whoop' },
+  { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
   { key: 'hittrax', label: 'Hittrax' },
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },
@@ -1274,10 +1275,14 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
+          )}
+
+          {activeProfileTab === 'whoop' && (
+            <WhoopTab userId={userId} userRole={userRole} />
           )}
 
           {activeProfileTab === 'attendance' && (
