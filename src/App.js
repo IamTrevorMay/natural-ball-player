@@ -72,20 +72,10 @@ export default function App() {
   useEffect(() => {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
-    if (hash.includes('type=recovery') || search.includes('type=recovery')) {
+    const isRecoveryUrl = hash.includes('type=recovery') || search.includes('type=recovery');
+    if (isRecoveryUrl) {
       setPasswordRecovery(true);
     }
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        setUserId(session.user.id);
-        fetchUserRole(session.user.id);
-        checkWaiverStatus(session.user.id);
-        checkContractStatus(session.user.id);
-      }
-      setLoading(false);
-    });
 
     const {
       data: { subscription },
@@ -105,9 +95,28 @@ export default function App() {
         setWaiverSigned(null);
         setContractSigned(null);
       }
+      setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    // Fallback: if no auth event fires within 2s (e.g. no session at all), stop loading
+    const timeout = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) {
+          supabase.auth.getSession().then(({ data: { session } }) => {
+            if (session) {
+              setSession(session);
+              setUserId(session.user.id);
+              fetchUserRole(session.user.id);
+              checkWaiverStatus(session.user.id);
+              checkContractStatus(session.user.id);
+            }
+          });
+        }
+        return false;
+      });
+    }, 2000);
+
+    return () => { subscription.unsubscribe(); clearTimeout(timeout); };
   }, []);
 
   const [userName, setUserName] = useState('');
