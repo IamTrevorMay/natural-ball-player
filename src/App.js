@@ -229,7 +229,7 @@ function LoginPage({ onLogin }) {
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
         <div className="text-center mb-8">
-          <div className="text-6xl mb-4">âš¾</div>
+          <img src="/nbp-logo.png" alt="NBP Logo" className="w-24 h-24 mx-auto mb-4 object-contain" />
           <h1 className="text-3xl font-bold text-gray-900">Natural Ball Player</h1>
           <p className="text-gray-600 mt-2">Training Portal</p>
         </div>
@@ -352,7 +352,7 @@ function ResetPasswordPage({ onComplete }) {
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
         <div className="text-center mb-6">
-          <Lock size={40} className="mx-auto text-blue-500 mb-3" />
+          <img src="/nbp-logo.png" alt="NBP Logo" className="w-20 h-20 mx-auto mb-3 object-contain" />
           <h1 className="text-2xl font-bold text-gray-900">Set New Password</h1>
           <p className="text-gray-600 mt-2 text-sm">Enter your new password below.</p>
         </div>
@@ -487,7 +487,10 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
   return (
     <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col">
       <div className="mb-4">
-        <h1 className="text-xl font-bold text-blue-400">Natural Ball Player</h1>
+        <div className="flex items-center space-x-2">
+          <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain" />
+          <h1 className="text-xl font-bold text-blue-400">Natural Ball Player</h1>
+        </div>
         <div className="flex items-center space-x-3 mt-2">
           {userAvatar ? (
             <img src={userAvatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />

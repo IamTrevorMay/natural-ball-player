@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "NBP Portal <onboarding@resend.dev>",
+        from: "NBP Portal <noreply@thenatural-app.com>",
         to: [recipientEmail],
         subject,
         text: body,

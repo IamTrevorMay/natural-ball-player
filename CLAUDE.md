@@ -19,6 +19,10 @@ When creating new tables:
 2. **Always use `public.get_user_role()`** (SECURITY DEFINER function) in RLS policies — NOT inline `EXISTS (SELECT FROM users ...)` subqueries. The subquery approach causes RLS recursion failures since the `users` table also has RLS.
 3. **Use separate policies** for SELECT/INSERT/UPDATE/DELETE — INSERT requires `WITH CHECK`, not `USING`. Avoid `FOR ALL`.
 
+## Pending Manual Configuration
+1. **Supabase Auth Redirect URLs (for forgot password #78):** Go to Supabase Dashboard → Project Settings → Authentication → URL Configuration. Set **Site URL** to `https://natural-ball-player.vercel.app`. Add `https://natural-ball-player.vercel.app/**` to the **Redirect URLs** allowlist.
+2. **Resend Custom Domain (for email player #79):** Verify a custom domain at https://resend.com/domains, add the DNS records (SPF, DKIM). Then update the `from` field in `supabase/functions/send-email/index.ts` from `onboarding@resend.dev` to the verified domain (e.g. `NBP Portal <noreply@yourdomain.com>`), and redeploy with `npx supabase functions deploy send-email`.
+
 ## Workflow
 - Trevor prefers batched feature requests and "commit push deploy" as a single flow
 - Build must pass (`npx react-scripts build`) before committing
