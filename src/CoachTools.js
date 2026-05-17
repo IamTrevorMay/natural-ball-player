@@ -2007,18 +2007,25 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
         return;
       }
 
-      const rows = selectedPlayerIds.map(pid => ({
-        program_id: program.id,
-        player_id: pid,
-        team_id: null,
-        start_date: startDate || null,
-        end_date: endDate || null,
-        assigned_by: user?.id,
-      }));
-      const { error: insertError } = await supabase.from('training_program_assignments').insert(rows);
-      if (insertError) { setError(insertError.message); setLoading(false); return; }
-      const { count } = await generateWorkoutEvents({ playerIds: selectedPlayerIds });
-      if (count > 0) alert(`Assigned program. Added ${count} workout${count === 1 ? '' : 's'} to the calendar.`);
+      // Process players in batches of 5 to avoid overwhelming the API
+      const PLAYER_BATCH = 5;
+      let totalCount = 0;
+      for (let i = 0; i < selectedPlayerIds.length; i += PLAYER_BATCH) {
+        const batch = selectedPlayerIds.slice(i, i + PLAYER_BATCH);
+        const rows = batch.map(pid => ({
+          program_id: program.id,
+          player_id: pid,
+          team_id: null,
+          start_date: startDate || null,
+          end_date: endDate || null,
+          assigned_by: user?.id,
+        }));
+        const { error: insertError } = await supabase.from('training_program_assignments').insert(rows);
+        if (insertError) { setError(insertError.message); setLoading(false); return; }
+        const { count } = await generateWorkoutEvents({ playerIds: batch });
+        totalCount += (count || 0);
+      }
+      if (totalCount > 0) alert(`Assigned program. Added ${totalCount} workout${totalCount === 1 ? '' : 's'} to the calendar.`);
       onSuccess();
     } catch (err) {
       setError(err.message || String(err));

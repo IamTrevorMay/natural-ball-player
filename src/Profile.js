@@ -1258,15 +1258,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
           {/* Tab Bar */}
           <div className="border-b border-gray-200 mb-6">
-            <nav className="flex space-x-8 overflow-x-auto">
+            <nav className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-1 pb-2">
               {PROFILE_TABS.filter(tab => !tab.roles || tab.roles.includes(userRole)).map(tab => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveProfileTab(tab.key)}
-                  className={`py-3 px-1 border-b-2 font-medium text-sm whitespace-nowrap transition ${
+                  className={`py-2 px-2 rounded-lg font-medium text-xs text-center transition ${
                     activeProfileTab === tab.key
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                   }`}
                 >
                   {tab.label}

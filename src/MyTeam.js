@@ -752,8 +752,77 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
     }
   };
 
+  // Group prospects by position for field view
+  const positionMap = {};
+  const FIELD_POSITIONS = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH'];
+  prospects.forEach(p => {
+    const pos = (p.position || '').toUpperCase().trim();
+    if (pos) {
+      if (!positionMap[pos]) positionMap[pos] = [];
+      positionMap[pos].push(p);
+    }
+  });
+
   return (
     <div className="space-y-4">
+      {/* Field Depth Chart */}
+      {prospects.length > 0 && (
+        <div className="bg-gradient-to-b from-green-100 to-green-50 border border-green-200 rounded-xl p-4 mb-4">
+          <h4 className="text-sm font-semibold text-gray-700 mb-3 text-center">Field Depth Chart</h4>
+          <div className="relative w-full max-w-[500px] mx-auto" style={{ aspectRatio: '1.2' }}>
+            {/* Outfield arc */}
+            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 500 420" fill="none">
+              <path d="M 50 380 Q 250 20 450 380" stroke="#4ade80" strokeWidth="2" fill="none" strokeDasharray="4,4" />
+              {/* Infield diamond */}
+              <polygon points="250,280 320,340 250,400 180,340" stroke="#854d0e" strokeWidth="1.5" fill="#fef3c7" fillOpacity="0.3" />
+              {/* Baselines */}
+              <line x1="250" y1="400" x2="50" y2="380" stroke="#854d0e" strokeWidth="1" opacity="0.4" />
+              <line x1="250" y1="400" x2="450" y2="380" stroke="#854d0e" strokeWidth="1" opacity="0.4" />
+            </svg>
+            {/* Position spots */}
+            {[
+              { pos: 'P', x: '50%', y: '72%' },
+              { pos: 'C', x: '50%', y: '95%' },
+              { pos: '1B', x: '68%', y: '75%' },
+              { pos: '2B', x: '62%', y: '62%' },
+              { pos: '3B', x: '32%', y: '75%' },
+              { pos: 'SS', x: '38%', y: '62%' },
+              { pos: 'LF', x: '20%', y: '35%' },
+              { pos: 'CF', x: '50%', y: '22%' },
+              { pos: 'RF', x: '80%', y: '35%' },
+              { pos: 'DH', x: '90%', y: '90%' },
+            ].map(({ pos, x, y }) => {
+              const players = positionMap[pos] || [];
+              return (
+                <div
+                  key={pos}
+                  className="absolute flex flex-col items-center transform -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: x, top: y }}
+                  onMouseEnter={() => setHoveredPosition(pos)}
+                  onMouseLeave={() => setHoveredPosition(null)}
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition ${
+                    players.length > 0 ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-gray-400 border-gray-300'
+                  }`}>
+                    {pos}
+                  </div>
+                  <span className={`text-[9px] font-medium mt-0.5 ${players.length > 0 ? 'text-gray-700' : 'text-gray-400'}`}>
+                    {players.length > 0 ? `${players.length}` : '—'}
+                  </span>
+                  {hoveredPosition === pos && players.length > 0 && (
+                    <div className="absolute top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-30 min-w-[120px]">
+                      {players.map(p => (
+                        <div key={p.id} className="text-[11px] text-gray-800 py-0.5 whitespace-nowrap">{p.name}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900">Prospects List</h3>
         {!addMode && (
