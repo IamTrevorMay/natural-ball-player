@@ -4,8 +4,33 @@ import { Activity, RefreshCw, Link2, Unlink } from 'lucide-react';
 
 // ---- Readiness algorithm ----
 
+// Static time-in-bed scoring (linear interpolation between breakpoints)
+function timeInBedScore(ms) {
+  if (ms == null) return null;
+  const hours = ms / 3_600_000;
+  const breakpoints = [
+    [5, 0.10],
+    [6, 0.40],
+    [7, 0.60],
+    [8, 0.80],
+    [9, 0.92],
+    [10, 1.00],
+  ];
+  if (hours < 5) return 0.10;
+  if (hours >= 10) return 1.00;
+  for (let i = 0; i < breakpoints.length - 1; i++) {
+    const [h1, s1] = breakpoints[i];
+    const [h2, s2] = breakpoints[i + 1];
+    if (hours >= h1 && hours < h2) {
+      const t = (hours - h1) / (h2 - h1);
+      return s1 + t * (s2 - s1);
+    }
+  }
+  return 1.00;
+}
+
 const READINESS_METRICS = [
-  { key: 'time_in_bed', weight: 2.0, extract: (_, s) => s?.total_duration_ms ?? null },
+  { key: 'time_in_bed', weight: 2.0, extract: (_, s) => s?.total_duration_ms ?? null, static: true },
   { key: 'sleep_consistency', weight: 1.75, extract: (_, s) => s?.sleep_consistency ?? null },
   { key: 'time_asleep', weight: 1.5, extract: (_, s) => (s?.total_duration_ms != null && s?.awake_duration_ms != null) ? s.total_duration_ms - s.awake_duration_ms : null },
   { key: 'sleep_efficiency', weight: 1.25, extract: (_, s) => s?.sleep_efficiency ?? null },
@@ -33,18 +58,24 @@ function computeReadiness(todayCycle, todaySleep, allCycles, allSleep) {
     const todayVal = metric.extract(todayCycle, todaySleep);
     if (todayVal === null) continue;
 
-    const historical = [];
-    for (const date of allDates) {
-      const c = cycleByDate.get(date) ?? null;
-      const s = sleepByDate.get(date) ?? null;
-      const v = metric.extract(c, s);
-      if (v !== null) historical.push(v);
-    }
-    if (historical.length === 0) continue;
+    let percentile;
+    if (metric.static && metric.key === 'time_in_bed') {
+      // Use static scoring table instead of percentile rank
+      percentile = timeInBedScore(todayVal);
+    } else {
+      const historical = [];
+      for (const date of allDates) {
+        const c = cycleByDate.get(date) ?? null;
+        const s = sleepByDate.get(date) ?? null;
+        const v = metric.extract(c, s);
+        if (v !== null) historical.push(v);
+      }
+      if (historical.length === 0) continue;
 
-    historical.sort((a, b) => a - b);
-    const countBelow = historical.filter(v => v <= todayVal).length;
-    const percentile = countBelow / historical.length;
+      historical.sort((a, b) => a - b);
+      const countBelow = historical.filter(v => v <= todayVal).length;
+      percentile = countBelow / historical.length;
+    }
 
     weightedSum += percentile * metric.weight;
     weightSum += metric.weight;
