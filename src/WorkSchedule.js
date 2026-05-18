@@ -269,6 +269,14 @@ export default function WorkSchedule({ userId, userRole }) {
           getEventAssignments={getEventAssignments}
           isMyAssigned={isMyAssigned}
           onSelectEvent={setSelectedEvent}
+          isAdmin={isAdmin}
+          onClickSlot={(slotDay, hour, minute, staffId) => {
+            const d = new Date(slotDay);
+            d.setHours(hour, minute, 0, 0);
+            const endD = new Date(d.getTime() + 3600000);
+            setEditing({ _prefill: true, start_at: d.toISOString(), end_at: endD.toISOString(), _prefillStaff: staffId });
+            setShowForm(true);
+          }}
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
@@ -388,15 +396,15 @@ export default function WorkSchedule({ userId, userRole }) {
   );
 }
 
-function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, getEventAssignments, isMyAssigned, onSelectEvent }) {
+function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, getEventAssignments, isMyAssigned, onSelectEvent, isAdmin, onClickSlot }) {
   const dayStr = fmtLocalDate(day);
   const START_HOUR = 6;
   const END_HOUR = 22;
   const TOTAL_HOURS = END_HOUR - START_HOUR;
   const HOURS = Array.from({ length: TOTAL_HOURS }, (_, i) => START_HOUR + i);
   const TOTAL_MINUTES = TOTAL_HOURS * 60;
-  const ROW_HEIGHT = 56;
-  const STAFF_COL_WIDTH = 160;
+  const ROW_HEIGHT = 40;
+  const STAFF_COL_WIDTH = 140;
 
   const dayStaffEvents = staffEvents.filter(e => (e.event_date || fmtLocalDate(new Date(e.start_at))) === dayStr);
   const dayFacilityEvents = facilityEvents.filter(f => f.event_date === dayStr);
@@ -472,22 +480,34 @@ function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, a
             return (
               <div key={row.id} className="flex border-b border-gray-100 group hover:bg-gray-50/50">
                 {/* Staff info cell */}
-                <div className="flex-shrink-0 border-r border-gray-200 px-3 flex items-center space-x-2" style={{ width: STAFF_COL_WIDTH, height: ROW_HEIGHT }}>
+                <div className="flex-shrink-0 border-r border-gray-200 px-2 flex items-center space-x-1.5" style={{ width: STAFF_COL_WIDTH, height: ROW_HEIGHT }}>
                   {row.avatar_url ? (
-                    <img src={row.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                    <img src={row.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
                   ) : (
-                    <div className="w-7 h-7 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                    <div className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
                       {row.name.charAt(0)}
                     </div>
                   )}
                   <div className="min-w-0">
-                    <div className="text-xs font-medium text-gray-800 truncate">{row.name.split(' ')[0]}</div>
-                    {totalH > 0 && <div className="text-[10px] text-gray-400">{totalH}h</div>}
+                    <div className="text-xs font-medium text-gray-800 truncate leading-tight">{row.name.split(' ')[0]}</div>
+                    {totalH > 0 && <div className="text-[10px] text-gray-400 leading-tight">{totalH}h</div>}
                   </div>
                 </div>
 
                 {/* Timeline cell */}
-                <div className="flex-1 relative" style={{ height: ROW_HEIGHT }}>
+                <div
+                  className={`flex-1 relative ${isAdmin ? 'cursor-pointer' : ''}`}
+                  style={{ height: ROW_HEIGHT }}
+                  onClick={isAdmin ? (e) => {
+                    if (e.target !== e.currentTarget) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const pct = (e.clientX - rect.left) / rect.width;
+                    const clickMin = Math.round((pct * TOTAL_MINUTES + START_HOUR * 60) / 15) * 15;
+                    const clickHour = Math.floor(clickMin / 60);
+                    const clickMinute = clickMin % 60;
+                    onClickSlot && onClickSlot(day, clickHour, clickMinute, row.id);
+                  } : undefined}
+                >
                   {/* Vertical hour grid lines */}
                   {HOURS.map(h => (
                     <div key={h} className="absolute top-0 bottom-0 border-l border-gray-100" style={{ left: ((h - START_HOUR) / TOTAL_HOURS * 100) + '%' }} />
@@ -716,14 +736,17 @@ function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDele
 }
 
 function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved, createdBy }) {
-  const editRealId = editing && !editing._is_virtual && !editing._editMode ? editing.id : null;
+  const isPrefill = editing?._prefill;
+  const editRealId = editing && !editing._is_virtual && !editing._editMode && !isPrefill ? editing.id : null;
 
-  const [title, setTitle] = useState(editing?.title || '');
-  const [description, setDescription] = useState(editing?.description || '');
+  const [title, setTitle] = useState(isPrefill ? '' : (editing?.title || ''));
+  const [description, setDescription] = useState(isPrefill ? '' : (editing?.description || ''));
   const [startAt, setStartAt] = useState(editing ? dateToInputValue(editing.start_at) : '');
   const [endAt, setEndAt] = useState(editing ? dateToInputValue(editing.end_at) : '');
-  const [location, setLocation] = useState(editing?.location || '');
-  const [assignedIds, setAssignedIds] = useState(existingAssignments.map(a => a.user_id));
+  const [location, setLocation] = useState(isPrefill ? '' : (editing?.location || ''));
+  const [assignedIds, setAssignedIds] = useState(
+    isPrefill && editing._prefillStaff ? [editing._prefillStaff] : existingAssignments.map(a => a.user_id)
+  );
   const [saving, setSaving] = useState(false);
 
   const existingRule = editing?.recurrence_rule;
@@ -734,8 +757,8 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
     if (existingRule.freq === 'monthly' && (existingRule.interval || 1) === 1 && existingRule.endType === 'never') return 'monthly';
     return 'custom';
   };
-  const showRecurrence = !editing || (!editing._editMode);
-  const [recurrence, setRecurrence] = useState(editing?.is_recurring ? inferRecurrence() : 'none');
+  const showRecurrence = !editing || isPrefill || (!editing._editMode);
+  const [recurrence, setRecurrence] = useState(!isPrefill && editing?.is_recurring ? inferRecurrence() : 'none');
   const [customRule, setCustomRule] = useState(existingRule || { freq: 'weekly', interval: 1, byDay: [], endType: 'never', count: 10, until: '' });
 
   const toggleAssign = (id) => {
@@ -865,7 +888,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
       <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b">
           <h3 className="text-lg font-semibold text-gray-900">
-            {editing?._editMode === 'this' ? 'Edit this occurrence' : editing?._editMode === 'future' ? 'Edit this & future' : editing ? 'Edit event' : 'New staff event'}
+            {editing?._editMode === 'this' ? 'Edit this occurrence' : editing?._editMode === 'future' ? 'Edit this & future' : (editing && !isPrefill) ? 'Edit event' : 'New staff event'}
           </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
@@ -966,7 +989,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
         <div className="flex justify-end space-x-2 p-4 border-t bg-gray-50">
           <button onClick={onClose} className="px-4 py-2 text-gray-600 hover:text-gray-900 transition">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">
-            {saving ? 'Saving...' : editing ? 'Save changes' : 'Create event'}
+            {saving ? 'Saving...' : (editing && !isPrefill) ? 'Save changes' : 'Create event'}
           </button>
         </div>
       </div>

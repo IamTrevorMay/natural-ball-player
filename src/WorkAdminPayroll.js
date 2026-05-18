@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { FileText, Plus, X, Edit2, Trash2, Upload, Download, DollarSign } from 'lucide-react';
+import { FileText, Plus, X, Edit2, Trash2, Upload, Download, DollarSign, Lock, Settings } from 'lucide-react';
 
 const DOC_TYPES = [
   { value: 'paystub', label: 'Paystub' },
@@ -18,7 +18,128 @@ const DOC_TYPE_COLOR = {
   other: 'bg-gray-100 text-gray-700',
 };
 
+/* ─── PIN gate ─── */
+function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
+  const [storedPin, setStoredPin] = useState(null);   // null = loading, '' = no pin set
+  const [pin, setPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [error, setError] = useState('');
+  const [settingUp, setSettingUp] = useState(!!changeMode);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from('work_portal_settings')
+        .select('value')
+        .eq('key', 'payroll_pin')
+        .maybeSingle();
+      setStoredPin(data?.value || '');
+    })();
+  }, []);
+
+  const handleVerify = () => {
+    if (pin === storedPin) { onUnlock(); }
+    else { setError('Incorrect PIN. Try again.'); setPin(''); }
+  };
+
+  const handleSetPin = async () => {
+    if (newPin.length < 4) { setError('PIN must be at least 4 digits.'); return; }
+    if (newPin !== confirmPin) { setError('PINs do not match.'); return; }
+    setSaving(true);
+    const { error: dbErr } = await supabase
+      .from('work_portal_settings')
+      .upsert({ key: 'payroll_pin', value: newPin }, { onConflict: 'key' });
+    if (dbErr) { setError('Failed to save PIN: ' + dbErr.message); setSaving(false); return; }
+    setSaving(false);
+    onUnlock();
+  };
+
+  if (storedPin === null) {
+    return <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">Loading...</div>;
+  }
+
+  // No PIN set yet — prompt to create one
+  if (storedPin === '' || settingUp) {
+    return (
+      <div className="max-w-sm mx-auto mt-16">
+        <div className="bg-white rounded-lg shadow p-8 text-center">
+          <Lock className="mx-auto text-indigo-400 mb-4" size={40} />
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">{storedPin === '' ? 'Set a Payroll PIN' : 'Change Payroll PIN'}</h2>
+          <p className="text-sm text-gray-500 mb-6">Choose a numeric PIN (at least 4 digits) to protect payroll data.</p>
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={8}
+            value={newPin}
+            onChange={(e) => { setNewPin(e.target.value.replace(/\D/g, '')); setError(''); }}
+            placeholder="New PIN"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-lg tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            autoFocus
+          />
+          <input
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={8}
+            value={confirmPin}
+            onChange={(e) => { setConfirmPin(e.target.value.replace(/\D/g, '')); setError(''); }}
+            placeholder="Confirm PIN"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-lg tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            onKeyDown={(e) => e.key === 'Enter' && handleSetPin()}
+          />
+          {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+          <button
+            onClick={handleSetPin}
+            disabled={saving}
+            className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Set PIN'}
+          </button>
+          {(storedPin !== '' || onCancelChange) && (
+            <button onClick={() => { if (onCancelChange) onCancelChange(); else { setSettingUp(false); setError(''); } }} className="mt-3 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // PIN exists — require entry
+  return (
+    <div className="max-w-sm mx-auto mt-16">
+      <div className="bg-white rounded-lg shadow p-8 text-center">
+        <Lock className="mx-auto text-indigo-400 mb-4" size={40} />
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Payroll Locked</h2>
+        <p className="text-sm text-gray-500 mb-6">Enter your PIN to access payroll data.</p>
+        <input
+          type="password"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={8}
+          value={pin}
+          onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }}
+          placeholder="Enter PIN"
+          className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-lg tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          autoFocus
+          onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
+        />
+        {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+        <button
+          onClick={handleVerify}
+          className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition"
+        >
+          Unlock
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function WorkAdminPayroll({ userId }) {
+  const [pinVerified, setPinVerified] = useState(false);
+  const [showChangePin, setShowChangePin] = useState(false);
   const [docs, setDocs] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -173,19 +294,43 @@ export default function WorkAdminPayroll({ userId }) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  if (!pinVerified) {
+    return <PayrollPinGate onUnlock={() => setPinVerified(true)} />;
+  }
+
+  if (showChangePin) {
+    return (
+      <PayrollPinGate
+        changeMode
+        onUnlock={() => setShowChangePin(false)}
+        onCancelChange={() => setShowChangePin(false)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">Upload paystubs and tax documents. Each staff member can only see their own.</p>
-        {!showForm && (
+        <div className="flex items-center space-x-2">
           <button
-            onClick={() => setShowForm(true)}
-            className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
+            onClick={() => setShowChangePin(true)}
+            className="flex items-center space-x-1 text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition text-sm"
+            title="Change PIN"
           >
-            <Plus size={16} />
-            <span>Upload</span>
+            <Settings size={15} />
+            <span className="hidden sm:inline">Change PIN</span>
           </button>
-        )}
+          {!showForm && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
+            >
+              <Plus size={16} />
+              <span>Upload</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {showForm && (

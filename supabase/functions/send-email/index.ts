@@ -81,6 +81,19 @@ Deno.serve(async (req) => {
       );
     }
 
+    const htmlBody = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a1a;padding:24px;max-width:600px;margin:0 auto;">
+<div style="white-space:pre-wrap;font-size:15px;line-height:1.6;">${body.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>
+<hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px;">
+<p style="font-size:13px;color:#6b7280;text-align:center;">
+<a href="https://www.thenatural-app.com" style="color:#4f46e5;text-decoration:none;font-weight:600;">Log in to The Natural</a><br>
+<span style="font-size:11px;color:#9ca3af;">www.thenatural-app.com</span>
+</p>
+</body>
+</html>`;
+
     const resendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -91,7 +104,8 @@ Deno.serve(async (req) => {
         from: "NBP Portal <noreply@thenatural-app.com>",
         to: [recipientEmail],
         subject,
-        text: body,
+        html: htmlBody,
+        text: body + "\n\n---\nLog in to The Natural: https://www.thenatural-app.com",
       }),
     });
 
