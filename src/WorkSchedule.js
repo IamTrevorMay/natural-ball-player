@@ -82,6 +82,7 @@ function expandStaffRecurring(masters, exceptions, rangeStart, rangeEnd) {
 
 export default function WorkSchedule({ userId, userRole }) {
   const isAdmin = userRole === 'admin';
+  const canManage = userRole === 'admin' || userRole === 'coach';
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [staffEvents, setStaffEvents] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -243,7 +244,7 @@ export default function WorkSchedule({ userId, userRole }) {
             <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /><span>Facility</span></span>
             <span className="flex items-center space-x-1"><UserCheck size={12} className="text-indigo-600" /><span>Assigned to you</span></span>
           </div>
-          {isAdmin && (
+          {canManage && (
             <button
               onClick={() => { setEditing(null); setShowForm(true); }}
               className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
@@ -269,7 +270,7 @@ export default function WorkSchedule({ userId, userRole }) {
           getEventAssignments={getEventAssignments}
           isMyAssigned={isMyAssigned}
           onSelectEvent={setSelectedEvent}
-          isAdmin={isAdmin}
+          canManage={canManage}
           onClickSlot={(slotDay, hour, minute, staffId) => {
             const d = new Date(slotDay);
             d.setHours(hour, minute, 0, 0);
@@ -375,7 +376,7 @@ export default function WorkSchedule({ userId, userRole }) {
         <EventDetailModal
           event={selectedEvent}
           assignments={getEventAssignments(selectedEvent)}
-          isAdmin={isAdmin}
+          canManage={canManage}
           onClose={() => setSelectedEvent(null)}
           onEdit={(editEvent) => { setEditing(editEvent || selectedEvent); setShowForm(true); setSelectedEvent(null); }}
           onDeleted={() => { setSelectedEvent(null); fetchAll(); }}
@@ -396,7 +397,7 @@ export default function WorkSchedule({ userId, userRole }) {
   );
 }
 
-function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, getEventAssignments, isMyAssigned, onSelectEvent, isAdmin, onClickSlot }) {
+function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, assignmentsByEvent, myAssignedEventIds, getEventAssignments, isMyAssigned, onSelectEvent, canManage, onClickSlot }) {
   const dayStr = fmtLocalDate(day);
   const START_HOUR = 6;
   const END_HOUR = 22;
@@ -496,9 +497,9 @@ function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, a
 
                 {/* Timeline cell */}
                 <div
-                  className={`flex-1 relative ${isAdmin ? 'cursor-pointer' : ''}`}
+                  className={`flex-1 relative ${canManage ? 'cursor-pointer' : ''}`}
                   style={{ height: ROW_HEIGHT }}
-                  onClick={isAdmin ? (e) => {
+                  onClick={canManage ? (e) => {
                     if (e.target !== e.currentTarget) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     const pct = (e.clientX - rect.left) / rect.width;
@@ -570,7 +571,7 @@ function DailyTimeline({ day, staffEvents, facilityEvents, staff, assignments, a
   );
 }
 
-function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDeleted }) {
+function EventDetailModal({ event, assignments, canManage, onClose, onEdit, onDeleted }) {
   const [showRecurringChoice, setShowRecurringChoice] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -709,7 +710,7 @@ function EventDetailModal({ event, assignments, isAdmin, onClose, onEdit, onDele
           </div>
         )}
 
-        {isAdmin && !showRecurringChoice && (
+        {canManage && !showRecurringChoice && (
           <div className="flex justify-end space-x-2 p-4 border-t bg-gray-50">
             <button
               onClick={handleDelete}
