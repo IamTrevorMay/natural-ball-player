@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
@@ -262,9 +262,10 @@ export default function Schedule({ userId, userRole }) {
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
     const startStr = fmtLocalDate(startOfMonth);
     const endStr = fmtLocalDate(endOfMonth);
-    const { data: nonRecurring } = await supabase.from('facility_events').select('*').eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
-    const { data: masters } = await supabase.from('facility_events').select('*').eq('is_recurring', true).is('recurrence_parent_id', null);
-    const { data: exceptions } = await supabase.from('facility_events').select('*').not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr);
+    const facSelect = '*, athlete:athlete_id(full_name), coach:coach_id(full_name)';
+    const { data: nonRecurring } = await supabase.from('facility_events').select(facSelect).eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
+    const { data: masters } = await supabase.from('facility_events').select(facSelect).eq('is_recurring', true).is('recurrence_parent_id', null);
+    const { data: exceptions } = await supabase.from('facility_events').select(facSelect).not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr);
     const expanded = expandRecurringEvents(masters || [], exceptions || [], startOfMonth, endOfMonth);
     setFacilityEvents([...(nonRecurring || []), ...expanded]);
   };
@@ -1625,6 +1626,7 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
           .from('schedule_events')
           .insert({
             team_id: teamId,
+            team_ids: [teamId],
             event_type: teamEventData.event_type,
             opponent: teamEventData.opponent,
             event_date: dateStr,
@@ -3621,6 +3623,21 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
   const [customRule, setCustomRule] = useState({ freq: 'weekly', interval: 1, byDay: [], endType: 'never', count: 10, until: '' });
   const [color, setColor] = useState('teal');
   const [loading, setLoading] = useState(false);
+  const [athleteId, setAthleteId] = useState('');
+  const [coachId, setCoachId] = useState('');
+  const [athletes, setAthletes] = useState([]);
+  const [coaches, setCoaches] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      const [aRes, cRes] = await Promise.all([
+        supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name'),
+        supabase.from('users').select('id, full_name').in('role', ['admin', 'coach']).order('full_name'),
+      ]);
+      setAthletes(aRes.data || []);
+      setCoaches(cRes.data || []);
+    })();
+  }, []);
 
   const handleSave = async () => {
     if (!title.trim()) return alert('Title is required');
@@ -3646,6 +3663,8 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
         is_recurring: isRecurring, recurrence_rule: recurrenceRule, created_by: user?.id,
         lanes: lanes.length > 0 ? lanes : null,
         color,
+        athlete_id: athleteId || null,
+        coach_id: coachId || null,
       });
       if (error) throw error;
       onSuccess();
@@ -3712,6 +3731,22 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
           <div className="flex items-start space-x-3 mb-4">
             <AlignLeft size={20} className="text-gray-400 mt-2" />
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Add description" rows="3" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="flex items-center space-x-3">
+              <User size={20} className="text-gray-400 flex-shrink-0" />
+              <select value={athleteId} onChange={(e) => setAthleteId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                <option value="">Athlete (optional)</option>
+                {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center space-x-3">
+              <UserCheck size={20} className="text-gray-400 flex-shrink-0" />
+              <select value={coachId} onChange={(e) => setCoachId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                <option value="">Coach (optional)</option>
+                {coaches.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+              </select>
+            </div>
           </div>
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Reserved Lanes</label>
@@ -3906,6 +3941,12 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
+              {(event.athlete?.full_name || event.coach?.full_name) && (
+                <div className="flex items-center flex-wrap gap-3 text-sm">
+                  {event.athlete?.full_name && <div className="flex items-center space-x-1.5"><User size={14} className="text-gray-400" /><span className="text-gray-700">Athlete: <span className="font-medium text-gray-900">{event.athlete.full_name}</span></span></div>}
+                  {event.coach?.full_name && <div className="flex items-center space-x-1.5"><UserCheck size={14} className="text-gray-400" /><span className="text-gray-700">Coach: <span className="font-medium text-gray-900">{event.coach.full_name}</span></span></div>}
+                </div>
+              )}
 
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">
