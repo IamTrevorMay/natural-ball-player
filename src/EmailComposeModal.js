@@ -1,13 +1,60 @@
-import React, { useState } from 'react';
-import { X, Send, CheckCircle, AlertTriangle } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { X, Send, CheckCircle, AlertTriangle, Paperclip } from 'lucide-react';
 import { supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { supabase } from './supabaseClient';
+
+const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10 MB
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]); // strip data:... prefix
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function EmailComposeModal({ recipientName, recipientEmail, playerId, prospectId, onClose, onSent }) {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [attachments, setAttachments] = useState([]); // [{ file, name, size }]
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState(null); // { type: 'success' | 'error', message }
+  const [result, setResult] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const totalAttachmentSize = attachments.reduce((sum, a) => sum + a.size, 0);
+
+  const handleFileSelect = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    const currentSize = totalAttachmentSize;
+    const added = [];
+    let runningSize = currentSize;
+
+    for (const file of files) {
+      if (runningSize + file.size > MAX_TOTAL_SIZE) break;
+      added.push({ file, name: file.name, size: file.size });
+      runningSize += file.size;
+    }
+
+    if (added.length < files.length) {
+      setResult({ type: 'error', message: 'Some files were skipped — 10 MB total attachment limit.' });
+    }
+
+    setAttachments(prev => [...prev, ...added]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (index) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index));
+  };
 
   const handleSend = async () => {
     if (!subject.trim() || !body.trim()) return;
@@ -21,6 +68,14 @@ export default function EmailComposeModal({ recipientName, recipientEmail, playe
         setSending(false);
         return;
       }
+
+      // Encode attachments as base64
+      const encodedAttachments = await Promise.all(
+        attachments.map(async (a) => ({
+          filename: a.name,
+          content: await readFileAsBase64(a.file),
+        }))
+      );
 
       const res = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
         method: 'POST',
@@ -36,6 +91,7 @@ export default function EmailComposeModal({ recipientName, recipientEmail, playe
           body: body.trim(),
           playerId: playerId || null,
           prospectId: prospectId || null,
+          attachments: encodedAttachments.length ? encodedAttachments : undefined,
         }),
       });
 
@@ -97,6 +153,46 @@ export default function EmailComposeModal({ recipientName, recipientEmail, playe
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               disabled={sending || result?.type === 'success'}
             />
+          </div>
+
+          <div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+              disabled={sending || result?.type === 'success'}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending || result?.type === 'success' || totalAttachmentSize >= MAX_TOTAL_SIZE}
+              className="inline-flex items-center space-x-1.5 text-sm text-blue-600 hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Paperclip size={15} />
+              <span>Attach files</span>
+            </button>
+            {totalAttachmentSize > 0 && (
+              <span className="ml-2 text-xs text-gray-400">{formatSize(totalAttachmentSize)} / 10 MB</span>
+            )}
+
+            {attachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {attachments.map((a, i) => (
+                  <span key={i} className="inline-flex items-center bg-gray-100 text-gray-700 text-xs px-2.5 py-1.5 rounded-full space-x-1.5">
+                    <Paperclip size={12} className="text-gray-400" />
+                    <span className="max-w-[140px] truncate">{a.name}</span>
+                    <span className="text-gray-400">({formatSize(a.size)})</span>
+                    {result?.type !== 'success' && (
+                      <button onClick={() => removeAttachment(i)} className="text-gray-400 hover:text-red-500 ml-0.5">
+                        <X size={13} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {result && (

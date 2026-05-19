@@ -63,6 +63,7 @@ Deno.serve(async (req) => {
       body,
       playerId,
       prospectId,
+      attachments,   // optional: [{ filename, content (base64) }]
     } = await req.json();
 
     if (!recipientEmail || !subject || !body || !recipientName) {
@@ -94,19 +95,29 @@ Deno.serve(async (req) => {
 </body>
 </html>`;
 
+    // deno-lint-ignore no-explicit-any
+    const resendPayload: any = {
+      from: "NBP Portal <noreply@thenatural-app.com>",
+      to: [recipientEmail],
+      subject,
+      html: htmlBody,
+      text: body + "\n\n---\nLog in to The Natural: https://www.thenatural-app.com",
+    };
+
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      resendPayload.attachments = attachments.map((a: { filename: string; content: string }) => ({
+        filename: a.filename,
+        content: a.content,
+      }));
+    }
+
     const resendRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: "NBP Portal <noreply@thenatural-app.com>",
-        to: [recipientEmail],
-        subject,
-        html: htmlBody,
-        text: body + "\n\n---\nLog in to The Natural: https://www.thenatural-app.com",
-      }),
+      body: JSON.stringify(resendPayload),
     });
 
     // deno-lint-ignore no-explicit-any
@@ -118,6 +129,10 @@ Deno.serve(async (req) => {
     }
 
     // Log to communication_logs
+    const attachmentNames = Array.isArray(attachments) && attachments.length > 0
+      ? attachments.map((a: { filename: string }) => a.filename)
+      : null;
+
     const logEntry = {
       player_id: playerId || null,
       prospect_id: prospectId || null,
@@ -129,6 +144,7 @@ Deno.serve(async (req) => {
       status: resendRes.ok ? "sent" : "failed",
       resend_id: resendData.id || null,
       error_message: resendRes.ok ? null : (resendData.message || JSON.stringify(resendData)),
+      attachment_names: attachmentNames,
     };
 
     const { error: logError } = await serviceClient.from("communication_logs").insert(logEntry);

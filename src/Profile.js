@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
@@ -2499,6 +2499,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                             </span>
                           </div>
                           <p className="text-sm text-gray-600 whitespace-pre-wrap">{log.body}</p>
+                          {log.attachment_names && log.attachment_names.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {log.attachment_names.map((name, i) => (
+                                <span key={i} className="inline-flex items-center bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full">
+                                  <Paperclip size={10} className="mr-1" />{name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           <div className="flex items-center space-x-3 mt-2 text-xs text-gray-400">
                             <span>To: {log.recipient_name} &lt;{log.recipient_email}&gt;</span>
                             <span>By: {log.sender?.full_name || 'Unknown'}</span>
