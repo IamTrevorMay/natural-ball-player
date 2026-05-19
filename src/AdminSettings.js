@@ -857,6 +857,18 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetSending, setResetSending] = useState(false);
+
+  const handleSendPasswordReset = async () => {
+    setResetSending(true);
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(user.email, {
+      redirectTo: 'https://www.thenatural-app.com/reset-password',
+    });
+    setResetSending(false);
+    if (resetError) { alert('Failed to send reset email: ' + resetError.message); return; }
+    setResetSent(true);
+  };
 
   const availableTeams = teams.filter(t => !assignedTeamIds.includes(t.id));
 
@@ -1187,7 +1199,16 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
               )
             ) : <div />}
 
-            <div className="flex space-x-3">
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={handleSendPasswordReset}
+                disabled={resetSending || resetSent}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition disabled:opacity-50 flex items-center space-x-1"
+                title="Send password reset email"
+              >
+                <Mail size={14} />
+                <span>{resetSent ? 'Reset email sent' : resetSending ? 'Sending...' : 'Reset Password'}</span>
+              </button>
               <button
                 onClick={onClose}
                 className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition"
