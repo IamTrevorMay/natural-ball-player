@@ -51,6 +51,8 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [waiverSignatures, setWaiverSignatures] = useState([]);
+  const [contractSignatures, setContractSignatures] = useState([]);
+  const [medicalHistories, setMedicalHistories] = useState([]);
 
   const coaches = users.filter(u => u.role === 'coach');
   const players = users.filter(u => u.role === 'player');
@@ -72,11 +74,29 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
     else setWaiverSignatures(data || []);
   };
 
+  const fetchContractSignatures = async () => {
+    const { data, error } = await supabase
+      .from('player_contracts')
+      .select('user_id, signed_at');
+    if (error) console.error('Error fetching contracts:', error);
+    else setContractSignatures(data || []);
+  };
+
+  const fetchMedicalHistories = async () => {
+    const { data, error } = await supabase
+      .from('medical_history')
+      .select('user_id, signed_at');
+    if (error) console.error('Error fetching medical histories:', error);
+    else setMedicalHistories(data || []);
+  };
+
   useEffect(() => {
     fetchTeams();
     fetchUsers();
     fetchProspects();
     fetchWaiverSignatures();
+    fetchContractSignatures();
+    fetchMedicalHistories();
   }, []);
 
   const fetchTeams = async () => {
@@ -205,14 +225,14 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
               Inventory
             </button>
             <button
-              onClick={() => setActiveTab('waivers')}
+              onClick={() => setActiveTab('documents')}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
-                activeTab === 'waivers'
+                activeTab === 'documents'
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              Waivers ({waiverSignatures.length}/{players.length} signed)
+              Documents
             </button>
           </nav>
         </div>
@@ -266,8 +286,8 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
           {activeTab === 'inventory' && (
             <InventoryTab />
           )}
-          {activeTab === 'waivers' && (
-            <WaiversTab players={players} waiverSignatures={waiverSignatures} />
+          {activeTab === 'documents' && (
+            <DocumentsTab players={players} waiverSignatures={waiverSignatures} contractSignatures={contractSignatures} medicalHistories={medicalHistories} />
           )}
         </div>
       </div>
@@ -3127,32 +3147,28 @@ function InventoryTab() {
 }
 
 // ============================================
-// WAIVERS TAB
+// DOCUMENTS TAB
 // ============================================
-function WaiversTab({ players, waiverSignatures }) {
+function DocumentStatusTable({ players, completionMap, docLabel, reminderSubject }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  const waiverMap = {};
-  waiverSignatures.forEach(w => { waiverMap[w.user_id] = w; });
-
   const filtered = players.filter(p => {
-    if (statusFilter === 'signed') return !!waiverMap[p.id];
-    if (statusFilter === 'unsigned') return !waiverMap[p.id];
+    if (statusFilter === 'signed') return !!completionMap[p.id];
+    if (statusFilter === 'unsigned') return !completionMap[p.id];
     return true;
   });
 
   const sorted = [...filtered].sort((a, b) => {
-    const aHas = waiverMap[a.id] ? 1 : 0;
-    const bHas = waiverMap[b.id] ? 1 : 0;
-    if (aHas !== bHas) return aHas - bHas; // unsigned first
+    const aHas = completionMap[a.id] ? 1 : 0;
+    const bHas = completionMap[b.id] ? 1 : 0;
+    if (aHas !== bHas) return aHas - bHas;
     return (a.full_name || '').localeCompare(b.full_name || '');
   });
 
-  const signedCount = players.filter(p => waiverMap[p.id]).length;
+  const signedCount = players.filter(p => completionMap[p.id]).length;
   const unsignedCount = players.length - signedCount;
-  const unsignedPlayers = players.filter(p => !waiverMap[p.id]);
-  const unsignedEmails = unsignedPlayers.map(p => p.email).filter(Boolean);
+  const unsignedEmails = players.filter(p => !completionMap[p.id]).map(p => p.email).filter(Boolean);
 
   const handleCopyEmails = () => {
     navigator.clipboard.writeText(unsignedEmails.join(', '));
@@ -3162,25 +3178,24 @@ function WaiversTab({ players, waiverSignatures }) {
 
   const handleEmailAll = () => {
     const bcc = unsignedEmails.join(',');
-    const subject = encodeURIComponent('Reminder: Please Sign Your Waiver');
-    const body = encodeURIComponent('Hi,\n\nThis is a reminder to please sign your waiver at your earliest convenience.\n\nThank you!');
+    const subject = encodeURIComponent(reminderSubject);
+    const body = encodeURIComponent(`Hi,\n\nThis is a reminder to please complete your ${docLabel} at your earliest convenience.\n\nLog in at https://www.thenatural-app.com\n\nThank you!`);
     window.open(`mailto:?bcc=${bcc}&subject=${subject}&body=${body}`);
   };
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Player Waiver Status</h3>
         <div className="flex items-center space-x-2">
-          <span className="text-xs text-gray-500">{signedCount} signed &middot; {unsignedCount} unsigned</span>
+          <span className="text-xs text-gray-500">{signedCount} complete &middot; {unsignedCount} incomplete</span>
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           >
             <option value="all">All players</option>
-            <option value="signed">Signed</option>
-            <option value="unsigned">Unsigned</option>
+            <option value="signed">Complete</option>
+            <option value="unsigned">Incomplete</option>
           </select>
         </div>
       </div>
@@ -3191,14 +3206,14 @@ function WaiversTab({ players, waiverSignatures }) {
             className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition"
           >
             <ClipboardList size={13} />
-            <span>{copyFeedback ? 'Copied!' : 'Copy Unsigned Emails'}</span>
+            <span>{copyFeedback ? 'Copied!' : 'Copy Incomplete Emails'}</span>
           </button>
           <button
             onClick={handleEmailAll}
             className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
           >
             <Mail size={13} />
-            <span>Email All Unsigned</span>
+            <span>Email All Incomplete</span>
           </button>
         </div>
       )}
@@ -3209,37 +3224,37 @@ function WaiversTab({ players, waiverSignatures }) {
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Player Name</th>
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Email</th>
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Status</th>
-              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Date Signed</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Date</th>
               <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Action</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map(player => {
-              const waiver = waiverMap[player.id];
+              const record = completionMap[player.id];
               return (
                 <tr key={player.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-3 px-4 text-sm text-gray-900 font-medium">{player.full_name}</td>
                   <td className="py-3 px-4 text-sm text-gray-600">{player.email}</td>
                   <td className="py-3 px-4">
-                    {waiver ? (
+                    {record ? (
                       <span className="inline-flex items-center space-x-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
                         <CheckCircle size={12} />
-                        <span>Signed</span>
+                        <span>Complete</span>
                       </span>
                     ) : (
                       <span className="inline-flex items-center space-x-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">
                         <XCircle size={12} />
-                        <span>Unsigned</span>
+                        <span>Incomplete</span>
                       </span>
                     )}
                   </td>
                   <td className="py-3 px-4 text-sm text-gray-600">
-                    {waiver ? new Date(waiver.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
+                    {record?.signed_at ? new Date(record.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
                   </td>
                   <td className="py-3 px-4">
-                    {!waiver && player.email && (
+                    {!record && player.email && (
                       <a
-                        href={`mailto:${player.email}?subject=${encodeURIComponent('Reminder: Please Sign Your Waiver')}&body=${encodeURIComponent(`Hi ${player.full_name || ''},\n\nThis is a reminder to please sign your waiver at your earliest convenience.\n\nThank you!`)}`}
+                        href={`mailto:${player.email}?subject=${encodeURIComponent(reminderSubject)}&body=${encodeURIComponent(`Hi ${player.full_name || ''},\n\nThis is a reminder to please complete your ${docLabel} at your earliest convenience.\n\nLog in at https://www.thenatural-app.com\n\nThank you!`)}`}
                         className="inline-flex items-center space-x-1 text-xs text-blue-600 hover:text-blue-800"
                       >
                         <Mail size={12} />
@@ -3258,6 +3273,58 @@ function WaiversTab({ players, waiverSignatures }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function DocumentsTab({ players, waiverSignatures, contractSignatures, medicalHistories }) {
+  const [docTab, setDocTab] = useState('waivers');
+
+  const waiverMap = {};
+  waiverSignatures.forEach(w => { waiverMap[w.user_id] = w; });
+
+  const contractMap = {};
+  contractSignatures.forEach(c => { contractMap[c.user_id] = c; });
+
+  const medicalMap = {};
+  medicalHistories.forEach(m => { medicalMap[m.user_id] = m; });
+
+  const waiverCount = players.filter(p => waiverMap[p.id]).length;
+  const contractCount = players.filter(p => contractMap[p.id]).length;
+  const medicalCount = players.filter(p => medicalMap[p.id]).length;
+
+  const tabs = [
+    { key: 'waivers', label: 'Waivers', count: waiverCount },
+    { key: 'contracts', label: 'Player Contracts', count: contractCount },
+    { key: 'medical', label: 'Medical History', count: medicalCount },
+  ];
+
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">Player Document Status</h3>
+      <div className="flex space-x-1 mb-4 bg-gray-100 rounded-lg p-1">
+        {tabs.map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setDocTab(tab.key)}
+            className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition ${
+              docTab === tab.key ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {tab.label} <span className="text-xs ml-1">({tab.count}/{players.length})</span>
+          </button>
+        ))}
+      </div>
+
+      {docTab === 'waivers' && (
+        <DocumentStatusTable players={players} completionMap={waiverMap} docLabel="Waiver" reminderSubject="Reminder: Please Sign Your Waiver" />
+      )}
+      {docTab === 'contracts' && (
+        <DocumentStatusTable players={players} completionMap={contractMap} docLabel="Player Contract" reminderSubject="Reminder: Please Sign Your Player Contract" />
+      )}
+      {docTab === 'medical' && (
+        <DocumentStatusTable players={players} completionMap={medicalMap} docLabel="Medical History / Athlete Intake Form" reminderSubject="Reminder: Please Complete Your Medical History Form" />
+      )}
     </div>
   );
 }

@@ -33,7 +33,7 @@ const PROFILE_TABS = [
   { key: 'armcare', label: 'Arm Care' },
   { key: 'pt', label: 'Physical Therapy' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
-  { key: 'waiver', label: 'Waiver' },
+  { key: 'documents', label: 'Documents' },
   { key: 'codes', label: 'Codes' },
   { key: 'goals', label: 'Goals' },
   { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
@@ -92,6 +92,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [savingRecruitment, setSavingRecruitment] = useState({});
   const [discountCodes, setDiscountCodes] = useState([]);
   const [waiverData, setWaiverData] = useState(null);
+  const [contractData, setContractData] = useState(null);
   const [armCareRoutines, setArmCareRoutines] = useState([]);
   const [editingRoutineId, setEditingRoutineId] = useState(null);
   const [routineDraft, setRoutineDraft] = useState({ title: '', content: '' });
@@ -115,6 +116,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [medicalHistory, setMedicalHistory] = useState(null);
   const [showMedicalForm, setShowMedicalForm] = useState(false);
   const [expandedSubmission, setExpandedSubmission] = useState(null);
+  const [assessmentFormTemplate, setAssessmentFormTemplate] = useState(null);
   const [ptVisits, setPtVisits] = useState([]);
   const [editingPtVisitId, setEditingPtVisitId] = useState(null);
   const [ptDraft, setPtDraft] = useState({ visit_date: '', visit_type: 'Treatment', body_area: '', pain_level: '', content: '', exercises: [], follow_up_at: '' });
@@ -133,6 +135,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     fetchRecruitmentTeams();
     fetchDiscountCodes();
     fetchWaiverData();
+    fetchContractData();
     fetchArmCareRoutines();
     fetchGoals();
     fetchPlayerNotes();
@@ -1007,6 +1010,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     }
   };
 
+  const fetchContractData = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('player_contracts')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      setContractData(data);
+    } catch (error) {
+      console.error('Error fetching contract data:', error);
+    }
+  };
+
   const fetchAssessmentData = async () => {
     try {
       // Fetch assessment templates visible to athlete
@@ -1275,7 +1292,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'waiver' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'documents' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -1382,41 +1399,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
           {activeProfileTab === 'assessment' && (
             <div className="space-y-6">
-              {/* Medical History Card */}
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setShowMedicalForm(!showMedicalForm)}
-                  className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${medicalHistory ? 'bg-green-100' : 'bg-gray-100'}`}>
-                      <FileText size={20} className={medicalHistory ? 'text-green-600' : 'text-gray-400'} />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-900">Medical History / Athlete Intake Form</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {medicalHistory ? (
-                          <span className="text-green-600 font-medium">
-                            Completed {medicalHistory.signed_at ? `on ${new Date(medicalHistory.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
-                          </span>
-                        ) : (
-                          'Not yet completed'
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {medicalHistory && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span>}
-                    {showMedicalForm ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-                  </div>
-                </button>
-                {showMedicalForm && (
-                  <div className="border-t border-gray-200 p-4">
-                    <MedicalHistoryForm userId={userId} userRole={userRole} />
-                  </div>
-                )}
-              </div>
-
               {/* Assessment Templates */}
               {assessmentTemplates.length > 0 && (
                 <div>
@@ -1428,6 +1410,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                     {assessmentTemplates.map(template => {
                       const completedCount = assessmentSubmissions.filter(s => s.template_id === template.id).length;
                       const latestSub = assessmentSubmissions.find(s => s.template_id === template.id);
+                      const canSubmit = userRole === 'admin' || userRole === 'coach';
                       return (
                         <div key={template.id} className="border border-gray-200 rounded-lg overflow-hidden">
                           <div className="flex items-center justify-between px-4 py-3">
@@ -1442,15 +1425,26 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                                 </p>
                               </div>
                             </div>
-                            {latestSub && (
-                              <button
-                                onClick={() => setExpandedSubmission(expandedSubmission === latestSub.id ? null : latestSub.id)}
-                                className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center space-x-1"
-                              >
-                                <Eye size={14} />
-                                <span>View Latest</span>
-                              </button>
-                            )}
+                            <div className="flex items-center space-x-2">
+                              {canSubmit && (
+                                <button
+                                  onClick={() => setAssessmentFormTemplate(template)}
+                                  className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center space-x-1"
+                                >
+                                  <Plus size={14} />
+                                  <span>Submit</span>
+                                </button>
+                              )}
+                              {latestSub && (
+                                <button
+                                  onClick={() => setExpandedSubmission(expandedSubmission === latestSub.id ? null : latestSub.id)}
+                                  className="text-sm text-gray-500 hover:text-gray-700 font-medium flex items-center space-x-1"
+                                >
+                                  <Eye size={14} />
+                                  <span>View Latest</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                           {latestSub && expandedSubmission === latestSub.id && (
                             <div className="border-t border-gray-200 p-4 bg-gray-50">
@@ -1503,10 +1497,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
                 </div>
               )}
 
-              {/* Empty state when no assessment templates and no medical history */}
-              {assessmentTemplates.length === 0 && assessmentSubmissions.length === 0 && !medicalHistory && !showMedicalForm && (
-                <div className="text-center py-4">
-                  <p className="text-sm text-gray-500">Complete the Medical History form above to get started.</p>
+              {assessmentTemplates.length === 0 && assessmentSubmissions.length === 0 && (
+                <div className="text-center py-8">
+                  <ClipboardList size={40} className="mx-auto mb-3 text-gray-300" />
+                  <p className="text-gray-500">No assessments available yet.</p>
                 </div>
               )}
             </div>
@@ -2132,62 +2126,185 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </div>
           )}
 
-          {activeProfileTab === 'waiver' && (
-            <div>
-              {waiverData ? (
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-2 mb-4">
-                    <CheckCircle className="text-green-600" size={20} />
-                    <span className="font-semibold text-green-700">Waiver Signed</span>
-                    <span className="text-sm text-gray-500 ml-2">
-                      on {new Date(waiverData.signed_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Participant Name</p>
-                      <p className="text-gray-900 font-medium">{waiverData.participant_name}</p>
+          {activeProfileTab === 'documents' && (
+            <div className="space-y-4">
+              {/* Waiver */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setExpandedSubmission(expandedSubmission === 'doc-waiver' ? null : 'doc-waiver')}
+                  className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${waiverData ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <FileText size={20} className={waiverData ? 'text-green-600' : 'text-gray-400'} />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600 mb-1">Participant Signature</p>
-                      <img src={waiverData.participant_signature_url} alt="Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                      <h4 className="text-sm font-semibold text-gray-900">Waiver</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {waiverData ? (
+                          <span className="text-green-600 font-medium">
+                            Signed on {new Date(waiverData.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                        ) : 'Not yet signed'}
+                      </p>
                     </div>
                   </div>
-                  {waiverData.is_minor && (
-                    <div className="border-t border-gray-200 pt-4 mt-4">
-                      <p className="text-sm font-semibold text-gray-700 mb-3">Parent / Guardian</p>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-sm text-gray-600">Guardian Name</p>
-                          <p className="text-gray-900 font-medium">{waiverData.guardian_name}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-gray-600">Relationship</p>
-                          <p className="text-gray-900 font-medium">{waiverData.guardian_relationship}</p>
-                        </div>
-                        {waiverData.emergency_phone && (
+                  <div className="flex items-center space-x-2">
+                    {waiverData ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span> : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Incomplete</span>}
+                    {expandedSubmission === 'doc-waiver' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                  </div>
+                </button>
+                {expandedSubmission === 'doc-waiver' && (
+                  <div className="border-t border-gray-200 p-4">
+                    {waiverData ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <p className="text-sm text-gray-600">Emergency Phone</p>
-                            <p className="text-gray-900 font-medium">{waiverData.emergency_phone}</p>
+                            <p className="text-sm text-gray-600">Participant Name</p>
+                            <p className="text-gray-900 font-medium">{waiverData.participant_name}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">Participant Signature</p>
+                            <img src={waiverData.participant_signature_url} alt="Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                          </div>
+                        </div>
+                        {waiverData.is_minor && (
+                          <div className="border-t border-gray-200 pt-4">
+                            <p className="text-sm font-semibold text-gray-700 mb-3">Parent / Guardian</p>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div>
+                                <p className="text-sm text-gray-600">Guardian Name</p>
+                                <p className="text-gray-900 font-medium">{waiverData.guardian_name}</p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-gray-600">Relationship</p>
+                                <p className="text-gray-900 font-medium">{waiverData.guardian_relationship}</p>
+                              </div>
+                              {waiverData.emergency_phone && (
+                                <div>
+                                  <p className="text-sm text-gray-600">Emergency Phone</p>
+                                  <p className="text-gray-900 font-medium">{waiverData.emergency_phone}</p>
+                                </div>
+                              )}
+                            </div>
+                            <div className="mt-3">
+                              <p className="text-sm text-gray-600 mb-1">Guardian Signature</p>
+                              <img src={waiverData.guardian_signature_url} alt="Guardian Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                            </div>
                           </div>
                         )}
                       </div>
-                      <div className="mt-3">
-                        <p className="text-sm text-gray-600 mb-1">Guardian Signature</p>
-                        <img src={waiverData.guardian_signature_url} alt="Guardian Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-sm text-gray-500">Waiver not yet signed.</p>
+                        {!onBack && <p className="text-xs text-gray-400 mt-1">Go to the Waiver page from the sidebar to sign.</p>}
                       </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Player Contract */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setExpandedSubmission(expandedSubmission === 'doc-contract' ? null : 'doc-contract')}
+                  className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${contractData ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <FileText size={20} className={contractData ? 'text-green-600' : 'text-gray-400'} />
                     </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <XCircle className="mx-auto text-gray-300 mb-3" size={36} />
-                  <p className="text-gray-500">Waiver not yet signed</p>
-                  {!onBack && (
-                    <p className="text-sm text-gray-400 mt-1">Go to the Waiver page from the sidebar to sign.</p>
-                  )}
-                </div>
-              )}
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900">Player Contract</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {contractData ? (
+                          <span className="text-green-600 font-medium">
+                            Signed on {new Date(contractData.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                        ) : 'Not yet signed'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {contractData ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span> : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Incomplete</span>}
+                    {expandedSubmission === 'doc-contract' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                  </div>
+                </button>
+                {expandedSubmission === 'doc-contract' && (
+                  <div className="border-t border-gray-200 p-4">
+                    {contractData ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-600">Player Name</p>
+                            <p className="text-gray-900 font-medium">{contractData.player_name}</p>
+                          </div>
+                          {contractData.positions?.length > 0 && (
+                            <div>
+                              <p className="text-sm text-gray-600">Positions</p>
+                              <p className="text-gray-900 font-medium">{contractData.positions.join(', ')}</p>
+                            </div>
+                          )}
+                          {contractData.bats_throws && (
+                            <div>
+                              <p className="text-sm text-gray-600">Bats/Throws</p>
+                              <p className="text-gray-900 font-medium">{contractData.bats_throws}</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">Player Signature</p>
+                            <img src={contractData.player_signature_url} alt="Player Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">Parent Signature</p>
+                            <img src={contractData.parent_signature_url} alt="Parent Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-sm text-gray-500">Contract not yet signed.</p>
+                        {!onBack && <p className="text-xs text-gray-400 mt-1">Go to the Player Contract page from the sidebar to sign.</p>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Medical History */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setShowMedicalForm(!showMedicalForm)}
+                  className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${medicalHistory ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <FileText size={20} className={medicalHistory ? 'text-green-600' : 'text-gray-400'} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900">Medical History / Athlete Intake Form</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {medicalHistory ? (
+                          <span className="text-green-600 font-medium">
+                            Completed {medicalHistory.signed_at ? `on ${new Date(medicalHistory.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                          </span>
+                        ) : 'Not yet completed'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {medicalHistory ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span> : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Incomplete</span>}
+                    {showMedicalForm ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                  </div>
+                </button>
+                {showMedicalForm && (
+                  <div className="border-t border-gray-200 p-4">
+                    <MedicalHistoryForm userId={userId} userRole={userRole} />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -2863,6 +2980,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
           onSent={() => fetchCommunicationLogs()}
         />
       )}
+
+      {assessmentFormTemplate && (
+        <AssessmentFormModal
+          template={assessmentFormTemplate}
+          playerId={userId}
+          onClose={() => setAssessmentFormTemplate(null)}
+          onSubmitted={() => { fetchAssessmentData(); setAssessmentFormTemplate(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -2923,6 +3049,169 @@ function SubmissionView({ submission }) {
           <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{submission.notes}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
+  const [responses, setResponses] = useState({});
+  const [notes, setNotes] = useState('');
+  const [assessmentDate, setAssessmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [saving, setSaving] = useState(false);
+
+  const schema = (template.schema || []).sort((a, b) => a.sort_order - b.sort_order);
+
+  const updateResponse = (elId, value) => {
+    setResponses(prev => ({ ...prev, [elId]: value }));
+  };
+
+  const updateTableCell = (elId, row, col, value) => {
+    setResponses(prev => ({
+      ...prev,
+      [elId]: { ...(prev[elId] || {}), [row]: { ...(prev[elId]?.[row] || {}), [col]: value } }
+    }));
+  };
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from('assessment_submissions').insert({
+        template_id: template.id,
+        player_id: playerId,
+        assessed_by: user.id,
+        assessment_date: assessmentDate,
+        responses,
+        notes: notes.trim() || null,
+      });
+      if (error) throw error;
+      onSubmitted();
+    } catch (err) {
+      alert('Error submitting assessment: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-gray-900">{template.name}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+        </div>
+
+        <div className="p-4 space-y-4 flex-1 overflow-y-auto">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Assessment Date</label>
+            <input
+              type="date"
+              value={assessmentDate}
+              onChange={(e) => setAssessmentDate(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {schema.map(el => (
+            <div key={el.id} className="space-y-1">
+              <label className="block text-sm font-medium text-gray-700">{el.label || el.type}</label>
+
+              {el.type === 'text_field' && (
+                <input
+                  type="text"
+                  value={responses[el.id] || ''}
+                  onChange={(e) => updateResponse(el.id, e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
+
+              {(el.type === 'text_area' || el.type === 'notes') && (
+                <textarea
+                  value={responses[el.id] || ''}
+                  onChange={(e) => updateResponse(el.id, e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              )}
+
+              {el.type === 'combo_box' && (
+                <select
+                  value={responses[el.id] || ''}
+                  onChange={(e) => updateResponse(el.id, e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">Select...</option>
+                  {(el.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              )}
+
+              {el.type === 'date' && (
+                <input
+                  type="date"
+                  value={responses[el.id] || ''}
+                  onChange={(e) => updateResponse(el.id, e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
+
+              {el.type === 'table' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border border-gray-300">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="border border-gray-300 px-3 py-1.5 text-left text-xs font-medium text-gray-600"></th>
+                        {(el.columns || []).map(col => (
+                          <th key={col} className="border border-gray-300 px-3 py-1.5 text-left text-xs font-medium text-gray-600">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(el.rows || []).map(row => (
+                        <tr key={row}>
+                          <td className="border border-gray-300 px-3 py-1.5 font-medium text-gray-700 bg-gray-50 text-xs">{row}</td>
+                          {(el.columns || []).map(col => (
+                            <td key={col} className="border border-gray-300 px-1 py-0.5">
+                              <input
+                                type="text"
+                                value={responses[el.id]?.[row]?.[col] || ''}
+                                onChange={(e) => updateTableCell(el.id, row, col, e.target.value)}
+                                className="w-full px-2 py-1 text-xs border-0 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Optional notes..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="border-t border-gray-200 p-4 flex justify-end space-x-3">
+          <button onClick={onClose} className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-2"
+          >
+            <Save size={16} />
+            <span>{saving ? 'Submitting...' : 'Submit Assessment'}</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
