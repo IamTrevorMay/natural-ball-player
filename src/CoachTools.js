@@ -2931,7 +2931,7 @@ function AssessmentsTab({ players, userId }) {
   const fetchSubmissions = async () => {
     const { data, error } = await supabase
       .from('assessment_submissions')
-      .select('*, assessment_templates(name), player:player_id(full_name), assessor:assessed_by(full_name)')
+      .select('*, assessment_templates(name), player:users!assessment_submissions_player_id_fkey(full_name), assessor:users!assessment_submissions_assessed_by_fkey(full_name)')
       .order('created_at', { ascending: false });
     if (!error) setSubmissions(data || []);
   };

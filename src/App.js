@@ -131,6 +131,24 @@ export default function App() {
 
     if (error) {
       console.error('Error fetching user role:', error);
+      // Session may be stale — try refreshing and retrying once
+      const { data: refreshData } = await supabase.auth.refreshSession();
+      if (refreshData?.session) {
+        const { data: retryData, error: retryError } = await supabase
+          .from('users')
+          .select('role, secondary_role, full_name, avatar_url')
+          .eq('id', userId)
+          .single();
+        if (!retryError && retryData) {
+          setUserRole(retryData.role);
+          setSecondaryRole(retryData.secondary_role || null);
+          setUserName(retryData.full_name || '');
+          setUserAvatar(retryData.avatar_url || null);
+          return;
+        }
+      }
+      // If refresh also failed, sign out to force re-login
+      await supabase.auth.signOut();
     } else {
       setUserRole(data.role);
       setSecondaryRole(data.secondary_role || null);

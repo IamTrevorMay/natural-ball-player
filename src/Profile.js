@@ -1038,7 +1038,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
       // Fetch completed submissions for this player
       const { data: subs } = await supabase
         .from('assessment_submissions')
-        .select('*, assessment_templates(name, schema), assessor:assessed_by(full_name)')
+        .select('*, assessment_templates(name, schema), assessor:users!assessment_submissions_assessed_by_fkey(full_name)')
         .eq('player_id', userId)
         .order('created_at', { ascending: false });
       setAssessmentSubmissions(subs || []);
@@ -1115,7 +1115,21 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
     return (
       <div className="bg-white rounded-lg shadow p-12 text-center">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Profile Not Found</h2>
-        <p className="text-gray-600">Unable to load profile data.</p>
+        <p className="text-gray-600 mb-4">Unable to load profile data. This may be caused by an expired session.</p>
+        <div className="flex items-center justify-center space-x-3">
+          <button
+            onClick={() => { setLoading(true); fetchUserData(); }}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition"
+          >
+            Retry
+          </button>
+          <button
+            onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }}
+            className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50 transition"
+          >
+            Log Out &amp; Re-Login
+          </button>
+        </div>
       </div>
     );
   }
