@@ -2491,7 +2491,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       <div
                         key={i}
                         onClick={() => day && setScheduleSelectedDay(day === scheduleSelectedDay ? null : day)}
-                        className={`bg-white min-h-[52px] p-1 cursor-pointer transition ${
+                        className={`bg-white min-h-[72px] p-1 cursor-pointer transition ${
                           !day ? 'bg-gray-50' : ''
                         } ${selected ? 'ring-2 ring-blue-500 ring-inset' : ''} ${
                           isToday(day) ? 'bg-blue-50' : 'hover:bg-gray-50'
@@ -2501,11 +2501,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                           <>
                             <div className={`text-xs font-medium ${isToday(day) ? 'text-blue-700 font-bold' : 'text-gray-700'}`}>{day}</div>
                             {dayEvents.length > 0 && (
-                              <div className="flex flex-wrap gap-0.5 mt-0.5">
-                                {dayEvents.slice(0, 4).map((ev, j) => (
-                                  <div key={j} className={`w-1.5 h-1.5 rounded-full ${dotColor(ev.event_type)}`} title={ev.title} />
+                              <div className="mt-0.5 space-y-0.5">
+                                {dayEvents.slice(0, 3).map((ev, j) => (
+                                  <div key={j} className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] leading-tight truncate ${
+                                    ev.event_type === 'workout' ? 'bg-orange-50 text-orange-700' :
+                                    ev.event_type === 'game' ? 'bg-slate-100 text-slate-700' :
+                                    ev.event_type === 'practice' ? 'bg-green-50 text-green-700' :
+                                    ev.event_type === 'meal' ? 'bg-yellow-50 text-yellow-700' :
+                                    'bg-blue-50 text-blue-700'
+                                  }`}>
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor(ev.event_type)}`} />
+                                    <span className="truncate">{ev.title || ev.opponent || ev.event_type}</span>
+                                  </div>
                                 ))}
-                                {dayEvents.length > 4 && <span className="text-[8px] text-gray-400">+{dayEvents.length - 4}</span>}
+                                {dayEvents.length > 3 && <span className="text-[9px] text-gray-400 pl-1">+{dayEvents.length - 3} more</span>}
                               </div>
                             )}
                           </>
