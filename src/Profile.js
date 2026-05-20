@@ -24,6 +24,7 @@ const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 
 const PROFILE_TABS = [
   { key: 'general', label: 'General' },
+  { key: 'athletes', label: 'Athletes', viewedRoles: ['coach', 'admin'] },
   { key: 'programming', label: 'Programming', roles: ['admin', 'coach'] },
   { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
@@ -78,7 +79,7 @@ const PITCHING_RESULT_OPTIONS = ['Ball', 'Called Strike', 'Swing & Miss', 'Foul'
 
 const isPitchCategory = (cat) => cat === 'hitting' || cat === 'pitching';
 
-export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
+export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -128,6 +129,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
+  const [coachAthletes, setCoachAthletes] = useState([]);
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -147,6 +149,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
 
   useEffect(() => {
     if (userData && userData.role === 'player') fetchAttendanceData();
+    if (userData && (userData.role === 'coach' || userData.role === 'admin')) fetchCoachAthletes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userData]);
 
@@ -662,6 +665,63 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
       console.error('Error fetching communication logs:', error);
     } finally {
       setLoadingComms(false);
+    }
+  };
+
+  const fetchCoachAthletes = async () => {
+    try {
+      // Get the coach's teams
+      const { data: teamRows } = await supabase
+        .from('team_members')
+        .select('team_id, teams(name)')
+        .eq('user_id', userId);
+      const teamIds = (teamRows || []).map(r => r.team_id);
+      if (teamIds.length === 0) { setCoachAthletes([]); return; }
+
+      // Get all player members of those teams
+      const { data: members } = await supabase
+        .from('team_members')
+        .select('team_id, user_id, users(full_name, email, avatar_url, role), teams(name)')
+        .in('team_id', teamIds)
+        .neq('user_id', userId);
+
+      // Also get athletes explicitly assigned via trainer_id
+      const { data: assigned } = await supabase
+        .from('player_profiles')
+        .select('user_id, users!player_profiles_user_id_fkey(full_name, email, avatar_url)')
+        .eq('trainer_id', userId);
+
+      // Merge: group by team, only include players
+      const teamMap = {};
+      for (const tm of (teamRows || [])) {
+        teamMap[tm.team_id] = { name: tm.teams?.name || 'Unknown Team', members: [] };
+      }
+      const seen = new Set();
+      for (const m of (members || [])) {
+        if (m.users?.role !== 'player') continue;
+        if (seen.has(m.user_id)) continue;
+        seen.add(m.user_id);
+        if (teamMap[m.team_id]) {
+          teamMap[m.team_id].members.push({ id: m.user_id, full_name: m.users.full_name, email: m.users.email, avatar_url: m.users.avatar_url });
+        }
+      }
+
+      // Add directly assigned athletes that aren't already in a team
+      const directAssigned = [];
+      for (const a of (assigned || [])) {
+        if (!seen.has(a.user_id)) {
+          directAssigned.push({ id: a.user_id, full_name: a.users?.full_name, email: a.users?.email, avatar_url: a.users?.avatar_url });
+          seen.add(a.user_id);
+        }
+      }
+
+      const result = Object.entries(teamMap).map(([id, t]) => ({ teamId: id, teamName: t.name, members: t.members })).filter(t => t.members.length > 0);
+      if (directAssigned.length > 0) {
+        result.push({ teamId: 'direct', teamName: 'Directly Assigned', members: directAssigned });
+      }
+      setCoachAthletes(result);
+    } catch (error) {
+      console.error('Error fetching coach athletes:', error);
     }
   };
 
@@ -1288,13 +1348,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
           )}
 
           {/* Tab Bar */}
-          <div className="border-b border-gray-200 mb-6">
-            <nav className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-1 pb-2">
-              {PROFILE_TABS.filter(tab => !tab.roles || tab.roles.includes(userRole)).map(tab => (
+          <div className="border-b border-gray-200 mb-6 -mx-2 px-2 overflow-x-auto">
+            <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
+              {PROFILE_TABS.filter(tab => {
+                if (tab.roles && !tab.roles.includes(userRole)) return false;
+                if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
+                return true;
+              }).map(tab => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveProfileTab(tab.key)}
-                  className={`py-2 px-2 rounded-lg font-medium text-xs text-center transition ${
+                  className={`py-2 px-3 rounded-lg font-medium text-xs text-center transition whitespace-nowrap ${
                     activeProfileTab === tab.key
                       ? 'bg-blue-100 text-blue-700'
                       : 'bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900'
@@ -1306,9 +1370,55 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId }) {
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'documents' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
+          {activeProfileTab !== 'general' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'documents' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
+            </div>
+          )}
+
+          {activeProfileTab === 'athletes' && (
+            <div className="space-y-6">
+              {coachAthletes.length === 0 ? (
+                <div className="py-12 text-center">
+                  <Users className="mx-auto mb-3 text-gray-300" size={48} />
+                  <p className="text-gray-500">No athletes assigned yet.</p>
+                  <p className="text-gray-400 text-sm mt-1">Athletes will appear here once team assignments or trainer assignments are made.</p>
+                </div>
+              ) : (
+                coachAthletes.map(team => (
+                  <div key={team.teamId} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                      <h3 className="font-semibold text-gray-900">{team.teamName}</h3>
+                      <p className="text-xs text-gray-500">{team.members.length} athlete{team.members.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {team.members.map(athlete => (
+                        <div key={athlete.id} className="px-4 py-3 flex items-center space-x-3 hover:bg-gray-50">
+                          {athlete.avatar_url ? (
+                            <img src={athlete.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 text-xs font-bold">
+                              {athlete.full_name?.charAt(0) || '?'}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{athlete.full_name}</p>
+                            {athlete.email && <p className="text-xs text-gray-500 truncate">{athlete.email}</p>}
+                          </div>
+                          {onNavigateToProfile && (
+                            <button
+                              onClick={() => onNavigateToProfile(athlete.id)}
+                              className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                            >
+                              View Profile
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
 

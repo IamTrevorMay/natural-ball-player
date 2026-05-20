@@ -15,7 +15,7 @@ import ContractPage from './ContractPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -412,6 +412,7 @@ function ResetPasswordPage({ onComplete }) {
 
 function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSecondary = !!secondaryRole && secondaryRole !== userRole;
   const [viewMode, setViewMode] = useState(userRole);
   useEffect(() => { setViewMode(userRole); }, [userRole]);
@@ -441,26 +442,37 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     );
   }
 
+  const handleNav = (view) => { setCurrentView(view); setSidebarOpen(false); };
+
   return (
     <div className="flex">
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
       <Sidebar
         userRole={effectiveRole}
         userName={userName}
         userAvatar={userAvatar}
         currentView={currentView}
-        setCurrentView={setCurrentView}
+        setCurrentView={(v) => handleNav(v)}
         onLogout={onLogout}
         unreadMessageCount={mainCounts.unreadMessages}
         pendingSlotCount={mainCounts.pendingSlots.length}
         waiverSigned={waiverSigned}
         contractSigned={contractSigned}
-        onSwitchPortal={() => setCurrentPortal('work')}
+        onSwitchPortal={() => { setCurrentPortal('work'); setSidebarOpen(false); }}
         canSwitchRole={hasSecondary}
         otherRole={hasSecondary ? (viewMode === userRole ? secondaryRole : userRole) : null}
-        onSwitchRole={hasSecondary ? () => setViewMode(viewMode === userRole ? secondaryRole : userRole) : null}
+        onSwitchRole={hasSecondary ? () => { setViewMode(viewMode === userRole ? secondaryRole : userRole); setSidebarOpen(false); } : null}
+        mobileOpen={sidebarOpen}
       />
-      <div className="flex-1 ml-64">
-        <div className="sticky top-0 z-40 bg-white border-b px-8 py-3 flex justify-end">
+      <div className="flex-1 md:ml-64">
+        <div className="sticky top-0 z-30 bg-white border-b px-4 md:px-8 py-3 flex items-center justify-between">
+          <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1 text-gray-600 hover:text-gray-900">
+            <Menu size={24} />
+          </button>
+          <div className="flex-1" />
           <NotificationBell
             currentPortal="main"
             mainCounts={mainCounts}
@@ -470,7 +482,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
         </div>
 
         {/* Main content */}
-        <div className="p-8">
+        <div className="p-4 md:p-8">
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && (
               effectiveRole === 'player' ? (
@@ -479,8 +491,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                 <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); }} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
@@ -499,11 +511,11 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
   const [documentsExpanded, setDocumentsExpanded] = useState(waiverSigned === false || contractSigned === false ? true : true);
   const anyDocUnsigned = waiverSigned === false || contractSigned === false;
   return (
-    <div className="w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col">
+    <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col z-50 transition-transform duration-200 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
       <div className="mb-4">
         <div className="flex items-center space-x-2">
           <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain" />
