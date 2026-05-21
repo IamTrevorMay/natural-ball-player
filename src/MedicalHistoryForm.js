@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext, createContext } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Save } from 'lucide-react';
+
+const MHFormContext = createContext();
 
 const SECTIONS = [
   'Athlete Identification',
@@ -32,6 +34,129 @@ const SEX_OPTIONS = ['Male', 'Female', 'Other', 'Prefer not to say'];
 const DOMINANCE_OPTIONS = ['Right', 'Left', 'Both'];
 const YES_NO = ['Yes', 'No'];
 const FREQUENCY_OPTIONS = ['Never', 'Rarely', 'Occasionally', 'Frequently', 'Daily'];
+
+// Extracted outside the main component to prevent focus loss on re-render (mobile keyboard bug)
+const Field = ({ label, fieldKey, type = 'text', required, placeholder, className = '' }) => {
+  const { responses, set, readOnly } = useContext(MHFormContext);
+  return (
+    <div className={className}>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {readOnly ? (
+        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded-lg min-h-[36px]">{responses[fieldKey] || <span className="text-gray-400 italic">Not provided</span>}</p>
+      ) : (
+        <input
+          type={type}
+          value={responses[fieldKey] || ''}
+          onChange={(e) => set(fieldKey, e.target.value)}
+          placeholder={placeholder}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      )}
+    </div>
+  );
+};
+
+const TextArea = ({ label, fieldKey, rows = 3, placeholder }) => {
+  const { responses, set, readOnly } = useContext(MHFormContext);
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      {readOnly ? (
+        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded-lg whitespace-pre-wrap min-h-[36px]">{responses[fieldKey] || <span className="text-gray-400 italic">Not provided</span>}</p>
+      ) : (
+        <textarea
+          value={responses[fieldKey] || ''}
+          onChange={(e) => set(fieldKey, e.target.value)}
+          rows={rows}
+          placeholder={placeholder}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      )}
+    </div>
+  );
+};
+
+const Select = ({ label, fieldKey, options, required }) => {
+  const { responses, set, readOnly } = useContext(MHFormContext);
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {readOnly ? (
+        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded-lg">{responses[fieldKey] || <span className="text-gray-400 italic">Not provided</span>}</p>
+      ) : (
+        <select
+          value={responses[fieldKey] || ''}
+          onChange={(e) => set(fieldKey, e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+        >
+          <option value="">Select...</option>
+          {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      )}
+    </div>
+  );
+};
+
+const YesNoField = ({ label, fieldKey }) => {
+  const { responses, set, readOnly } = useContext(MHFormContext);
+  return (
+    <div className="flex items-start space-x-3 py-2">
+      <div className="flex-1">
+        <label className="text-sm text-gray-700">{label}</label>
+      </div>
+      {readOnly ? (
+        <span className={`text-sm font-medium ${responses[fieldKey] === 'Yes' ? 'text-red-600' : 'text-green-600'}`}>
+          {responses[fieldKey] || <span className="text-gray-400 italic">-</span>}
+        </span>
+      ) : (
+        <div className="flex space-x-2 flex-shrink-0">
+          {YES_NO.map(opt => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => set(fieldKey, opt)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                responses[fieldKey] === opt
+                  ? opt === 'Yes' ? 'bg-red-100 text-red-700 ring-1 ring-red-300' : 'bg-green-100 text-green-700 ring-1 ring-green-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const YesNoDetail = ({ label, fieldKey, detailKey }) => {
+  const { responses, set, readOnly } = useContext(MHFormContext);
+  return (
+    <div className="space-y-1">
+      <YesNoField label={label} fieldKey={fieldKey} />
+      {responses[fieldKey] === 'Yes' && (
+        <div className="ml-4">
+          {readOnly ? (
+            <p className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-lg">{responses[detailKey] || <span className="text-gray-400 italic">No details</span>}</p>
+          ) : (
+            <textarea
+              value={responses[detailKey] || ''}
+              onChange={(e) => set(detailKey, e.target.value)}
+              placeholder="Please provide details..."
+              rows={2}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function MedicalHistoryForm({ userId, userRole }) {
   const [responses, setResponses] = useState({});
@@ -141,113 +266,7 @@ export default function MedicalHistoryForm({ userId, userRole }) {
 
   const canEdit = userRole === 'admin' || userRole === 'coach' || !existingRecord;
 
-  // Helper components
-  const Field = ({ label, fieldKey, type = 'text', required, placeholder, className = '' }) => (
-    <div className={className}>
-      <label className="block text-sm font-medium text-gray-700 mb-1">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
-      {readOnly ? (
-        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded-lg min-h-[36px]">{responses[fieldKey] || <span className="text-gray-400 italic">Not provided</span>}</p>
-      ) : (
-        <input
-          type={type}
-          value={responses[fieldKey] || ''}
-          onChange={(e) => set(fieldKey, e.target.value)}
-          placeholder={placeholder}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      )}
-    </div>
-  );
-
-  const TextArea = ({ label, fieldKey, rows = 3, placeholder }) => (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      {readOnly ? (
-        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded-lg whitespace-pre-wrap min-h-[36px]">{responses[fieldKey] || <span className="text-gray-400 italic">Not provided</span>}</p>
-      ) : (
-        <textarea
-          value={responses[fieldKey] || ''}
-          onChange={(e) => set(fieldKey, e.target.value)}
-          rows={rows}
-          placeholder={placeholder}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      )}
-    </div>
-  );
-
-  const Select = ({ label, fieldKey, options, required }) => (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
-      {readOnly ? (
-        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded-lg">{responses[fieldKey] || <span className="text-gray-400 italic">Not provided</span>}</p>
-      ) : (
-        <select
-          value={responses[fieldKey] || ''}
-          onChange={(e) => set(fieldKey, e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
-        >
-          <option value="">Select...</option>
-          {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-        </select>
-      )}
-    </div>
-  );
-
-  const YesNoField = ({ label, fieldKey }) => (
-    <div className="flex items-start space-x-3 py-2">
-      <div className="flex-1">
-        <label className="text-sm text-gray-700">{label}</label>
-      </div>
-      {readOnly ? (
-        <span className={`text-sm font-medium ${responses[fieldKey] === 'Yes' ? 'text-red-600' : 'text-green-600'}`}>
-          {responses[fieldKey] || <span className="text-gray-400 italic">—</span>}
-        </span>
-      ) : (
-        <div className="flex space-x-2 flex-shrink-0">
-          {YES_NO.map(opt => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => set(fieldKey, opt)}
-              className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
-                responses[fieldKey] === opt
-                  ? opt === 'Yes' ? 'bg-red-100 text-red-700 ring-1 ring-red-300' : 'bg-green-100 text-green-700 ring-1 ring-green-300'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  const YesNoDetail = ({ label, fieldKey, detailKey }) => (
-    <div className="space-y-1">
-      <YesNoField label={label} fieldKey={fieldKey} />
-      {responses[fieldKey] === 'Yes' && (
-        <div className="ml-4">
-          {readOnly ? (
-            <p className="text-sm text-gray-700 bg-gray-50 px-3 py-2 rounded-lg">{responses[detailKey] || <span className="text-gray-400 italic">No details</span>}</p>
-          ) : (
-            <textarea
-              value={responses[detailKey] || ''}
-              onChange={(e) => set(detailKey, e.target.value)}
-              placeholder="Please provide details..."
-              rows={2}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          )}
-        </div>
-      )}
-    </div>
-  );
+  const formCtx = { responses, set, readOnly };
 
   const renderSection = (index) => {
     switch (index) {
@@ -647,6 +666,7 @@ export default function MedicalHistoryForm({ userId, userRole }) {
   };
 
   return (
+    <MHFormContext.Provider value={formCtx}>
     <div className="space-y-4">
       {/* Status banner */}
       {existingRecord && readOnly && (
@@ -717,5 +737,6 @@ export default function MedicalHistoryForm({ userId, userRole }) {
         </div>
       )}
     </div>
+    </MHFormContext.Provider>
   );
 }

@@ -73,7 +73,11 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
 
     if (error) { console.error(error); setLoading(false); return; }
 
-    let filtered = data || [];
+    let filtered = (data || []).map(p => {
+      // Normalize: player_profiles may be object (unique FK) or array
+      const pp = p.player_profiles;
+      return { ...p, player_profiles: pp ? (Array.isArray(pp) ? pp : [pp]) : [] };
+    });
     if (userRole === 'coach') {
       const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
       const teamIds = (coachTeams || []).map(t => t.team_id);

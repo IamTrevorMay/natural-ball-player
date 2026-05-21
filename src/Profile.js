@@ -130,6 +130,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
   const [coachAthletes, setCoachAthletes] = useState([]);
+  const [trainerName, setTrainerName] = useState(null);
+  const [allCoaches, setAllCoaches] = useState([]);
+  const [sportInput, setSportInput] = useState('');
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
@@ -144,12 +147,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchAssessmentData();
     fetchPtVisits();
     fetchCommunicationLogs();
+    supabase.from('users').select('id, full_name').in('role', ['coach', 'admin']).order('full_name').then(({ data }) => setAllCoaches(data || []));
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
 
   useEffect(() => {
     if (userData && userData.role === 'player') fetchAttendanceData();
     if (userData && (userData.role === 'coach' || userData.role === 'admin')) fetchCoachAthletes();
+    // Fetch trainer name if player has one assigned
+    const trainerId = userData?._profile?.trainer_id;
+    if (trainerId) {
+      supabase.from('users').select('full_name').eq('id', trainerId).single().then(({ data }) => {
+        if (data) setTrainerName(data.full_name);
+      });
+    } else {
+      setTrainerName(null);
+    }
+    setSportInput(userData?._profile?.sport || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userData]);
 
@@ -1284,6 +1298,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   {userData.team_members.map(tm => tm.teams.name).join(', ')}
                 </p>
               )}
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-gray-500">
+                {profile?.sport && <span>Sport: <span className="text-gray-700 font-medium">{profile.sport}</span></span>}
+                {trainerName && <span>Trainer: <span className="text-gray-700 font-medium">{trainerName}</span></span>}
+                {userData.date_of_birth && (() => {
+                  const age = Math.floor((new Date() - new Date(userData.date_of_birth + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000));
+                  return <span>Age: <span className="text-gray-700 font-medium">{age}</span></span>;
+                })()}
+                {userData.created_at && <span>Member since: <span className="text-gray-700 font-medium">{new Date(userData.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span></span>}
+              </div>
             </div>
             {userData.role === 'player' && attendanceStats && (
               <div className="ml-auto flex items-center">
@@ -1300,7 +1323,21 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
           {profile && (
             <div className="mb-6 pb-6 border-b border-gray-200">
-              <div className="grid grid-cols-3 gap-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">Sport</p>
+                  <div className="border-t border-gray-200 pt-3">
+                    <input
+                      type="text"
+                      value={sportInput}
+                      onChange={(e) => setSportInput(e.target.value)}
+                      onBlur={() => { if (sportInput !== (profile.sport || '')) handleDropdownChange('sport', sportInput); }}
+                      disabled={!canEditProfile}
+                      placeholder="e.g., Baseball"
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
+                    />
+                  </div>
+                </div>
                 <div>
                   <p className="text-sm font-semibold text-gray-700 mb-3">Program</p>
                   <div className="border-t border-gray-200 pt-3">
@@ -1340,6 +1377,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     >
                       <option value="">Active</option>
                       {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">Trainer</p>
+                  <div className="border-t border-gray-200 pt-3">
+                    <select
+                      value={profile.trainer_id || ''}
+                      onChange={(e) => handleDropdownChange('trainer_id', e.target.value)}
+                      disabled={!canEditProfile}
+                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
+                    >
+                      <option value="">No Trainer</option>
+                      {allCoaches.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
                     </select>
                   </div>
                 </div>
