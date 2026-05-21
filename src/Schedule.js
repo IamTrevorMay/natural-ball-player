@@ -557,6 +557,8 @@ export default function Schedule({ userId, userRole }) {
                     coach={selectedCoach}
                     userId={userId}
                     userRole={userRole}
+                    canManage={userRole === 'coach' || userRole === 'admin'}
+                    onAddSlot={(dateStr) => setShowCreateSlot(dateStr)}
                     onReserve={(slot) => setShowReserveSlot(slot)}
                     onConfirm={async (reservationId) => {
                       const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
@@ -886,6 +888,7 @@ export default function Schedule({ userId, userRole }) {
           onSuccess={() => { setShowCreateSlot(null); if (selectedCoach) fetchCoachSlots(selectedCoach.id); }}
           coachId={selectedCoach.id}
           coachName={selectedCoach.full_name}
+          initialDate={typeof showCreateSlot === 'string' && showCreateSlot !== 'new' ? showCreateSlot : null}
         />
       )}
       {showReserveSlot && (
@@ -4059,7 +4062,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 // COACH SLOTS WEEK VIEW
 // ============================================
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, onReserve, onConfirm, onDecline }) {
+function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -4091,9 +4094,14 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
           const isToday = date.getTime() === today.getTime();
           return (
             <div key={idx} className="min-h-[400px] bg-white">
-              <div className={`p-3 border-b border-gray-200 text-center ${isToday ? 'bg-teal-50' : 'bg-gray-50'}`}>
+              <div
+                className={`p-3 border-b border-gray-200 text-center ${isToday ? 'bg-teal-50' : 'bg-gray-50'} ${canManage ? 'cursor-pointer hover:bg-teal-100 transition' : ''}`}
+                onClick={canManage ? () => onAddSlot(dateStr) : undefined}
+                title={canManage ? 'Click to add a training slot' : undefined}
+              >
                 <div className="text-xs font-medium text-gray-600">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
                 <div className={`text-lg font-semibold ${isToday ? 'text-teal-600' : 'text-gray-900'}`}>{date.getDate()}</div>
+                {canManage && <div className="text-[10px] text-teal-700 mt-0.5">+ Add slot</div>}
               </div>
               <div className="p-2 space-y-2">
                 {daySlots.map((slot, si) => {
@@ -4127,7 +4135,13 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
                     </div>
                   );
                 })}
-                {daySlots.length === 0 && <div className="text-center py-4 text-gray-400 text-xs">No slots</div>}
+                {daySlots.length === 0 && (
+                  canManage ? (
+                    <button onClick={() => onAddSlot(dateStr)} className="w-full text-center py-4 text-gray-400 text-xs border border-dashed border-gray-200 rounded-lg hover:border-teal-400 hover:text-teal-600 transition">+ Add slot</button>
+                  ) : (
+                    <div className="text-center py-4 text-gray-400 text-xs">No slots</div>
+                  )
+                )}
               </div>
             </div>
           );
@@ -4141,8 +4155,8 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
 // CREATE SLOT PANEL
 // ============================================
 
-function CreateSlotPanel({ onClose, onSuccess, coachId, coachName }) {
-  const [slotDate, setSlotDate] = useState(fmtLocalDate(new Date()));
+function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate }) {
+  const [slotDate, setSlotDate] = useState(initialDate || fmtLocalDate(new Date()));
   const [startTime, setStartTime] = useState('09:00');
   const [duration, setDuration] = useState(60);
   const [autoConfirm, setAutoConfirm] = useState(false);
