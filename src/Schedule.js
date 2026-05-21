@@ -522,7 +522,7 @@ export default function Schedule({ userId, userRole }) {
                         <Plus size={16} /><span>Add Event</span>
                       </button>
                     )}
-                    {selectedCoach && selectedCoach.id === userId && (userRole === 'coach' || userRole === 'admin') && (
+                    {selectedCoach && (userRole === 'coach' || userRole === 'admin') && (
                       <button onClick={() => setShowCreateSlot('new')} className="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-teal-700 transition flex items-center space-x-1">
                         <Plus size={16} /><span>Add Training Slot</span>
                       </button>
@@ -880,11 +880,12 @@ export default function Schedule({ userId, userRole }) {
         />
       )}
       {/* Training Slot Panels */}
-      {showCreateSlot && (
+      {showCreateSlot && selectedCoach && (
         <CreateSlotPanel
           onClose={() => setShowCreateSlot(null)}
           onSuccess={() => { setShowCreateSlot(null); if (selectedCoach) fetchCoachSlots(selectedCoach.id); }}
-          userId={userId}
+          coachId={selectedCoach.id}
+          coachName={selectedCoach.full_name}
         />
       )}
       {showReserveSlot && (
@@ -4140,7 +4141,7 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
 // CREATE SLOT PANEL
 // ============================================
 
-function CreateSlotPanel({ onClose, onSuccess, userId }) {
+function CreateSlotPanel({ onClose, onSuccess, coachId, coachName }) {
   const [slotDate, setSlotDate] = useState(fmtLocalDate(new Date()));
   const [startTime, setStartTime] = useState('09:00');
   const [duration, setDuration] = useState(60);
@@ -4155,7 +4156,7 @@ function CreateSlotPanel({ onClose, onSuccess, userId }) {
     setLoading(true);
     try {
       const { error } = await supabase.from('training_slots').insert({
-        coach_id: userId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
+        coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
         auto_confirm: autoConfirm, is_recurring: repeatWeekly, repeat_weekly: repeatWeekly,
         repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
       });
@@ -4168,7 +4169,7 @@ function CreateSlotPanel({ onClose, onSuccess, userId }) {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
         <div className="border-b border-gray-200 p-6 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-900">Create Training Slot</h3>
+          <h3 className="text-xl font-bold text-gray-900">Create Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
         <div className="p-6 space-y-4">
