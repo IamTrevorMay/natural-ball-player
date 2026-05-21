@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
+import CalendarContextMenu from './CalendarContextMenu';
+import RecurrenceDecisionModal from './RecurrenceDecisionModal';
+import CopyToPickerModal from './CopyToPickerModal';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -92,6 +95,18 @@ export default function Schedule({ userId, userRole }) {
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
   const [staffScheduleEvents, setStaffScheduleEvents] = useState([]);
   const [staffAssignments, setStaffAssignments] = useState([]);
+  // Calendar selection + context menu state (shared across views)
+  const [selecting, setSelecting] = useState(false);
+  const [selectedEvents, setSelectedEvents] = useState([]); // raw event objects (need event object for source context)
+  const [ctxMenu, setCtxMenu] = useState(null); // { x, y, event, source }
+  const [recurrencePrompt, setRecurrencePrompt] = useState(null); // { event, action, source, onPick }
+  const [copyToPicker, setCopyToPicker] = useState(null); // { event, source, options, onPick, title }
+  const selectedIds = useMemo(() => new Set(selectedEvents.map((e) => String(e.id))), [selectedEvents]);
+  const toggleSelect = (ev) => setSelectedEvents((arr) => {
+    const sid = String(ev.id);
+    return arr.some((e) => String(e.id) === sid) ? arr.filter((e) => String(e.id) !== sid) : [...arr, ev];
+  });
+  const exitSelectMode = () => { setSelecting(false); setSelectedEvents([]); };
 
   useEffect(() => {
     fetchTeams();
@@ -323,6 +338,284 @@ export default function Schedule({ userId, userRole }) {
     }
   };
 
+  // ============================================
+  // Calendar action helpers (delete / duplicate / copy / bulk delete)
+  // source: 'facility' | 'team' | 'slot' | 'staff'
+  // ============================================
+
+  const tableForSource = (source) => ({
+    facility: 'facility_events',
+    team: 'schedule_events',
+    slot: 'training_slots',
+    staff: 'staff_schedule_events',
+  })[source];
+
+  const refetchForSource = (source) => {
+    if (source === 'facility') fetchFacilityEvents();
+    else if (source === 'team') { if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents(); }
+    else if (source === 'slot' && selectedCoach) fetchCoachSlots(selectedCoach.id);
+  };
+
+  const isRecurringEvent = (event, source) => {
+    if (source === 'slot') return !!event.repeat_weekly && !event.recurrence_parent_id ? false : !!(event._is_virtual || event.repeat_weekly);
+    return !!(event._is_virtual || event.is_recurring || event.recurrence_parent_id);
+  };
+
+  // Delete one occurrence (virtual): insert exception
+  const deleteVirtualOccurrence = async (event, source) => {
+    if (source === 'facility') {
+      const { error } = await supabase.from('facility_events').insert({
+        recurrence_parent_id: event._master_id || event.recurrence_parent_id,
+        original_date: event.event_date,
+        event_date: event.event_date,
+        is_exception: true,
+        is_recurring: false,
+        title: event.title,
+        start_time: event.start_time,
+        end_time: event.end_time,
+        location: event.location,
+        color: event.color,
+        lanes: event.lanes || [],
+      });
+      return error;
+    }
+    if (source === 'staff') {
+      const { error } = await supabase.from('staff_schedule_events').insert({
+        recurrence_parent_id: event._master_id || event.recurrence_parent_id,
+        original_date: event.event_date,
+        event_date: event.event_date,
+        is_cancelled: true,
+        title: event.title,
+        start_at: event.start_at,
+        end_at: event.end_at,
+      });
+      return error;
+    }
+    if (source === 'team') {
+      const { error } = await supabase.from('schedule_events').delete().eq('id', event.id);
+      return error;
+    }
+    if (source === 'slot') {
+      const { error } = await supabase.from('slot_reservations').delete().eq('slot_id', event.id).eq('slot_date', event.slot_date);
+      if (error) return error;
+      const { error: e2 } = await supabase.from('training_slots').update({}).eq('id', event.id);
+      return e2;
+    }
+  };
+
+  // Delete entire series ('all'): delete master and children
+  const deleteSeries = async (event, source) => {
+    const masterId = event._master_id || event.recurrence_parent_id || event.id;
+    if (source === 'team') {
+      await supabase.from('schedule_events').delete().eq('recurrence_parent_id', masterId);
+      const { error } = await supabase.from('schedule_events').delete().eq('id', masterId);
+      return error;
+    }
+    const table = tableForSource(source);
+    await supabase.from(table).delete().eq('recurrence_parent_id', masterId);
+    const { error } = await supabase.from(table).delete().eq('id', masterId);
+    return error;
+  };
+
+  // Delete this and future
+  const deleteFuture = async (event, source) => {
+    const masterId = event._master_id || event.recurrence_parent_id || event.id;
+    const cutoff = event.event_date || event.slot_date;
+    if (source === 'team') {
+      const { error } = await supabase.from('schedule_events').delete().eq('recurrence_parent_id', masterId).gte('event_date', cutoff);
+      if (event.id === masterId) {
+        const { error: e2 } = await supabase.from('schedule_events').delete().eq('id', masterId);
+        return e2;
+      }
+      return error;
+    }
+    if (source === 'facility' || source === 'staff') {
+      const { data: master } = await supabase.from(tableForSource(source)).select('recurrence_rule, event_date').eq('id', masterId).single();
+      if (!master) return null;
+      const cutoffDate = new Date(cutoff + 'T00:00:00');
+      cutoffDate.setDate(cutoffDate.getDate() - 1);
+      const until = fmtLocalDate(cutoffDate);
+      if (master.event_date && master.event_date > until) {
+        return await deleteSeries(event, source);
+      }
+      const rule = typeof master.recurrence_rule === 'string' ? JSON.parse(master.recurrence_rule) : (master.recurrence_rule || {});
+      rule.until = until;
+      const ruleVal = source === 'facility' || source === 'staff' ? rule : JSON.stringify(rule);
+      const { error } = await supabase.from(tableForSource(source)).update({ recurrence_rule: ruleVal }).eq('id', masterId);
+      return error;
+    }
+    if (source === 'slot') {
+      const cutoffDate = new Date(cutoff + 'T00:00:00');
+      cutoffDate.setDate(cutoffDate.getDate() - 1);
+      const { error } = await supabase.from('training_slots').update({ repeat_end_date: fmtLocalDate(cutoffDate) }).eq('id', masterId);
+      return error;
+    }
+  };
+
+  const handleDelete = (event, source) => {
+    const recurring = isRecurringEvent(event, source);
+    if (!recurring) {
+      if (!window.confirm('Delete this event?')) return;
+      (async () => {
+        const id = event._master_id || event.id;
+        const { error } = await supabase.from(tableForSource(source)).delete().eq('id', id);
+        if (error) { alert('Failed to delete: ' + error.message); return; }
+        refetchForSource(source);
+      })();
+      return;
+    }
+    setRecurrencePrompt({
+      event, source, action: 'delete',
+      onPick: async (choice) => {
+        setRecurrencePrompt(null);
+        let err;
+        if (choice === 'one') err = await deleteVirtualOccurrence(event, source);
+        else if (choice === 'future') err = await deleteFuture(event, source);
+        else err = await deleteSeries(event, source);
+        if (err) { alert('Failed to delete: ' + err.message); return; }
+        refetchForSource(source);
+      },
+    });
+  };
+
+  const handleDuplicate = async (event, source) => {
+    const newDateStr = window.prompt('Duplicate to which date? (YYYY-MM-DD)', event.event_date || event.slot_date);
+    if (!newDateStr) return;
+    const id = event._master_id || event.id;
+    const { data: src } = await supabase.from(tableForSource(source)).select('*').eq('id', id).single();
+    if (!src) { alert('Original event not found'); return; }
+    const clone = { ...src };
+    delete clone.id;
+    delete clone.created_at;
+    delete clone.updated_at;
+    clone.is_recurring = false;
+    clone.recurrence_parent_id = null;
+    clone.recurrence_rule = null;
+    clone.original_date = null;
+    if (source === 'slot') {
+      clone.slot_date = newDateStr;
+      clone.repeat_weekly = false;
+      clone.repeat_end_date = null;
+    } else {
+      clone.event_date = newDateStr;
+      if (source === 'staff' && src.start_at && src.end_at) {
+        const oldStart = new Date(src.start_at);
+        const newStart = new Date(newDateStr + 'T00:00:00');
+        newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+        const dur = new Date(src.end_at) - new Date(src.start_at);
+        clone.start_at = newStart.toISOString();
+        clone.end_at = new Date(newStart.getTime() + dur).toISOString();
+      }
+    }
+    const { error } = await supabase.from(tableForSource(source)).insert(clone);
+    if (error) { alert('Failed to duplicate: ' + error.message); return; }
+    refetchForSource(source);
+  };
+
+  const openCopyToPicker = async (event, source) => {
+    if (source === 'slot') {
+      const { data: list } = await supabase.from('users').select('id, full_name, email').in('role', ['coach', 'admin']).order('full_name');
+      const opts = (list || []).filter((u) => u.id !== (event.coach_id)).map((u) => ({ id: u.id, label: u.full_name, subtitle: u.email }));
+      setCopyToPicker({ event, source, options: opts, title: 'Copy slot to other coaches', actionLabel: 'Copy', onPick: async (ids) => {
+        for (const cid of ids) {
+          const { data: src } = await supabase.from('training_slots').select('*').eq('id', event.id).single();
+          const clone = { ...src };
+          delete clone.id; delete clone.created_at; delete clone.updated_at;
+          clone.coach_id = cid;
+          await supabase.from('training_slots').insert(clone);
+        }
+        setCopyToPicker(null);
+        refetchForSource(source);
+      } });
+      return;
+    }
+    if (source === 'team') {
+      const { data: list } = await supabase.from('teams').select('id, name').order('name');
+      const evTeams = new Set(event.team_ids || (event.team_id ? [event.team_id] : []));
+      const opts = (list || []).filter((t) => !evTeams.has(t.id)).map((t) => ({ id: t.id, label: t.name }));
+      setCopyToPicker({ event, source, options: opts, title: 'Copy event to other teams', actionLabel: 'Copy', onPick: async (ids) => {
+        const id = event._master_id || event.id;
+        const { data: src } = await supabase.from('schedule_events').select('*').eq('id', id).single();
+        for (const tid of ids) {
+          const clone = { ...src };
+          delete clone.id; delete clone.created_at; delete clone.updated_at;
+          clone.team_id = tid;
+          clone.team_ids = [tid];
+          clone.recurrence_parent_id = null;
+          await supabase.from('schedule_events').insert(clone);
+        }
+        setCopyToPicker(null);
+        refetchForSource(source);
+      } });
+      return;
+    }
+    if (source === 'staff') {
+      const { data: list } = await supabase.from('users').select('id, full_name, email').in('role', ['coach', 'admin']).order('full_name');
+      const opts = (list || []).map((u) => ({ id: u.id, label: u.full_name, subtitle: u.email }));
+      setCopyToPicker({ event, source, options: opts, title: 'Assign copy of event to staff', actionLabel: 'Create + assign', onPick: async (ids) => {
+        const masterId = event._master_id || event.id;
+        const { data: src } = await supabase.from('staff_schedule_events').select('*').eq('id', masterId).single();
+        const clone = { ...src };
+        delete clone.id; delete clone.created_at; delete clone.updated_at;
+        clone.is_recurring = false;
+        clone.recurrence_parent_id = null;
+        clone.recurrence_rule = null;
+        clone.original_date = null;
+        const { data: newEv } = await supabase.from('staff_schedule_events').insert(clone).select().single();
+        if (newEv) {
+          for (const uid of ids) {
+            await supabase.from('staff_schedule_assignments').insert({ event_id: newEv.id, user_id: uid });
+          }
+        }
+        setCopyToPicker(null);
+        refetchForSource(source);
+      } });
+    }
+  };
+
+  const buildContextMenuItems = (event, source) => {
+    const items = [];
+    const editable = !!event;
+    items.push({ label: 'Edit', icon: <Edit2 size={14} />, onClick: () => {
+      if (source === 'facility') { setSelectedFacilityEvent(event); setShowFacilityEventDetail(true); }
+      else if (source === 'team') { setSelectedEvent(event); setShowEventDetail(true); }
+    }, disabled: !editable || source === 'slot' });
+    items.push({ label: 'Duplicate', icon: <Copy size={14} />, onClick: () => handleDuplicate(event, source) });
+    if (source === 'team' || source === 'slot' || source === 'staff') {
+      items.push({ label: 'Copy to...', icon: <Copy size={14} />, onClick: () => openCopyToPicker(event, source) });
+    }
+    items.push({ divider: true });
+    items.push({ label: 'Delete', icon: <Trash2 size={14} />, onClick: () => handleDelete(event, source), danger: true });
+    return items;
+  };
+
+  const onEventContextMenu = (source) => (event, e) => {
+    setCtxMenu({ x: e.clientX, y: e.clientY, items: buildContextMenuItems(event, source) });
+  };
+
+  const bulkDelete = async () => {
+    if (selectedEvents.length === 0) return;
+    if (!window.confirm(`Delete ${selectedEvents.length} selected event(s)?`)) return;
+    // Group by source — but we only support one source at a time per view. Infer from selecting context: use first event's known fields.
+    // Determine source per current view
+    let source = 'facility';
+    if (view === 'team' || view === 'player') source = 'team';
+    if (view === 'facility' && selectedCoach) source = 'slot';
+    for (const ev of selectedEvents) {
+      const id = ev._master_id || ev.id;
+      if (ev._is_virtual && source === 'facility') {
+        await deleteVirtualOccurrence(ev, source);
+      } else if (ev._is_virtual && source === 'slot') {
+        // Bulk delete of virtual training slot occurrences: skip — would need exception support
+        continue;
+      } else {
+        await supabase.from(tableForSource(source)).delete().eq('id', id);
+      }
+    }
+    exitSelectMode();
+    refetchForSource(source);
+  };
+
   const canManageCalendar = () => {
     if (userRole === 'admin') return true;
     if (userRole === 'coach') {
@@ -527,6 +820,11 @@ export default function Schedule({ userId, userRole }) {
                         <Plus size={16} /><span>Add Training Slot</span>
                       </button>
                     )}
+                    {canManageCalendar() && viewMode !== 'lanes' && (
+                      <button onClick={() => { if (selecting) exitSelectMode(); else setSelecting(true); }} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center space-x-1 ${selecting ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                        <CheckSquare size={16} /><span>{selecting ? 'Done' : 'Select'}</span>
+                      </button>
+                    )}
                   </div>
                   <div className="flex items-center space-x-2">
                     <button onClick={() => setViewMode('week')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'week' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Week</button>
@@ -534,6 +832,17 @@ export default function Schedule({ userId, userRole }) {
                     <button onClick={() => setViewMode('lanes')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'lanes' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Lanes</button>
                   </div>
                 </div>
+                {selecting && selectedEvents.length > 0 && (
+                  <div className="mb-3 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-2 px-3">
+                    <span className="text-sm text-blue-900 font-medium">{selectedEvents.length} selected</span>
+                    <div className="flex items-center space-x-2">
+                      <button onClick={bulkDelete} className="bg-red-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-red-700 transition flex items-center space-x-1">
+                        <Trash2 size={14} /><span>Delete</span>
+                      </button>
+                      <button onClick={exitSelectMode} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-300 transition">Cancel</button>
+                    </div>
+                  </div>
+                )}
                 {viewMode !== 'lanes' && (
                 <div className="flex items-center justify-between">
                   <button onClick={() => {
@@ -559,6 +868,17 @@ export default function Schedule({ userId, userRole }) {
                     userRole={userRole}
                     canManage={userRole === 'coach' || userRole === 'admin'}
                     onAddSlot={(dateStr) => setShowCreateSlot(dateStr)}
+                    selecting={selecting}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    onEventContextMenu={onEventContextMenu('slot')}
+                    onSlotDrop={async (slotId, newDate) => {
+                      const slot = coachSlots.find((s) => String(s.id) === String(slotId));
+                      if (!slot || slot._is_virtual || slot.slot_date === newDate) return;
+                      const { error } = await supabase.from('training_slots').update({ slot_date: newDate }).eq('id', slotId);
+                      if (error) { alert('Failed to move slot: ' + error.message); return; }
+                      fetchCoachSlots(selectedCoach.id);
+                    }}
                     onReserve={(slot) => setShowReserveSlot(slot)}
                     onConfirm={async (reservationId) => {
                       const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
@@ -585,7 +905,7 @@ export default function Schedule({ userId, userRole }) {
                     coaches={coaches}
                   />
                 ) : viewMode === 'month' ? (
-                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} onEventDrop={async (eventId, newDate) => {
+                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
@@ -593,7 +913,7 @@ export default function Schedule({ userId, userRole }) {
                     fetchFacilityEvents();
                   }} />
                 ) : (
-                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} allowEventClick={true} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} onEventDrop={async (eventId, newDate) => {
+                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} allowEventClick={true} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
@@ -699,6 +1019,14 @@ export default function Schedule({ userId, userRole }) {
 
             {/* View Mode Toggle */}
             <div className="flex items-center space-x-2">
+              {canManageCalendar() && (
+                <button
+                  onClick={() => { if (selecting) exitSelectMode(); else setSelecting(true); }}
+                  className={`px-3 py-1.5 rounded text-sm font-medium transition flex items-center space-x-1 ${selecting ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                >
+                  <CheckSquare size={16} /><span>{selecting ? 'Done' : 'Select'}</span>
+                </button>
+              )}
               <button
                 onClick={() => setViewMode('week')}
                 className={`px-3 py-1 rounded text-sm font-medium transition ${
@@ -717,6 +1045,18 @@ export default function Schedule({ userId, userRole }) {
               </button>
             </div>
           </div>
+
+          {selecting && selectedEvents.length > 0 && (
+            <div className="mb-3 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-2 px-3">
+              <span className="text-sm text-blue-900 font-medium">{selectedEvents.length} selected</span>
+              <div className="flex items-center space-x-2">
+                <button onClick={bulkDelete} className="bg-red-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-red-700 transition flex items-center space-x-1">
+                  <Trash2 size={14} /><span>Delete</span>
+                </button>
+                <button onClick={exitSelectMode} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-300 transition">Cancel</button>
+              </div>
+            </div>
+          )}
 
           {/* Month / Week Navigation */}
           <div className="flex items-center justify-between">
@@ -771,6 +1111,10 @@ export default function Schedule({ userId, userRole }) {
               canManage={canManageCalendar()}
               setSelectedEvent={setSelectedEvent}
               setShowEventDetail={setShowEventDetail}
+              selecting={selecting}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onEventContextMenu={onEventContextMenu('team')}
               onEventDrop={async (eventId, newDate) => {
                 const ev = events.find(e => String(e.id) === String(eventId));
                 if (!ev || ev.event_date === newDate) return;
@@ -790,6 +1134,10 @@ export default function Schedule({ userId, userRole }) {
               onDateClick={(date) => canManageCalendar() && setShowAddPanel(date)}
               canManage={canManageCalendar()}
               onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
+              selecting={selecting}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onEventContextMenu={onEventContextMenu('team')}
               onEventDrop={async (eventId, newDate) => {
                 const ev = events.find(e => String(e.id) === String(eventId));
                 if (!ev || ev.event_date === newDate) return;
@@ -899,6 +1247,27 @@ export default function Schedule({ userId, userRole }) {
           onSuccess={() => { setShowReserveSlot(null); if (selectedCoach) fetchCoachSlots(selectedCoach.id); }}
         />
       )}
+      {ctxMenu && (
+        <CalendarContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />
+      )}
+      {recurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="This is a recurring event"
+          message="What part of the series do you want to delete?"
+          actionLabel="Delete"
+          onPick={recurrencePrompt.onPick}
+          onClose={() => setRecurrencePrompt(null)}
+        />
+      )}
+      {copyToPicker && (
+        <CopyToPickerModal
+          title={copyToPicker.title}
+          options={copyToPicker.options}
+          actionLabel={copyToPicker.actionLabel || 'Copy'}
+          onPick={copyToPicker.onPick}
+          onClose={() => setCopyToPicker(null)}
+        />
+      )}
     </div>
   );
 }
@@ -907,8 +1276,9 @@ export default function Schedule({ userId, userRole }) {
 // MONTH VIEW
 // ============================================
 
-function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick }) {
+function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu }) {
   const eventsAreClickable = canManage || allowEventClick;
+  const isSelected = (e) => selecting && selectedIds && selectedIds.has(String(e.id));
   const year = selectedDate.getFullYear();
   const month = selectedDate.getMonth();
 
@@ -1028,7 +1398,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                 {dayEvents.slice(0, 3).map(event => (
                   <div
                     key={event.id}
-                    draggable={canManage && !event._is_virtual && !!onEventDrop}
+                    draggable={canManage && !selecting && !event._is_virtual && !!onEventDrop}
                     onDragStart={(e) => {
                       e.stopPropagation();
                       e.dataTransfer.setData('application/x-event-id', String(event.id));
@@ -1036,19 +1406,22 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (selecting && onToggleSelect) { onToggleSelect(event); return; }
                       if (eventsAreClickable && setSelectedEvent && setShowEventDetail) {
                         setSelectedEvent(event);
                         setShowEventDetail(true);
                       }
                     }}
-                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''}`}
-                    title={canManage ? `Drag to reschedule, click to edit: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
+                    onContextMenu={(e) => { if (onEventContextMenu) { e.preventDefault(); e.stopPropagation(); onEventContextMenu(event, e); } }}
+                    className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''} ${isSelected(event) ? 'ring-2 ring-blue-500' : ''}`}
+                    title={canManage ? `Right-click for options. Drag to reschedule: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
                     <span className="truncate">
+                      {isSelected(event) && <Check size={10} className="inline mr-1" />}
                       {(event.start_time || event.event_time) && <span className="font-medium">{formatTimeDisplay(event.start_time || event.event_time)} </span>}
                       {event.title || event.opponent || event.event_type}
                     </span>
-                    {canManage && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
+                    {canManage && !selecting && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
                   </div>
                 ))}
                 {dayEvents.length > 3 && (
@@ -1080,7 +1453,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
 // WEEK VIEW
 // ============================================
 
-function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick }) {
+function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu }) {
   // Get the week containing selectedDate
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
@@ -1150,8 +1523,13 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
                     event={event}
                     compact
                     eventColorFn={eventColorFn}
-                    onClick={(canManage || allowEventClick) && onEventClick ? onEventClick : undefined}
-                    draggable={canManage && !event._is_virtual && !!onEventDrop}
+                    onClick={(ev) => {
+                      if (selecting && onToggleSelect) { onToggleSelect(ev); return; }
+                      if ((canManage || allowEventClick) && onEventClick) onEventClick(ev);
+                    }}
+                    onContextMenu={onEventContextMenu}
+                    draggable={canManage && !selecting && !event._is_virtual && !!onEventDrop}
+                    selected={selecting && selectedIds && selectedIds.has(String(event.id))}
                   />
                 ))}
 
@@ -1174,7 +1552,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
   );
 }
 
-function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
+function EventCard({ event, compact, eventColorFn, onClick, draggable, onContextMenu, selected }) {
   const getEventColor = (ev) => {
     const eventType = typeof ev === 'string' ? ev : ev?.event_type;
     if (eventType === 'workout') {
@@ -1200,15 +1578,16 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable }) {
 
   return (
     <div
-      className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''}`}
+      className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''} ${selected ? 'ring-2 ring-blue-500' : ''}`}
       onClick={clickable ? (e) => { e.stopPropagation(); onClick(event); } : undefined}
+      onContextMenu={(e) => { if (onContextMenu) { e.preventDefault(); e.stopPropagation(); onContextMenu(event, e); } }}
       draggable={!!draggable}
       onDragStart={draggable ? (e) => {
         e.stopPropagation();
         e.dataTransfer.setData('application/x-event-id', String(event.id));
         e.dataTransfer.effectAllowed = 'move';
       } : undefined}
-      title={clickable ? (draggable ? 'Drag to reschedule, click to edit' : 'Click to edit') : undefined}
+      title={clickable ? (draggable ? 'Right-click for options. Drag to reschedule.' : 'Click to edit') : undefined}
     >
       {clickable && (
         <Edit2 size={12} className="absolute top-1.5 right-1.5 text-gray-500 opacity-0 group-hover:opacity-100 transition" />
@@ -4062,7 +4441,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 // COACH SLOTS WEEK VIEW
 // ============================================
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline }) {
+function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -4093,11 +4472,21 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
           const daySlots = slots.filter(s => s.slot_date === dateStr);
           const isToday = date.getTime() === today.getTime();
           return (
-            <div key={idx} className="min-h-[400px] bg-white">
+            <div
+              key={idx}
+              className="min-h-[400px] bg-white"
+              onDragOver={(e) => { if (canManage && onSlotDrop && !selecting) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+              onDrop={(e) => {
+                if (!canManage || !onSlotDrop || selecting) return;
+                e.preventDefault();
+                const slotId = e.dataTransfer.getData('application/x-slot-id');
+                if (slotId) onSlotDrop(slotId, dateStr);
+              }}
+            >
               <div
-                className={`p-3 border-b border-gray-200 text-center ${isToday ? 'bg-teal-50' : 'bg-gray-50'} ${canManage ? 'cursor-pointer hover:bg-teal-100 transition' : ''}`}
-                onClick={canManage ? () => onAddSlot(dateStr) : undefined}
-                title={canManage ? 'Click to add a training slot' : undefined}
+                className={`p-3 border-b border-gray-200 text-center ${isToday ? 'bg-teal-50' : 'bg-gray-50'} ${canManage && !selecting ? 'cursor-pointer hover:bg-teal-100 transition' : ''}`}
+                onClick={canManage && !selecting ? () => onAddSlot(dateStr) : undefined}
+                title={canManage && !selecting ? 'Click to add a training slot' : undefined}
               >
                 <div className="text-xs font-medium text-gray-600">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
                 <div className={`text-lg font-semibold ${isToday ? 'text-teal-600' : 'text-gray-900'}`}>{date.getDate()}</div>
@@ -4109,8 +4498,21 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
                   const isBooked = slotRes.length >= (slot.max_players || 1);
                   const userRes = slotRes.find(r => r.player_id === userId);
                   const endTime = getEndTime(slot.start_time, slot.duration_minutes);
+                  const isSel = selecting && selectedIds && selectedIds.has(String(slot.id));
                   return (
-                    <div key={`${slot.id}-${si}`} className={`p-2 rounded-lg border text-xs ${isBooked ? 'bg-gray-100 border-gray-200' : 'bg-teal-50 border-teal-200'}`}>
+                    <div
+                      key={`${slot.id}-${si}`}
+                      draggable={canManage && !selecting && !slot._is_virtual && !!onSlotDrop}
+                      onDragStart={(e) => {
+                        if (!canManage || selecting || slot._is_virtual || !onSlotDrop) return;
+                        e.stopPropagation();
+                        e.dataTransfer.setData('application/x-slot-id', String(slot.id));
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onClick={(e) => { if (selecting && onToggleSelect) { e.stopPropagation(); onToggleSelect({ ...slot, slot_date: dateStr, id: slot.id }); } }}
+                      onContextMenu={(e) => { if (onEventContextMenu && canManage) { e.preventDefault(); e.stopPropagation(); onEventContextMenu({ ...slot, slot_date: dateStr }, e); } }}
+                      className={`p-2 rounded-lg border text-xs ${isBooked ? 'bg-gray-100 border-gray-200' : 'bg-teal-50 border-teal-200'} ${isSel ? 'ring-2 ring-blue-500' : ''} ${canManage && !selecting && !slot._is_virtual ? 'cursor-grab' : ''}`}
+                    >
                       <div className="font-semibold text-gray-900">{formatTime(slot.start_time)} - {formatTime(endTime)}</div>
                       <div className="text-gray-500">{slot.duration_minutes} min</div>
                       {slot.notes && <div className="text-gray-500 mt-1 truncate">{slot.notes}</div>}

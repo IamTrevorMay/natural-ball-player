@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck, Repeat } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck, Repeat, CheckSquare, Copy } from 'lucide-react';
 import { fmtLocalDate, generateOccurrenceDates, expandRecurringEvents } from './scheduleUtils';
+import CalendarContextMenu from './CalendarContextMenu';
+import RecurrenceDecisionModal from './RecurrenceDecisionModal';
+import CopyToPickerModal from './CopyToPickerModal';
 
 function startOfWeek(d) {
   const x = new Date(d);
@@ -96,6 +99,17 @@ export default function WorkSchedule({ userId, userRole }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedEvents, setSelectedEvents] = useState([]);
+  const [ctxMenu, setCtxMenu] = useState(null);
+  const [recurrencePrompt, setRecurrencePrompt] = useState(null);
+  const [copyToPicker, setCopyToPicker] = useState(null);
+  const selectedIds = useMemo(() => new Set(selectedEvents.map((e) => String(e.id))), [selectedEvents]);
+  const toggleSelect = (ev) => setSelectedEvents((arr) => {
+    const sid = String(ev.id);
+    return arr.some((e) => String(e.id) === sid) ? arr.filter((e) => String(e.id) !== sid) : [...arr, ev];
+  });
+  const exitSelectMode = () => { setSelecting(false); setSelectedEvents([]); };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -156,6 +170,138 @@ export default function WorkSchedule({ userId, userRole }) {
   };
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  const deleteStaffSeries = async (event) => {
+    const masterId = event._master_id || event.recurrence_parent_id || event.id;
+    await supabase.from('staff_schedule_events').delete().eq('recurrence_parent_id', masterId);
+    return (await supabase.from('staff_schedule_events').delete().eq('id', masterId)).error;
+  };
+  const deleteStaffOccurrence = async (event) => {
+    const { error } = await supabase.from('staff_schedule_events').insert({
+      recurrence_parent_id: event._master_id || event.recurrence_parent_id,
+      original_date: event.event_date,
+      event_date: event.event_date,
+      is_cancelled: true,
+      title: event.title,
+      start_at: event.start_at,
+      end_at: event.end_at,
+    });
+    return error;
+  };
+  const deleteStaffFuture = async (event) => {
+    const masterId = event._master_id || event.recurrence_parent_id || event.id;
+    const cutoff = new Date(event.event_date + 'T00:00:00');
+    cutoff.setDate(cutoff.getDate() - 1);
+    const until = fmtLocalDate(cutoff);
+    const { data: master } = await supabase.from('staff_schedule_events').select('recurrence_rule, event_date').eq('id', masterId).single();
+    if (!master) return null;
+    if (master.event_date && master.event_date > until) return await deleteStaffSeries(event);
+    const rule = { ...(master.recurrence_rule || {}), until };
+    return (await supabase.from('staff_schedule_events').update({ recurrence_rule: rule }).eq('id', masterId)).error;
+  };
+  const handleStaffDelete = (event) => {
+    const recurring = !!(event._is_virtual || event.is_recurring || event.recurrence_parent_id);
+    if (!recurring) {
+      if (!window.confirm('Delete this event?')) return;
+      (async () => {
+        const id = event._master_id || event.id;
+        const { error } = await supabase.from('staff_schedule_events').delete().eq('id', id);
+        if (error) { alert('Failed to delete: ' + error.message); return; }
+        fetchAll();
+      })();
+      return;
+    }
+    setRecurrencePrompt({ event, onPick: async (choice) => {
+      setRecurrencePrompt(null);
+      let err;
+      if (choice === 'one') err = await deleteStaffOccurrence(event);
+      else if (choice === 'future') err = await deleteStaffFuture(event);
+      else err = await deleteStaffSeries(event);
+      if (err) { alert('Failed to delete: ' + err.message); return; }
+      fetchAll();
+    } });
+  };
+  const handleStaffDuplicate = async (event) => {
+    const newDateStr = window.prompt('Duplicate to which date? (YYYY-MM-DD)', event.event_date);
+    if (!newDateStr) return;
+    const id = event._master_id || event.id;
+    const { data: src } = await supabase.from('staff_schedule_events').select('*').eq('id', id).single();
+    if (!src) return;
+    const clone = { ...src };
+    delete clone.id; delete clone.created_at; delete clone.updated_at;
+    clone.is_recurring = false;
+    clone.recurrence_parent_id = null;
+    clone.recurrence_rule = null;
+    clone.original_date = null;
+    clone.event_date = newDateStr;
+    if (src.start_at && src.end_at) {
+      const oldStart = new Date(src.start_at);
+      const newStart = new Date(newDateStr + 'T00:00:00');
+      newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+      const dur = new Date(src.end_at) - new Date(src.start_at);
+      clone.start_at = newStart.toISOString();
+      clone.end_at = new Date(newStart.getTime() + dur).toISOString();
+    }
+    const { error } = await supabase.from('staff_schedule_events').insert(clone);
+    if (error) { alert('Failed to duplicate: ' + error.message); return; }
+    fetchAll();
+  };
+  const handleStaffCopyTo = async (event) => {
+    const list = staff;
+    const opts = (list || []).map((u) => ({ id: u.id, label: u.full_name }));
+    setCopyToPicker({ options: opts, title: 'Assign copy of event to staff', actionLabel: 'Create + assign', onPick: async (ids) => {
+      const masterId = event._master_id || event.id;
+      const { data: src } = await supabase.from('staff_schedule_events').select('*').eq('id', masterId).single();
+      const clone = { ...src };
+      delete clone.id; delete clone.created_at; delete clone.updated_at;
+      clone.is_recurring = false;
+      clone.recurrence_parent_id = null;
+      clone.recurrence_rule = null;
+      clone.original_date = null;
+      const { data: newEv } = await supabase.from('staff_schedule_events').insert(clone).select().single();
+      if (newEv) {
+        for (const uid of ids) {
+          await supabase.from('staff_schedule_assignments').insert({ event_id: newEv.id, user_id: uid });
+        }
+      }
+      setCopyToPicker(null);
+      fetchAll();
+    } });
+  };
+  const buildStaffMenu = (event) => [
+    { label: 'Edit', icon: <Edit2 size={14} />, onClick: () => { setEditing(event); setShowForm(true); } },
+    { label: 'Duplicate', icon: <Copy size={14} />, onClick: () => handleStaffDuplicate(event) },
+    { label: 'Copy to...', icon: <Copy size={14} />, onClick: () => handleStaffCopyTo(event) },
+    { divider: true },
+    { label: 'Delete', icon: <Trash2 size={14} />, onClick: () => handleStaffDelete(event), danger: true },
+  ];
+  const openStaffMenu = (event, e) => setCtxMenu({ x: e.clientX, y: e.clientY, items: buildStaffMenu(event) });
+  const bulkStaffDelete = async () => {
+    if (selectedEvents.length === 0) return;
+    if (!window.confirm(`Delete ${selectedEvents.length} selected event(s)?`)) return;
+    for (const ev of selectedEvents) {
+      const id = ev._master_id || ev.id;
+      if (ev._is_virtual) await deleteStaffOccurrence(ev);
+      else await supabase.from('staff_schedule_events').delete().eq('id', id);
+    }
+    exitSelectMode();
+    fetchAll();
+  };
+  const onStaffDrop = async (eventId, newDate) => {
+    const ev = staffEvents.find((e) => String(e.id) === String(eventId));
+    if (!ev || ev._is_virtual || ev.event_date === newDate) return;
+    const oldStart = new Date(ev.start_at);
+    const newStart = new Date(newDate + 'T00:00:00');
+    newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+    const dur = new Date(ev.end_at) - new Date(ev.start_at);
+    const { error } = await supabase.from('staff_schedule_events').update({
+      event_date: newDate,
+      start_at: newStart.toISOString(),
+      end_at: new Date(newStart.getTime() + dur).toISOString(),
+    }).eq('id', ev.id);
+    if (error) { alert('Failed to move event: ' + error.message); return; }
+    fetchAll();
+  };
 
   const assignmentsByEvent = assignments.reduce((acc, a) => {
     (acc[a.event_id] = acc[a.event_id] || []).push(a);
@@ -246,6 +392,15 @@ export default function WorkSchedule({ userId, userRole }) {
           </div>
           {canManage && (
             <button
+              onClick={() => { if (selecting) exitSelectMode(); else setSelecting(true); }}
+              className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition ${selecting ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+            >
+              <CheckSquare size={16} />
+              <span>{selecting ? 'Done' : 'Select'}</span>
+            </button>
+          )}
+          {canManage && (
+            <button
               onClick={() => { setEditing(null); setShowForm(true); }}
               className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
             >
@@ -255,6 +410,17 @@ export default function WorkSchedule({ userId, userRole }) {
           )}
         </div>
       </div>
+      {selecting && selectedEvents.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 px-3 flex items-center justify-between">
+          <span className="text-sm text-blue-900 font-medium">{selectedEvents.length} selected</span>
+          <div className="flex items-center space-x-2">
+            <button onClick={bulkStaffDelete} className="bg-red-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-red-700 transition flex items-center space-x-1">
+              <Trash2 size={14} /><span>Delete</span>
+            </button>
+            <button onClick={exitSelectMode} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-300 transition">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">Loading...</div>
@@ -284,8 +450,19 @@ export default function WorkSchedule({ userId, userRole }) {
           {days.map((day, idx) => {
             const items = eventsByDay(day);
             const isToday = fmtLocalDate(day) === fmtLocalDate(new Date());
+            const dayStr = fmtLocalDate(day);
             return (
-              <div key={idx} className={`bg-white rounded-lg shadow min-h-[120px] flex flex-col ${isToday ? 'ring-2 ring-indigo-300' : ''}`}>
+              <div
+                key={idx}
+                className={`bg-white rounded-lg shadow min-h-[120px] flex flex-col ${isToday ? 'ring-2 ring-indigo-300' : ''}`}
+                onDragOver={(e) => { if (canManage && !selecting) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+                onDrop={(e) => {
+                  if (!canManage || selecting) return;
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData('application/x-staff-event-id');
+                  if (id) onStaffDrop(id, dayStr);
+                }}
+              >
                 <div className={`p-2 border-b ${isToday ? 'bg-indigo-50' : 'bg-gray-50'}`}>
                   <p className="text-xs font-medium text-gray-500 uppercase">{DAY_LABELS[day.getDay()]}</p>
                   <p className={`text-lg font-bold ${isToday ? 'text-indigo-700' : 'text-gray-900'}`}>{day.getDate()}</p>
@@ -312,13 +489,22 @@ export default function WorkSchedule({ userId, userRole }) {
                     }
                     const assigned = isMyAssigned(it.e);
                     const eventAssigns = getEventAssignments(it.e);
+                    const isSel = selecting && selectedIds.has(String(it.e.id));
                     return (
                       <button
                         key={`s-${it.e.id}`}
-                        onClick={() => setSelectedEvent(it.e)}
+                        draggable={canManage && !selecting && !it.e._is_virtual}
+                        onDragStart={(e) => {
+                          if (!canManage || selecting || it.e._is_virtual) return;
+                          e.stopPropagation();
+                          e.dataTransfer.setData('application/x-staff-event-id', String(it.e.id));
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onClick={() => { if (selecting && canManage) toggleSelect(it.e); else setSelectedEvent(it.e); }}
+                        onContextMenu={(e) => { if (!canManage) return; e.preventDefault(); e.stopPropagation(); openStaffMenu(it.e, e); }}
                         className={`w-full text-left rounded-md p-2 border-l-2 text-xs hover:shadow-sm transition ${
                           assigned ? 'bg-indigo-100 border-indigo-600' : 'bg-indigo-50 border-indigo-400'
-                        }`}
+                        } ${isSel ? 'ring-2 ring-blue-500' : ''} ${canManage && !selecting && !it.e._is_virtual ? 'cursor-grab' : ''}`}
                       >
                         <div className="flex items-center space-x-1 text-indigo-700 font-medium">
                           {assigned && <UserCheck size={11} />}
@@ -391,6 +577,27 @@ export default function WorkSchedule({ userId, userRole }) {
           onClose={() => { setShowForm(false); setEditing(null); }}
           onSaved={() => { setShowForm(false); setEditing(null); fetchAll(); }}
           createdBy={userId}
+        />
+      )}
+      {ctxMenu && (
+        <CalendarContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />
+      )}
+      {recurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="This is a recurring event"
+          message="What part of the series do you want to delete?"
+          actionLabel="Delete"
+          onPick={recurrencePrompt.onPick}
+          onClose={() => setRecurrencePrompt(null)}
+        />
+      )}
+      {copyToPicker && (
+        <CopyToPickerModal
+          title={copyToPicker.title}
+          options={copyToPicker.options}
+          actionLabel={copyToPicker.actionLabel || 'Copy'}
+          onPick={copyToPicker.onPick}
+          onClose={() => setCopyToPicker(null)}
         />
       )}
     </div>
