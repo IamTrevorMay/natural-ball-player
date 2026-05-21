@@ -10,7 +10,7 @@ const CONDUCT_ITEMS = [
   'I will refrain from the use of profanity, inappropriate language, or gestures.',
   'I will not engage in bullying, hazing, or any form of harassment.',
   'I will take care of all team equipment and return it in good condition.',
-  'I will represent the Dudes Baseball organization with pride and integrity.',
+  'I will represent the Naturals Select organization with pride and integrity.',
   'I will communicate any conflicts or absences to the coaching staff in advance.',
   'I will maintain satisfactory academic standing during the season.',
   'I will not use or possess alcohol, tobacco, or illegal substances.',
@@ -35,15 +35,15 @@ const VIOLATION_TABLE = [
 
 const MEDICAL_RELEASE_TEXT = `MEDICAL RELEASE & LIABILITY WAIVER
 
-I, the undersigned parent/guardian, hereby give my consent for my child to participate in all activities associated with the Dudes Baseball 2026-2027 season, including but not limited to practices, games, tournaments, and travel.
+I, the undersigned parent/guardian, hereby give my consent for my child to participate in all activities associated with the Naturals Select 2026-2027 season, including but not limited to practices, games, tournaments, and travel.
 
-I understand that participation in baseball involves inherent risks of injury. I voluntarily assume all risks associated with my child's participation and release the Dudes Baseball organization, its coaches, staff, volunteers, and affiliates from any and all liability for injuries sustained during team activities.
+I understand that participation in baseball involves inherent risks of injury. I voluntarily assume all risks associated with my child's participation and release the Naturals Select organization, its coaches, staff, volunteers, and affiliates from any and all liability for injuries sustained during team activities.
 
 In the event of an emergency, I authorize the coaching staff to seek and obtain emergency medical treatment for my child. I understand that I am financially responsible for any medical expenses incurred.
 
-PHOTO/MEDIA RELEASE: I grant permission for photographs, videos, and other media of my child taken during team activities to be used for promotional, educational, and social media purposes by the Dudes Baseball organization.
+PHOTO/MEDIA RELEASE: I grant permission for photographs, videos, and other media of my child taken during team activities to be used for promotional, educational, and social media purposes by the Naturals Select organization.
 
-COMMUNICATION CONSENT: I consent to receive communications from the Dudes Baseball organization via email, text message, and phone regarding team activities, schedules, and important updates.`;
+COMMUNICATION CONSENT: I consent to receive communications from the Naturals Select organization via email, text message, and phone regarding team activities, schedules, and important updates.`;
 
 const PAYMENT_TEXT = `TEAM FEE & PAYMENT PLAN
 
@@ -344,7 +344,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
       <div className="space-y-6">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Player Contract</h2>
-          <p className="text-gray-600 mt-1">Dudes Baseball 2026-2027 Season</p>
+          <p className="text-gray-600 mt-1">Naturals Select 2026-2027 Season</p>
         </div>
 
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center space-x-3">
@@ -490,7 +490,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold text-gray-900">Player Contract</h2>
-        <p className="text-gray-600 mt-1">Dudes Baseball 2026-2027 Season</p>
+        <p className="text-gray-600 mt-1">Naturals Select 2026-2027 Season</p>
       </div>
 
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center space-x-3">

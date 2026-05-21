@@ -4,6 +4,7 @@ import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2,
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
+import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
 
 const EQUIPMENT_FIELDS = [
@@ -94,6 +95,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [discountCodes, setDiscountCodes] = useState([]);
   const [waiverData, setWaiverData] = useState(null);
   const [contractData, setContractData] = useState(null);
+  const [loiData, setLoiData] = useState(null);
   const [armCareRoutines, setArmCareRoutines] = useState([]);
   const [editingRoutineId, setEditingRoutineId] = useState(null);
   const [routineDraft, setRoutineDraft] = useState({ title: '', content: '' });
@@ -126,6 +128,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [scheduleDate, setScheduleDate] = useState(new Date());
   const [programmingData, setProgrammingData] = useState({ programs: [], mealPlans: [], assessments: [], loading: false });
   const [scheduleSelectedDay, setScheduleSelectedDay] = useState(null);
+  const [showAddWorkout, setShowAddWorkout] = useState(false);
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
@@ -141,6 +144,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchDiscountCodes();
     fetchWaiverData();
     fetchContractData();
+    fetchLoiData();
     fetchArmCareRoutines();
     fetchGoals();
     fetchPlayerNotes();
@@ -1106,6 +1110,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setContractData(data);
     } catch (error) {
       console.error('Error fetching contract data:', error);
+    }
+  };
+
+  const fetchLoiData = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('player_letters_of_intent')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (error) throw error;
+      setLoiData(data);
+    } catch (error) {
+      console.error('Error fetching LOI data:', error);
     }
   };
 
@@ -2459,6 +2477,75 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 )}
               </div>
 
+              {/* Letter of Intent */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setExpandedSubmission(expandedSubmission === 'doc-loi' ? null : 'doc-loi')}
+                  className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${loiData ? 'bg-green-100' : 'bg-gray-100'}`}>
+                      <FileText size={20} className={loiData ? 'text-green-600' : 'text-gray-400'} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900">Letter of Intent</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {loiData ? (
+                          <span className="text-green-600 font-medium">
+                            Signed on {new Date(loiData.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                        ) : 'Not yet signed'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {loiData ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span> : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Incomplete</span>}
+                    {expandedSubmission === 'doc-loi' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                  </div>
+                </button>
+                {expandedSubmission === 'doc-loi' && (
+                  <div className="border-t border-gray-200 p-4">
+                    {loiData ? (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-600">Player Name</p>
+                            <p className="text-gray-900 font-medium">{loiData.player_name}</p>
+                          </div>
+                          {loiData.positions?.length > 0 && (
+                            <div>
+                              <p className="text-sm text-gray-600">Positions</p>
+                              <p className="text-gray-900 font-medium">{loiData.positions.join(', ')}</p>
+                            </div>
+                          )}
+                          {loiData.grad_year && (
+                            <div>
+                              <p className="text-sm text-gray-600">Grad Year</p>
+                              <p className="text-gray-900 font-medium">{loiData.grad_year}</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">Player Signature</p>
+                            <img src={loiData.player_signature_url} alt="Player Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">Parent Signature</p>
+                            <img src={loiData.parent_signature_url} alt="Parent Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-sm text-gray-500">Letter of Intent not yet signed.</p>
+                        {!onBack && <p className="text-xs text-gray-400 mt-1">Go to the Letter of Intent page from the sidebar to sign.</p>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Medical History */}
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <button
@@ -2533,12 +2620,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   <h4 className="text-lg font-semibold text-gray-900">
                     {scheduleDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                   </h4>
-                  <button
-                    onClick={() => { const nd = new Date(year, month + 1, 1); setScheduleDate(nd); setScheduleSelectedDay(null); }}
-                    className="p-1 rounded hover:bg-gray-100"
-                  >
-                    <ChevronRight size={18} />
-                  </button>
+                  <div className="flex items-center space-x-2">
+                    {canEditProfile && (
+                      <button
+                        onClick={() => setShowAddWorkout(true)}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition"
+                      >
+                        <Plus size={14} />
+                        <span>Assign Workout</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { const nd = new Date(year, month + 1, 1); setScheduleDate(nd); setScheduleSelectedDay(null); }}
+                      className="p-1 rounded hover:bg-gray-100"
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Calendar Grid */}
@@ -2649,6 +2747,21 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               </div>
             );
           })()}
+
+          {showAddWorkout && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto pt-8 pb-8">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4">
+                <AddEventPanel
+                  date={scheduleSelectedDay ? `${scheduleDate.getFullYear()}-${String(scheduleDate.getMonth() + 1).padStart(2, '0')}-${String(scheduleSelectedDay).padStart(2, '0')}` : new Date().toISOString().split('T')[0]}
+                  view="player"
+                  teamId={null}
+                  playerIds={[userId]}
+                  onClose={() => setShowAddWorkout(false)}
+                  onSuccess={() => { setShowAddWorkout(false); fetchScheduleEvents(); }}
+                />
+              </div>
+            </div>
+          )}
 
           {activeProfileTab === 'programming' && (() => {
             const today = new Date().toISOString().split('T')[0];

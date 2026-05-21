@@ -17,6 +17,7 @@ import WorkTimeOff from './WorkTimeOff';
 import WorkAdminTimeOff from './WorkAdminTimeOff';
 import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
+import WorkInvoices from './WorkInvoices';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
@@ -35,6 +36,8 @@ const PAGE_META = {
   'work-admin-time-off':        { title: 'Time Off Review',        description: 'Approve or reject time off requests.' },
   'work-admin-docs':            { title: 'Manage Documents',       description: 'Upload and organize staff documents.' },
   'work-admin-announcements':   { title: 'Manage Announcements',   description: 'Post and manage announcements for staff.' },
+  'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
+  'work-admin-invoices':        { title: 'Coach Invoices',         description: 'Review and manage coach-submitted invoices.' },
 };
 
 function ComingSoon({ viewKey }) {
@@ -95,6 +98,10 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <WorkAdminHours userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-time-off':
         return userRole === 'admin' ? <WorkAdminTimeOff userId={userId} /> : <ComingSoon viewKey={currentView} />;
+      case 'work-invoices':
+        return <WorkInvoices userId={userId} userRole={userRole} />;
+      case 'work-admin-invoices':
+        return userRole === 'admin' ? <WorkInvoices userId={userId} userRole={userRole} /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
@@ -217,6 +224,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         <NavItem id="work-schedule"  icon={Calendar}      label="Schedule" />
         <NavItem id="work-messages"  icon={MessageSquare} label="Messages" />
         <NavItem id="work-pay"       icon={DollarSign}    label="My Pay" />
+        <NavItem id="work-invoices"  icon={FileText}      label="My Invoices" />
         <NavItem id="work-hours"     icon={Clock}         label="My Hours" />
         <NavItem id="work-time-off"  icon={Plane}         label="Time Off" />
         <NavItem id="work-docs"      icon={FileText}      label="Documents" />
@@ -238,6 +246,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-hours"          icon={CheckSquare} label="Hours Review" />
                 <SubNavItem id="work-admin-time-off"       icon={CheckSquare} label="Time Off Review" />
                 <SubNavItem id="work-admin-docs"           icon={FolderOpen}  label="Manage Documents" />
+                <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>
             )}

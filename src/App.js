@@ -12,6 +12,7 @@ import ManageAthletes from './ManageAthletes';
 import ManageCoaches from './ManageCoaches';
 import WaiverPage from './WaiverPage';
 import ContractPage from './ContractPage';
+import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
@@ -30,6 +31,7 @@ export default function App() {
   const [workPortalView, setWorkPortalView] = useState('work-home');
   const [waiverSigned, setWaiverSigned] = useState(null);
   const [contractSigned, setContractSigned] = useState(null);
+  const [loiSigned, setLoiSigned] = useState(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [currentPortal, setCurrentPortal] = useState(() => {
     try {
@@ -69,6 +71,15 @@ export default function App() {
     setContractSigned(!!data);
   };
 
+  const checkLoiStatus = async (uid) => {
+    const { data } = await supabase
+      .from('player_letters_of_intent')
+      .select('id')
+      .eq('user_id', uid)
+      .maybeSingle();
+    setLoiSigned(!!data);
+  };
+
   useEffect(() => {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
@@ -89,6 +100,7 @@ export default function App() {
         fetchUserRole(session.user.id);
         checkWaiverStatus(session.user.id);
         checkContractStatus(session.user.id);
+        checkLoiStatus(session.user.id);
       } else {
         setUserRole(null);
         setUserId(null);
@@ -109,6 +121,7 @@ export default function App() {
               fetchUserRole(session.user.id);
               checkWaiverStatus(session.user.id);
               checkContractStatus(session.user.id);
+              checkLoiStatus(session.user.id);
             }
           });
         }
@@ -209,6 +222,8 @@ export default function App() {
         setWaiverSigned={setWaiverSigned}
         contractSigned={contractSigned}
         setContractSigned={setContractSigned}
+        loiSigned={loiSigned}
+        setLoiSigned={setLoiSigned}
         currentPortal={currentPortal}
         setCurrentPortal={setCurrentPortal}
       />
@@ -410,7 +425,7 @@ function ResetPasswordPage({ onComplete }) {
   );
 }
 
-function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, currentPortal, setCurrentPortal }) {
+function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, loiSigned, setLoiSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSecondary = !!secondaryRole && secondaryRole !== userRole;
@@ -461,6 +476,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
         pendingSlotCount={mainCounts.pendingSlots.length}
         waiverSigned={waiverSigned}
         contractSigned={contractSigned}
+        loiSigned={loiSigned}
         onSwitchPortal={() => { setCurrentPortal('work'); setSidebarOpen(false); }}
         canSwitchRole={hasSecondary}
         otherRole={hasSecondary ? (viewMode === userRole ? secondaryRole : userRole) : null}
@@ -503,6 +519,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
+            {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
             {currentView === 'settings' && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
           </div>
         </div>
@@ -511,9 +528,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
-  const [documentsExpanded, setDocumentsExpanded] = useState(waiverSigned === false || contractSigned === false ? true : true);
-  const anyDocUnsigned = waiverSigned === false || contractSigned === false;
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, loiSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
+  const [documentsExpanded, setDocumentsExpanded] = useState(true);
+  const anyDocUnsigned = waiverSigned === false || contractSigned === false || loiSigned === false;
   return (
     <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col z-50 transition-transform duration-200 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
       <div className="mb-4">
@@ -596,6 +613,18 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
                 <FileText size={16} />
                 <span className="flex-1 text-left">Player Contract</span>
                 {contractSigned === false && (
+                  <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0"></span>
+                )}
+              </button>
+              <button
+                onClick={() => setCurrentView('loi')}
+                className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
+                  currentView === 'loi' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                }`}
+              >
+                <FileText size={16} />
+                <span className="flex-1 text-left">Letter of Intent</span>
+                {loiSigned === false && (
                   <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0"></span>
                 )}
               </button>

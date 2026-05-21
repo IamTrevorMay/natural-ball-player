@@ -1497,7 +1497,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
 // ADD EVENT PANEL
 // ============================================
 
-function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess }) {
+export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess }) {
   const [eventType, setEventType] = useState(null); // 'team-event', 'workout', 'meal'
   const [workoutType, setWorkoutType] = useState(null); // 'single-day', 'program'
   const [mealType, setMealType] = useState(null); // 'single-meal', 'plan'
