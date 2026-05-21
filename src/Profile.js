@@ -846,18 +846,29 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     const general = notes.slice(0, idx).trim();
     const exerciseBlock = notes.slice(idx + delimiter.length).trim();
     const exercises = exerciseBlock.split('\n').filter(Boolean).map(line => {
-      const parts = line.split('|').map(s => s.trim());
-      const name = parts[0] || '';
-      let sets = '', reps = '', link = '';
-      if (parts[1]) {
-        const match = parts[1].match(/(\d+)\s*x\s*(\d+)/i);
-        if (match) { sets = match[1]; reps = match[2]; }
-        else { sets = parts[1]; }
+      if (line.includes('|')) {
+        // New pipe-delimited format: Name | 3x10 | rest | load | link
+        const parts = line.split('|').map(s => s.trim());
+        const name = parts[0] || '';
+        let sets = '', reps = '', rest = '', load = '', link = '';
+        if (parts[1]) {
+          const match = parts[1].match(/(\d+)\s*x\s*(\d+)/i);
+          if (match) { sets = match[1]; reps = match[2]; } else { sets = parts[1]; }
+        }
+        if (parts[2]) rest = parts[2];
+        if (parts[3]) load = parts[3];
+        if (parts[4]) link = parts[4];
+        return { name, sets, reps, rest, load, link };
+      } else {
+        // Legacy format: Name - 3 sets x 10 reps (link)
+        const name = line.replace(/ - \d.*$/, '').replace(/ \(https?:.*$/, '').trim();
+        let sets = '', reps = '', link = '';
+        const srMatch = line.match(/(\d+)\s*sets?\s*x\s*(\d+)\s*reps?/i);
+        if (srMatch) { sets = srMatch[1]; reps = srMatch[2]; }
+        const linkMatch = line.match(/\((https?:\/\/[^\s)]+)\)/);
+        if (linkMatch) link = linkMatch[1];
+        return { name, sets, reps, rest: '', load: '', link };
       }
-      if (parts[2] && (parts[2].startsWith('http') || parts[2].startsWith('www'))) {
-        link = parts[2];
-      }
-      return { name, sets, reps, link };
     }).filter(e => e.name);
     return { general, exercises };
   };
@@ -1399,8 +1410,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {/* Tab Bar */}
-          <div className="border-b border-gray-200 mb-6 -mx-2 px-2 overflow-x-auto">
-            <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
+          <div className="border-b border-gray-200 mb-6 -mx-2 px-2 overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            <nav className="flex md:flex-wrap gap-1 pb-2 min-w-0">
               {PROFILE_TABS.filter(tab => {
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
@@ -2608,11 +2619,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                                   <div key={j} className="bg-white rounded p-2 border border-blue-100 flex items-center justify-between text-xs">
                                     <div>
                                       <span className="font-medium text-gray-900">{ex.name}</span>
-                                      {(ex.sets || ex.reps) && (
-                                        <span className="text-gray-500 ml-1.5">
-                                          {ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}
-                                        </span>
-                                      )}
+                                      <div className="flex items-center gap-2 text-gray-500 mt-0.5">
+                                        {(ex.sets || ex.reps) && (
+                                          <span>{ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}</span>
+                                        )}
+                                        {ex.rest && <span>Rest: {ex.rest}</span>}
+                                        {ex.load && <span>Load: {ex.load}</span>}
+                                      </div>
                                     </div>
                                     {ex.link && (
                                       <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2">

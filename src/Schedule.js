@@ -1649,7 +1649,7 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
             const notesWithExercises = [
               newWorkoutData.notes || '',
               filteredExercises.length > 0 ? '\n--- Exercises ---\n' + filteredExercises.map(ex =>
-                `${ex.name}${ex.sets ? ` - ${ex.sets} sets` : ''}${ex.reps ? ` x ${ex.reps} reps` : ''}${ex.link ? ` (${ex.link})` : ''}`
+                [ex.name, ex.sets && ex.reps ? `${ex.sets}x${ex.reps}` : (ex.sets || ''), ex.rest || '', ex.load || '', ex.link || ''].join(' | ')
               ).join('\n') : ''
             ].filter(Boolean).join('\n');
 
@@ -1674,7 +1674,7 @@ function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onSuccess 
               const notesWithExercises = [
                 template.notes || '',
                 exercises.length > 0 ? '\n--- Exercises ---\n' + exercises.map(ex =>
-                  `${ex.name}${ex.sets ? ` - ${ex.sets} sets` : ''}${ex.reps ? ` x ${ex.reps} reps` : ''}${ex.link ? ` (${ex.link})` : ''}`
+                  [ex.name, ex.sets && ex.reps ? `${ex.sets}x${ex.reps}` : (ex.sets || ''), ex.rest || '', ex.load || '', ex.link || ''].join(' | ')
                 ).join('\n') : ''
               ].filter(Boolean).join('\n');
 
@@ -2727,20 +2727,29 @@ function parseExerciseNotes(notes) {
   const general = notes.slice(0, idx).trim();
   const exerciseBlock = notes.slice(idx + delimiter.length).trim();
   const exercises = exerciseBlock.split('\n').filter(Boolean).map(line => {
-    // Format: "Exercise Name | 3x10 | https://link" or "Exercise Name | 3 sets x 10 reps"
-    const parts = line.split('|').map(s => s.trim());
-    const name = parts[0] || '';
-    let sets = '', reps = '', link = '';
-    if (parts[1]) {
-      const setsReps = parts[1];
-      const match = setsReps.match(/(\d+)\s*x\s*(\d+)/i);
-      if (match) { sets = match[1]; reps = match[2]; }
-      else { sets = setsReps; }
+    if (line.includes('|')) {
+      // New pipe-delimited format: Name | 3x10 | rest | load | link
+      const parts = line.split('|').map(s => s.trim());
+      const name = parts[0] || '';
+      let sets = '', reps = '', rest = '', load = '', link = '';
+      if (parts[1]) {
+        const match = parts[1].match(/(\d+)\s*x\s*(\d+)/i);
+        if (match) { sets = match[1]; reps = match[2]; } else { sets = parts[1]; }
+      }
+      if (parts[2]) rest = parts[2];
+      if (parts[3]) load = parts[3];
+      if (parts[4]) link = parts[4];
+      return { name, sets, reps, rest, load, link };
+    } else {
+      // Legacy format: Name - 3 sets x 10 reps (link)
+      const name = line.replace(/ - \d.*$/, '').replace(/ \(https?:.*$/, '').trim();
+      let sets = '', reps = '', link = '';
+      const srMatch = line.match(/(\d+)\s*sets?\s*x\s*(\d+)\s*reps?/i);
+      if (srMatch) { sets = srMatch[1]; reps = srMatch[2]; }
+      const linkMatch = line.match(/\((https?:\/\/[^\s)]+)\)/);
+      if (linkMatch) link = linkMatch[1];
+      return { name, sets, reps, rest: '', load: '', link };
     }
-    if (parts[2] && (parts[2].startsWith('http') || parts[2].startsWith('www'))) {
-      link = parts[2];
-    }
-    return { name, sets, reps, link };
   }).filter(e => e.name);
   return { general, exercises };
 }
@@ -3459,11 +3468,13 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
                             <div key={i} className="bg-white rounded-md p-2.5 border border-blue-100 flex items-center justify-between">
                               <div>
                                 <div className="text-sm font-medium text-gray-900">{ex.name}</div>
-                                {(ex.sets || ex.reps) && (
-                                  <div className="text-xs text-gray-500 mt-0.5">
-                                    {ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                                  {(ex.sets || ex.reps) && (
+                                    <span>{ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}</span>
+                                  )}
+                                  {ex.rest && <span>Rest: {ex.rest}</span>}
+                                  {ex.load && <span>Load: {ex.load}</span>}
+                                </div>
                               </div>
                               {ex.link && (
                                 <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2 flex-shrink-0">

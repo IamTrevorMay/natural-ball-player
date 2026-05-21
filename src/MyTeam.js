@@ -647,6 +647,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
   const [hoveredPosition, setHoveredPosition] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editNotes, setEditNotes] = useState('');
+  const [editPosition, setEditPosition] = useState('');
   const [saving, setSaving] = useState(false);
   const [emailTarget, setEmailTarget] = useState(null);
   const [memberSearch, setMemberSearch] = useState('');
@@ -670,7 +671,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
         const { data } = await supabase
           .from('users')
           .select('id, full_name, email, role, player_profiles(position)')
-          .ilike('full_name', `%${memberSearch.trim()}%`)
+          .or(`full_name.ilike.%${memberSearch.trim()}%,email.ilike.%${memberSearch.trim()}%`)
           .limit(20);
         const filtered = (data || []).filter(u => !existingPlayerIds.includes(u.id));
         setMemberResults(filtered);
@@ -741,7 +742,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
     try {
       const { error } = await supabase
         .from('prospects')
-        .update({ notes: editNotes || null })
+        .update({ notes: editNotes || null, position: editPosition || null })
         .eq('id', id);
 
       if (error) throw error;
@@ -860,7 +861,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
                     type="text"
                     value={memberSearch}
                     onChange={(e) => setMemberSearch(e.target.value)}
-                    placeholder="Search by name..."
+                    placeholder="Search by name or email..."
                     className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     autoFocus
                   />
@@ -992,26 +993,46 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
                       )}
                     </div>
                     {editingId === prospect.id ? (
-                      <div className="mt-2 flex items-center space-x-2">
-                        <input
-                          type="text"
-                          value={editNotes}
-                          onChange={(e) => setEditNotes(e.target.value)}
-                          placeholder="Add notes..."
-                          className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <button
-                          onClick={() => handleUpdateNotes(prospect.id)}
-                          className="text-blue-600 hover:text-blue-800"
-                        >
-                          <Save size={16} />
-                        </button>
-                        <button
-                          onClick={() => setEditingId(null)}
-                          className="text-gray-400 hover:text-gray-600"
-                        >
-                          <X size={16} />
-                        </button>
+                      <div className="mt-2 space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <select
+                            value={editPosition}
+                            onChange={(e) => setEditPosition(e.target.value)}
+                            className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">No position</option>
+                            <option value="P">P</option>
+                            <option value="C">C</option>
+                            <option value="1B">1B</option>
+                            <option value="2B">2B</option>
+                            <option value="3B">3B</option>
+                            <option value="SS">SS</option>
+                            <option value="LF">LF</option>
+                            <option value="CF">CF</option>
+                            <option value="RF">RF</option>
+                            <option value="DH">DH</option>
+                            <option value="UT">UT</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={editNotes}
+                            onChange={(e) => setEditNotes(e.target.value)}
+                            placeholder="Add notes..."
+                            className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            onClick={() => handleUpdateNotes(prospect.id)}
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            <Save size={16} />
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="text-gray-400 hover:text-gray-600"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <p className="text-sm text-gray-600 mt-1">
@@ -1025,7 +1046,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
                 </div>
                 <div className="flex items-center space-x-1 ml-2">
                   <button
-                    onClick={() => { setEditingId(prospect.id); setEditNotes(prospect.notes || ''); }}
+                    onClick={() => { setEditingId(prospect.id); setEditNotes(prospect.notes || ''); setEditPosition(prospect.position || ''); }}
                     className="p-1.5 text-gray-400 hover:text-blue-600 transition"
                     title="Edit notes"
                   >
