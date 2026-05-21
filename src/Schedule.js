@@ -5,6 +5,7 @@ import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
+import ProgramLibrarySidebar from './ProgramLibrarySidebar';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -107,6 +108,7 @@ export default function Schedule({ userId, userRole }) {
     return arr.some((e) => String(e.id) === sid) ? arr.filter((e) => String(e.id) !== sid) : [...arr, ev];
   });
   const exitSelectMode = () => { setSelecting(false); setSelectedEvents([]); };
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
 
   useEffect(() => {
     fetchTeams();
@@ -616,6 +618,86 @@ export default function Schedule({ userId, userRole }) {
     refetchForSource(source);
   };
 
+  // ============================================
+  // Drop handler for Program Library sidebar
+  // payload: { kind: 'template'|'program'|'meal_plan'|'meal', id, name }
+  // ============================================
+  const handleProgramDrop = async (payload, dateStr) => {
+    if (!payload || !dateStr) return;
+    if (!canManageCalendar() && view !== 'my-schedule') { alert('You do not have permission to schedule events here.'); return; }
+
+    // Determine targets based on current view
+    let targets = {};
+    if (view === 'team') {
+      if (!selectedTeam) { alert('Select a team first.'); return; }
+      targets = { team_id: selectedTeam, team_ids: [selectedTeam] };
+    } else if (view === 'player') {
+      const playerIds = selectedPlayers.length > 0 ? selectedPlayers : (selectedPlayer ? [selectedPlayer] : []);
+      if (playerIds.length === 0) { alert('Select a player first.'); return; }
+      targets = { _playerIds: playerIds };
+    } else if (view === 'my-schedule') {
+      targets = { player_id: userId };
+    } else {
+      return;
+    }
+
+    const insertSchedule = async (rows) => {
+      const expanded = [];
+      if (targets._playerIds) {
+        for (const pid of targets._playerIds) {
+          for (const r of rows) expanded.push({ ...r, player_id: pid });
+        }
+      } else {
+        for (const r of rows) expanded.push({ ...r, ...targets });
+      }
+      const { error } = await supabase.from('schedule_events').insert(expanded);
+      if (error) { alert('Failed to schedule: ' + error.message); return false; }
+      return true;
+    };
+
+    if (payload.kind === 'template') {
+      const ok = await insertSchedule([{ event_type: 'workout', title: payload.name, event_date: dateStr }]);
+      if (ok) { if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents(); }
+      return;
+    }
+    if (payload.kind === 'meal') {
+      const ok = await insertSchedule([{ event_type: 'meal', meal_id: payload.id, title: payload.name, event_date: dateStr }]);
+      if (ok) { if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents(); }
+      return;
+    }
+    if (payload.kind === 'program') {
+      const { data: days } = await supabase.from('training_days').select('id, day_number, title').eq('program_id', payload.id).order('day_number');
+      const rows = (days || []).map((d) => {
+        const dt = new Date(dateStr + 'T00:00:00');
+        dt.setDate(dt.getDate() + ((d.day_number || 1) - 1));
+        return {
+          event_type: 'workout',
+          training_program_id: payload.id,
+          training_day_id: d.id,
+          title: d.title || payload.name,
+          event_date: fmtLocalDate(dt),
+        };
+      });
+      if (rows.length === 0) { alert('Program has no days to schedule.'); return; }
+      const ok = await insertSchedule(rows);
+      if (ok) { if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents(); }
+      return;
+    }
+    if (payload.kind === 'meal_plan') {
+      const assignments = [];
+      if (view === 'team') {
+        assignments.push({ meal_plan_id: payload.id, team_id: selectedTeam, start_date: dateStr });
+      } else if (view === 'player') {
+        for (const pid of (targets._playerIds || [])) assignments.push({ meal_plan_id: payload.id, player_id: pid, start_date: dateStr });
+      } else {
+        assignments.push({ meal_plan_id: payload.id, player_id: userId, start_date: dateStr });
+      }
+      const { error } = await supabase.from('meal_plan_assignments').insert(assignments);
+      if (error) { alert('Failed to assign meal plan: ' + error.message); return; }
+      if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents();
+    }
+  };
+
   const canManageCalendar = () => {
     if (userRole === 'admin') return true;
     if (userRole === 'coach') {
@@ -696,7 +778,9 @@ export default function Schedule({ userId, userRole }) {
 
       {/* My Schedule View (Player) */}
       {view === 'my-schedule' && (
-        <div className="bg-white rounded-lg shadow">
+        <div className="flex space-x-4">
+          <ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} />
+          <div className="bg-white rounded-lg shadow flex-1 min-w-0">
           <div className="border-b border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-3">
@@ -737,6 +821,7 @@ export default function Schedule({ userId, userRole }) {
                 canManage={true}
                 setSelectedEvent={setSelectedEvent}
                 setShowEventDetail={setShowEventDetail}
+                onProgramDrop={handleProgramDrop}
               />
             ) : (
               <WeekView
@@ -745,6 +830,7 @@ export default function Schedule({ userId, userRole }) {
                 onDateClick={() => {}}
                 canManage={true}
                 onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
+                onProgramDrop={handleProgramDrop}
               />
             )}
           </div>
@@ -755,6 +841,7 @@ export default function Schedule({ userId, userRole }) {
               onSuccess={() => { setShowPlayerAddGame(false); fetchMyScheduleEvents(); }}
             />
           )}
+          </div>
         </div>
       )}
 
@@ -928,7 +1015,7 @@ export default function Schedule({ userId, userRole }) {
       )}
 
       {/* Team/Player Calendar Container */}
-      {view !== 'facility' && view !== 'my-schedule' && <><div className="bg-white rounded-lg shadow">
+      {view !== 'facility' && view !== 'my-schedule' && <><div className="flex space-x-4"><ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} /><div className="bg-white rounded-lg shadow flex-1 min-w-0">
         {/* Calendar Header */}
         <div className="border-b border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
@@ -1115,6 +1202,7 @@ export default function Schedule({ userId, userRole }) {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               onEventContextMenu={onEventContextMenu('team')}
+              onProgramDrop={handleProgramDrop}
               onEventDrop={async (eventId, newDate) => {
                 const ev = events.find(e => String(e.id) === String(eventId));
                 if (!ev || ev.event_date === newDate) return;
@@ -1138,6 +1226,7 @@ export default function Schedule({ userId, userRole }) {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               onEventContextMenu={onEventContextMenu('team')}
+              onProgramDrop={handleProgramDrop}
               onEventDrop={async (eventId, newDate) => {
                 const ev = events.find(e => String(e.id) === String(eventId));
                 if (!ev || ev.event_date === newDate) return;
@@ -1152,6 +1241,7 @@ export default function Schedule({ userId, userRole }) {
             />
           )}
         </div>
+      </div>
       </div>
 
       {/* Add Event Panel */}
@@ -1276,7 +1366,7 @@ export default function Schedule({ userId, userRole }) {
 // MONTH VIEW
 // ============================================
 
-function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu }) {
+function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop }) {
   const eventsAreClickable = canManage || allowEventClick;
   const isSelected = (e) => selecting && selectedIds && selectedIds.has(String(e.id));
   const year = selectedDate.getFullYear();
@@ -1373,16 +1463,21 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
               onMouseEnter={() => setHoveredDate(dateStr)}
               onMouseLeave={() => setHoveredDate(null)}
               onDragOver={(e) => {
-                if (canManage && onEventDrop && day.isCurrentMonth) {
+                if (!day.isCurrentMonth) return;
+                if ((canManage && onEventDrop) || onProgramDrop) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                 }
               }}
               onDrop={(e) => {
-                if (!canManage || !onEventDrop || !day.isCurrentMonth) return;
+                if (!day.isCurrentMonth) return;
                 e.preventDefault();
                 const eventId = e.dataTransfer.getData('application/x-event-id');
-                if (eventId) onEventDrop(eventId, dateStr);
+                if (eventId && canManage && onEventDrop) { onEventDrop(eventId, dateStr); return; }
+                const programData = e.dataTransfer.getData('application/x-program-item');
+                if (programData && onProgramDrop) {
+                  try { onProgramDrop(JSON.parse(programData), dateStr); } catch (_) {}
+                }
               }}
             >
               {/* Date number */}
@@ -1453,7 +1548,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
 // WEEK VIEW
 // ============================================
 
-function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu }) {
+function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop }) {
   // Get the week containing selectedDate
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
@@ -1489,16 +1584,19 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
               key={idx}
               className="min-h-[400px] bg-white"
               onDragOver={(e) => {
-                if (canManage && onEventDrop) {
+                if ((canManage && onEventDrop) || onProgramDrop) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                 }
               }}
               onDrop={(e) => {
-                if (!canManage || !onEventDrop) return;
                 e.preventDefault();
                 const eventId = e.dataTransfer.getData('application/x-event-id');
-                if (eventId) onEventDrop(eventId, dateStr);
+                if (eventId && canManage && onEventDrop) { onEventDrop(eventId, dateStr); return; }
+                const programData = e.dataTransfer.getData('application/x-program-item');
+                if (programData && onProgramDrop) {
+                  try { onProgramDrop(JSON.parse(programData), dateStr); } catch (_) {}
+                }
               }}
             >
               {/* Day header */}
