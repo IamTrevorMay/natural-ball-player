@@ -89,6 +89,7 @@ export default function Schedule({ userId, userRole }) {
   const [slotReservations, setSlotReservations] = useState([]);
   const [showCreateSlot, setShowCreateSlot] = useState(null);
   const [showReserveSlot, setShowReserveSlot] = useState(null);
+  const [showEditSlot, setShowEditSlot] = useState(null);
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
   const [laneDate, setLaneDate] = useState(fmtLocalDate(new Date()));
@@ -305,20 +306,29 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const fetchCoachSlots = async (coachId) => {
+    // Expand range to cover the displayed week even if it spans month boundaries
+    const startOfWeek = new Date(selectedDate);
+    startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = fmtLocalDate(startOfMonth);
-    const endStr = fmtLocalDate(endOfMonth);
-    const { data: slots } = await supabase.from('training_slots').select('*').eq('coach_id', coachId);
+    const rangeStart = startOfWeek < startOfMonth ? startOfWeek : startOfMonth;
+    const rangeEnd = endOfWeek > endOfMonth ? endOfWeek : endOfMonth;
+    const startStr = fmtLocalDate(rangeStart);
+    const endStr = fmtLocalDate(rangeEnd);
+    const { data: slots, error: slotErr } = await supabase.from('training_slots').select('*').eq('coach_id', coachId);
+    if (slotErr) console.error('Error fetching training slots:', slotErr);
     const expandedSlots = [];
     (slots || []).forEach(slot => {
       if (slot.repeat_weekly && !slot.recurrence_parent_id) {
         const slotStart = new Date(slot.slot_date + 'T00:00:00');
-        const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : endOfMonth;
+        const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : rangeEnd;
         let current = new Date(slotStart);
         let index = 0;
-        while (current <= endDate && current <= endOfMonth) {
-          if (current >= startOfMonth) {
+        while (current <= endDate && current <= rangeEnd) {
+          if (current >= rangeStart) {
             expandedSlots.push({ ...slot, slot_date: fmtLocalDate(current), _occurrence_index: index, _is_virtual: index > 0 });
           }
           current.setDate(current.getDate() + 7);
@@ -330,6 +340,14 @@ export default function Schedule({ userId, userRole }) {
         }
       }
     });
+    // Ensure first visible occurrence per repeating master is draggable
+    const firstRepeatSeen = new Set();
+    for (const es of expandedSlots) {
+      if (es.repeat_weekly && !firstRepeatSeen.has(es.id)) {
+        es._is_virtual = false;
+        firstRepeatSeen.add(es.id);
+      }
+    }
     setCoachSlots(expandedSlots);
     const slotIds = (slots || []).map(s => s.id);
     if (slotIds.length > 0) {
@@ -359,7 +377,7 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const isRecurringEvent = (event, source) => {
-    if (source === 'slot') return !!event.repeat_weekly && !event.recurrence_parent_id ? false : !!(event._is_virtual || event.repeat_weekly);
+    if (source === 'slot') return !!event.repeat_weekly;
     return !!(event._is_virtual || event.is_recurring || event.recurrence_parent_id);
   };
 
@@ -468,6 +486,7 @@ export default function Schedule({ userId, userRole }) {
     }
     setRecurrencePrompt({
       event, source, action: 'delete',
+      allowOne: source !== 'slot',
       onPick: async (choice) => {
         setRecurrencePrompt(null);
         let err;
@@ -490,15 +509,19 @@ export default function Schedule({ userId, userRole }) {
     delete clone.id;
     delete clone.created_at;
     delete clone.updated_at;
-    clone.is_recurring = false;
-    clone.recurrence_parent_id = null;
-    clone.recurrence_rule = null;
-    clone.original_date = null;
     if (source === 'slot') {
       clone.slot_date = newDateStr;
       clone.repeat_weekly = false;
       clone.repeat_end_date = null;
+      clone.is_recurring = false;
+      clone.recurrence_parent_id = null;
+      delete clone.recurrence_rule;
+      delete clone.original_date;
     } else {
+      clone.is_recurring = false;
+      clone.recurrence_parent_id = null;
+      clone.recurrence_rule = null;
+      clone.original_date = null;
       clone.event_date = newDateStr;
       if (source === 'staff' && src.start_at && src.end_at) {
         const oldStart = new Date(src.start_at);
@@ -581,7 +604,8 @@ export default function Schedule({ userId, userRole }) {
     items.push({ label: 'Edit', icon: <Edit2 size={14} />, onClick: () => {
       if (source === 'facility') { setSelectedFacilityEvent(event); setShowFacilityEventDetail(true); }
       else if (source === 'team') { setSelectedEvent(event); setShowEventDetail(true); }
-    }, disabled: !editable || source === 'slot' });
+      else if (source === 'slot') { setShowEditSlot(event); }
+    }, disabled: !editable });
     items.push({ label: 'Duplicate', icon: <Copy size={14} />, onClick: () => handleDuplicate(event, source) });
     if (source === 'team' || source === 'slot' || source === 'staff') {
       items.push({ label: 'Copy to...', icon: <Copy size={14} />, onClick: () => openCopyToPicker(event, source) });
@@ -1329,6 +1353,15 @@ export default function Schedule({ userId, userRole }) {
           initialDate={typeof showCreateSlot === 'string' && showCreateSlot !== 'new' ? showCreateSlot : null}
         />
       )}
+      {showEditSlot && selectedCoach && (
+        <CreateSlotPanel
+          onClose={() => setShowEditSlot(null)}
+          onSuccess={() => { setShowEditSlot(null); if (selectedCoach) fetchCoachSlots(selectedCoach.id); }}
+          coachId={selectedCoach.id}
+          coachName={selectedCoach.full_name}
+          existingSlot={showEditSlot}
+        />
+      )}
       {showReserveSlot && (
         <ReserveSlotModal
           slot={showReserveSlot}
@@ -1345,6 +1378,7 @@ export default function Schedule({ userId, userRole }) {
           title="This is a recurring event"
           message="What part of the series do you want to delete?"
           actionLabel="Delete"
+          allowOne={recurrencePrompt.allowOne !== false}
           onPick={recurrencePrompt.onPick}
           onClose={() => setRecurrencePrompt(null)}
         />
@@ -1464,7 +1498,11 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
               onMouseLeave={() => setHoveredDate(null)}
               onDragOver={(e) => {
                 if (!day.isCurrentMonth) return;
-                if ((canManage && onEventDrop) || onProgramDrop) {
+                const types = [...e.dataTransfer.types];
+                if (types.includes('application/x-program-item') && onProgramDrop) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                } else if (types.includes('application/x-event-id') && canManage && onEventDrop) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                 }
@@ -1584,7 +1622,11 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
               key={idx}
               className="min-h-[400px] bg-white"
               onDragOver={(e) => {
-                if ((canManage && onEventDrop) || onProgramDrop) {
+                const types = [...e.dataTransfer.types];
+                if (types.includes('application/x-program-item') && onProgramDrop) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                } else if (types.includes('application/x-event-id') && canManage && onEventDrop) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                 }
@@ -4655,35 +4697,42 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
 // CREATE SLOT PANEL
 // ============================================
 
-function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate }) {
-  const [slotDate, setSlotDate] = useState(initialDate || fmtLocalDate(new Date()));
-  const [startTime, setStartTime] = useState('09:00');
-  const [duration, setDuration] = useState(60);
-  const [autoConfirm, setAutoConfirm] = useState(false);
-  const [repeatWeekly, setRepeatWeekly] = useState(false);
-  const [repeatEndDate, setRepeatEndDate] = useState('');
-  const [maxPlayers, setMaxPlayers] = useState(1);
-  const [notes, setNotes] = useState('');
+function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, existingSlot }) {
+  const isEdit = !!existingSlot;
+  const [slotDate, setSlotDate] = useState(existingSlot?.slot_date || initialDate || fmtLocalDate(new Date()));
+  const [startTime, setStartTime] = useState(existingSlot?.start_time || '09:00');
+  const [duration, setDuration] = useState(existingSlot?.duration_minutes || 60);
+  const [autoConfirm, setAutoConfirm] = useState(existingSlot?.auto_confirm || false);
+  const [repeatWeekly, setRepeatWeekly] = useState(existingSlot?.repeat_weekly || false);
+  const [repeatEndDate, setRepeatEndDate] = useState(existingSlot?.repeat_end_date || '');
+  const [maxPlayers, setMaxPlayers] = useState(existingSlot?.max_players || 1);
+  const [notes, setNotes] = useState(existingSlot?.notes || '');
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      const { error } = await supabase.from('training_slots').insert({
+      const payload = {
         coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
-        auto_confirm: autoConfirm, is_recurring: repeatWeekly, repeat_weekly: repeatWeekly,
+        auto_confirm: autoConfirm, repeat_weekly: repeatWeekly,
         repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
-      });
-      if (error) throw error;
+      };
+      if (isEdit) {
+        const { error } = await supabase.from('training_slots').update(payload).eq('id', existingSlot.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('training_slots').insert(payload);
+        if (error) throw error;
+      }
       onSuccess();
-    } catch (err) { alert('Error creating slot: ' + err.message); } finally { setLoading(false); }
+    } catch (err) { alert('Error ' + (isEdit ? 'updating' : 'creating') + ' slot: ' + err.message); } finally { setLoading(false); }
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
         <div className="border-b border-gray-200 p-6 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-900">Create Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
+          <h3 className="text-xl font-bold text-gray-900">{isEdit ? 'Edit' : 'Create'} Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
         <div className="p-6 space-y-4">
@@ -4699,7 +4748,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate }
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g., Hitting session, Pitching mechanics" rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Create Slot'}</button>
+            <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
           </div>
         </div>
       </div>
