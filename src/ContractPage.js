@@ -2,72 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 
-const CONDUCT_ITEMS = [
-  'I will attend all practices and games unless excused by the coaching staff.',
-  'I will arrive on time and prepared for all team activities.',
-  'I will maintain a positive attitude and demonstrate good sportsmanship at all times.',
-  'I will respect all coaches, teammates, opponents, umpires, and spectators.',
-  'I will refrain from the use of profanity, inappropriate language, or gestures.',
-  'I will not engage in bullying, hazing, or any form of harassment.',
-  'I will take care of all team equipment and return it in good condition.',
-  'I will represent the Naturals Select organization with pride and integrity.',
-  'I will communicate any conflicts or absences to the coaching staff in advance.',
-  'I will maintain satisfactory academic standing during the season.',
-  'I will not use or possess alcohol, tobacco, or illegal substances.',
-  'I will follow all facility rules and safety guidelines.',
-  'I will support and encourage my teammates at all times.',
-  'I will accept coaching decisions regarding playing time, positions, and strategy.',
-  'I will refrain from negative social media posts about the team, coaches, or opponents.',
-  'I will dress appropriately and wear the proper uniform during games and team events.',
-  'I will hustle and give maximum effort during all practices and games.',
-  'I will not throw equipment or display unsportsmanlike conduct.',
-  'I will resolve conflicts in a mature and respectful manner.',
-  'I understand that violations may result in disciplinary action up to and including dismissal from the team.',
-  'I have read, understand, and agree to abide by all terms of this code of conduct.'
-];
-
-const VIOLATION_TABLE = [
-  { offense: '1st Offense', consequence: 'Verbal warning and meeting with coaching staff' },
-  { offense: '2nd Offense', consequence: 'One-game suspension and parent/guardian notification' },
-  { offense: '3rd Offense', consequence: 'Multi-game suspension and mandatory parent/guardian meeting' },
-  { offense: '4th Offense', consequence: 'Dismissal from the team (no refund)' },
-];
-
-const MEDICAL_RELEASE_TEXT = `MEDICAL RELEASE & LIABILITY WAIVER
-
-I, the undersigned parent/guardian, hereby give my consent for my child to participate in all activities associated with the Naturals Select 2026-2027 season, including but not limited to practices, games, tournaments, and travel.
-
-I understand that participation in baseball involves inherent risks of injury. I voluntarily assume all risks associated with my child's participation and release the Naturals Select organization, its coaches, staff, volunteers, and affiliates from any and all liability for injuries sustained during team activities.
-
-In the event of an emergency, I authorize the coaching staff to seek and obtain emergency medical treatment for my child. I understand that I am financially responsible for any medical expenses incurred.
-
-PHOTO/MEDIA RELEASE: I grant permission for photographs, videos, and other media of my child taken during team activities to be used for promotional, educational, and social media purposes by the Naturals Select organization.
-
-COMMUNICATION CONSENT: I consent to receive communications from the Naturals Select organization via email, text message, and phone regarding team activities, schedules, and important updates.`;
-
-const PAYMENT_TEXT = `TEAM FEE & PAYMENT PLAN
-
-Season Fee: $2,500 per player for the 2026-2027 season.
-
-The fee covers:
-- All practice facility costs
-- Tournament entry fees (up to 8 tournaments)
-- Team uniforms (jersey, pants, hat)
-- Insurance coverage during team activities
-- Coaching and instruction
-
-Not included:
-- Personal equipment (glove, bat, cleats, etc.)
-- Travel and lodging for away tournaments
-- Additional tournament entry fees beyond 8
-
-Payment Plans:
-- Full Payment: $2,500 due at contract signing (save $100 - pay $2,400)
-- Two Payments: $1,250 due at signing + $1,250 due by December 1, 2026
-- Monthly Plan: $425/month for 6 months beginning at signing
-
-All fees are non-refundable after the first scheduled team practice. Requests for refunds before the first practice will be reviewed on a case-by-case basis.`;
-
 const POSITION_OPTIONS = ['1B', '2B', '3B', 'SS', 'OF', 'P', 'C'];
 const BATS_THROWS_OPTIONS = ['R/R', 'L/L', 'R/L', 'L/R'];
 
@@ -112,9 +46,6 @@ export default function ContractPage({ userId, userRole, onSigned }) {
   const [sweatshirtSize, setSweatshirtSize] = useState('');
   const [helmetSize, setHelmetSize] = useState('');
   const [hatSize, setHatSize] = useState('');
-
-  // Conduct
-  const [conductChecks, setConductChecks] = useState(new Array(CONDUCT_ITEMS.length).fill(false));
 
   // Medical Consent
   const [consentParentFirst, setConsentParentFirst] = useState('');
@@ -258,13 +189,8 @@ export default function ContractPage({ userId, userRole, onSigned }) {
     setPositions(prev => prev.includes(pos) ? prev.filter(p => p !== pos) : [...prev, pos]);
   };
 
-  const toggleConduct = (idx) => {
-    setConductChecks(prev => { const next = [...prev]; next[idx] = !next[idx]; return next; });
-  };
-
   const handleSubmit = async () => {
     if (!playerName.trim()) return alert('Please enter the player name.');
-    if (!conductChecks.every(Boolean)) return alert('Please agree to all Code of Conduct items.');
     if (!playerHasSignature) return alert('Please provide the player signature.');
     if (!parentHasSignature) return alert('Please provide the parent/guardian signature.');
     if (!consentParentFirst.trim() || !consentParentLast.trim()) return alert('Please fill in parent/guardian name in the medical consent section.');
@@ -488,14 +414,6 @@ export default function ContractPage({ userId, userRole, onSigned }) {
             </div>
           )}
 
-          {/* Conduct Agreed */}
-          <div className="border-t border-gray-200 pt-4">
-            <div className="flex items-center space-x-2">
-              <CheckCircle size={18} className="text-green-600" />
-              <p className="text-gray-900 font-medium">Code of Conduct Agreed</p>
-            </div>
-          </div>
-
           {/* Signatures */}
           <div className="border-t border-gray-200 pt-4">
             <h3 className="text-lg font-semibold text-gray-900 mb-3">Signatures</h3>
@@ -715,60 +633,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
             </div>
           </div>
 
-          {/* Section 4: Code of Conduct */}
-          <div className="border-t border-gray-200 pt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Code of Conduct</h3>
-            <p className="text-sm text-gray-600 mb-4">Please read and agree to each item below. All items must be checked.</p>
-            <div className="space-y-3 max-h-96 overflow-y-auto border border-gray-200 rounded-lg p-4 bg-gray-50">
-              {CONDUCT_ITEMS.map((item, idx) => (
-                <label key={idx} className="flex items-start space-x-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={conductChecks[idx]}
-                    onChange={() => toggleConduct(idx)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 mt-0.5 flex-shrink-0"
-                  />
-                  <span className="text-sm text-gray-700">{idx + 1}. {item}</span>
-                </label>
-              ))}
-            </div>
-            <p className="text-sm mt-2 text-gray-500">
-              {conductChecks.filter(Boolean).length} of {CONDUCT_ITEMS.length} items checked
-            </p>
-          </div>
-
-          {/* Section 5: Violations */}
-          <div className="border-t border-gray-200 pt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Violations & Disciplinary Action</h3>
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-gray-200">Offense</th>
-                    <th className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-gray-200">Consequence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {VIOLATION_TABLE.map((row, idx) => (
-                    <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                      <td className="px-4 py-2 text-gray-900 font-medium border-b border-gray-100">{row.offense}</td>
-                      <td className="px-4 py-2 text-gray-700 border-b border-gray-100">{row.consequence}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Section 6: Medical Release / Liability / Photo-Media / Communication Consent */}
-          <div className="border-t border-gray-200 pt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Medical Release, Liability & Consent</h3>
-            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-4 bg-gray-50">
-              <pre className="whitespace-pre-wrap text-sm text-gray-700 font-sans">{MEDICAL_RELEASE_TEXT}</pre>
-            </div>
-          </div>
-
-          {/* Section 7: Consent to Treat Minor */}
+          {/* Section 4: Consent to Treat Minor */}
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Consent to Treat Minor</h3>
             <div className="space-y-4">
@@ -837,15 +702,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
             </div>
           </div>
 
-          {/* Section 8: Team Fee & Payment Plan */}
-          <div className="border-t border-gray-200 pt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Team Fee & Payment Plan</h3>
-            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-4 bg-gray-50">
-              <pre className="whitespace-pre-wrap text-sm text-gray-700 font-sans">{PAYMENT_TEXT}</pre>
-            </div>
-          </div>
-
-          {/* Section 9: Signatures */}
+          {/* Section 5: Signatures */}
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Signatures</h3>
 

@@ -680,7 +680,16 @@ export default function Schedule({ userId, userRole }) {
     };
 
     if (payload.kind === 'template') {
-      const ok = await insertSchedule([{ event_type: 'workout', title: payload.name, event_date: dateStr }]);
+      // Fetch template exercises so the workout has full details
+      const { data: tpl } = await supabase.from('workout_templates').select('*').eq('id', payload.id).single();
+      const exercises = tpl?.exercises || [];
+      const notesWithExercises = [
+        tpl?.notes || '',
+        exercises.length > 0 ? '\n--- Exercises ---\n' + exercises.map(ex =>
+          [ex.name, ex.sets && ex.reps ? `${ex.sets}x${ex.reps}` : (ex.sets || ''), ex.rest || '', ex.load || '', ex.link || ''].join(' | ')
+        ).join('\n') : ''
+      ].filter(Boolean).join('\n');
+      const ok = await insertSchedule([{ event_type: 'workout', title: tpl?.name || payload.name, notes: notesWithExercises || null, event_date: dateStr }]);
       if (ok) { if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents(); }
       return;
     }
