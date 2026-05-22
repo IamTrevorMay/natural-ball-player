@@ -1347,6 +1347,7 @@ export default function Schedule({ userId, userRole }) {
           event={selectedFacilityEvent}
           userId={userId}
           userRole={userRole}
+          coaches={coaches}
           onClose={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); }}
           onUpdate={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents(); }}
           onDelete={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents(); }}
@@ -4167,7 +4168,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
   const [color, setColor] = useState('teal');
   const [loading, setLoading] = useState(false);
   const [athleteId, setAthleteId] = useState('');
-  const [coachId, setCoachId] = useState('');
+  const [coachIds, setCoachIds] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [coaches, setCoaches] = useState([]);
 
@@ -4207,7 +4208,8 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
         lanes: lanes.length > 0 ? lanes : null,
         color,
         athlete_id: athleteId || null,
-        coach_id: coachId || null,
+        coach_id: coachIds[0] || null,
+        coach_ids: coachIds.length > 0 ? coachIds : null,
       });
       if (error) throw error;
       onSuccess();
@@ -4275,20 +4277,24 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
             <AlignLeft size={20} className="text-gray-400 mt-2" />
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Add description" rows="3" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
           </div>
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="flex items-center space-x-3">
-              <User size={20} className="text-gray-400 flex-shrink-0" />
-              <select value={athleteId} onChange={(e) => setAthleteId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
-                <option value="">Athlete (optional)</option>
-                {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
-              </select>
-            </div>
-            <div className="flex items-center space-x-3">
-              <UserCheck size={20} className="text-gray-400 flex-shrink-0" />
-              <select value={coachId} onChange={(e) => setCoachId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
-                <option value="">Coach (optional)</option>
-                {coaches.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
-              </select>
+          <div className="flex items-center space-x-3 mb-4">
+            <User size={20} className="text-gray-400 flex-shrink-0" />
+            <select value={athleteId} onChange={(e) => setAthleteId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+              <option value="">Athlete (optional)</option>
+              {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+            </select>
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Coaches</label>
+            <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+              {coaches.map(c => (
+                <label key={c.id} className="flex items-center space-x-2 text-sm py-0.5">
+                  <input type="checkbox" checked={coachIds.includes(c.id)} onChange={(e) => {
+                    setCoachIds(e.target.checked ? [...coachIds, c.id] : coachIds.filter(id => id !== c.id));
+                  }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                  <span className="text-gray-700 truncate">{c.full_name}</span>
+                </label>
+              ))}
             </div>
           </div>
           <div className="mb-6">
@@ -4332,7 +4338,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 // FACILITY EVENT DETAIL
 // ============================================
 
-function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete }) {
+function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete, coaches = [] }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal' });
@@ -4484,12 +4490,18 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
-              {(event.athlete?.full_name || event.coach?.full_name) && (
-                <div className="flex items-center flex-wrap gap-3 text-sm">
-                  {event.athlete?.full_name && <div className="flex items-center space-x-1.5"><User size={14} className="text-gray-400" /><span className="text-gray-700">Athlete: <span className="font-medium text-gray-900">{event.athlete.full_name}</span></span></div>}
-                  {event.coach?.full_name && <div className="flex items-center space-x-1.5"><UserCheck size={14} className="text-gray-400" /><span className="text-gray-700">Coach: <span className="font-medium text-gray-900">{event.coach.full_name}</span></span></div>}
-                </div>
-              )}
+              {(() => {
+                const coachNames = (event.coach_ids || []).map(cid => coaches.find(c => c.id === cid)?.full_name).filter(Boolean);
+                if (!coachNames.length && event.coach?.full_name) coachNames.push(event.coach.full_name);
+                const hasInfo = event.athlete?.full_name || coachNames.length > 0;
+                if (!hasInfo) return null;
+                return (
+                  <div className="flex items-start flex-wrap gap-3 text-sm">
+                    {event.athlete?.full_name && <div className="flex items-center space-x-1.5"><User size={14} className="text-gray-400" /><span className="text-gray-700">Athlete: <span className="font-medium text-gray-900">{event.athlete.full_name}</span></span></div>}
+                    {coachNames.length > 0 && <div className="flex items-center space-x-1.5"><UserCheck size={14} className="text-gray-400" /><span className="text-gray-700">{coachNames.length === 1 ? 'Coach' : 'Coaches'}: <span className="font-medium text-gray-900">{coachNames.join(', ')}</span></span></div>}
+                  </div>
+                );
+              })()}
 
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">

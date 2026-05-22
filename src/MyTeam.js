@@ -303,7 +303,7 @@ export default function MyTeam({ userId, userRole }) {
         </div>
 
         <div className="p-6">
-          {activeTab === 'roster' && <RosterTab roster={roster} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} />}
+          {activeTab === 'roster' && <RosterTab roster={roster} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} />}
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
@@ -320,9 +320,67 @@ export default function MyTeam({ userId, userRole }) {
 // ROSTER TAB
 // ============================================
 
-function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle }) {
+function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle, teamId, onRosterChange }) {
   const [sortBy, setSortBy] = useState('name');
   const [filterPosition, setFilterPosition] = useState('all');
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [memberResults, setMemberResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [addRole, setAddRole] = useState('player');
+  const [adding, setAdding] = useState(false);
+  const searchTimerRef = useRef(null);
+
+  const isStaff = userRole === 'admin' || userRole === 'coach';
+
+  // Debounced member search
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!memberSearch.trim() || memberSearch.trim().length < 2) {
+      setMemberResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const existingIds = roster.map(p => p.id);
+        const { data } = await supabase
+          .from('users')
+          .select('id, full_name, email, role')
+          .or(`full_name.ilike.%${memberSearch.trim()}%,email.ilike.%${memberSearch.trim()}%`)
+          .limit(20);
+        setMemberResults((data || []).filter(u => !existingIds.includes(u.id)));
+      } catch (err) {
+        console.error('Search error:', err);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [memberSearch, roster]);
+
+  const handleAddMember = async (user) => {
+    if (!teamId) return;
+    setAdding(true);
+    const { error } = await supabase.from('team_members').insert({
+      team_id: teamId, user_id: user.id, role: addRole,
+    });
+    if (error) { alert('Could not add member: ' + error.message); }
+    else {
+      setMemberSearch('');
+      setMemberResults([]);
+      onRosterChange();
+    }
+    setAdding(false);
+  };
+
+  const handleRemoveMember = async (userId) => {
+    if (!teamId || !window.confirm('Remove this player from the team?')) return;
+    const { error } = await supabase.from('team_members').delete().eq('team_id', teamId).eq('user_id', userId);
+    if (error) { alert('Could not remove member: ' + error.message); }
+    else onRosterChange();
+  };
 
   const positions = ['all', ...new Set(roster.map(p => p.player_profile?.position).filter(Boolean))];
 
@@ -350,7 +408,7 @@ function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle }) {
   return (
     <div className="space-y-4">
       {/* Filters & Sorting */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center space-x-3">
           <label className="text-sm font-medium text-gray-700">Position:</label>
           <select
@@ -374,8 +432,67 @@ function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle }) {
             <option value="number">Jersey Number</option>
             <option value="position">Position</option>
           </select>
+          {isStaff && (
+            <button
+              onClick={() => setShowAddMember(!showAddMember)}
+              className="flex items-center space-x-1 px-3 py-1 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
+            >
+              <UserPlus size={14} />
+              <span>Add Member</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Add Member Panel */}
+      {showAddMember && isStaff && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-blue-900">Add Member to Team</h4>
+            <button onClick={() => { setShowAddMember(false); setMemberSearch(''); setMemberResults([]); }} className="text-blue-400 hover:text-blue-600"><X size={16} /></button>
+          </div>
+          <div className="flex items-center space-x-2">
+            <div className="relative flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={memberSearch}
+                onChange={(e) => setMemberSearch(e.target.value)}
+                placeholder="Search by name or email..."
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                autoFocus
+              />
+            </div>
+            <select value={addRole} onChange={(e) => setAddRole(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="player">Player</option>
+              <option value="coach">Coach</option>
+            </select>
+          </div>
+          {searchLoading && <p className="text-xs text-gray-500">Searching...</p>}
+          {memberResults.length > 0 && (
+            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
+              {memberResults.map(u => (
+                <div key={u.id} className="flex items-center justify-between px-3 py-2 hover:bg-gray-50">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{u.full_name}</p>
+                    <p className="text-xs text-gray-500 truncate">{u.email} &middot; {u.role}</p>
+                  </div>
+                  <button
+                    onClick={() => handleAddMember(u)}
+                    disabled={adding}
+                    className="flex-shrink-0 ml-2 px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition disabled:opacity-50"
+                  >
+                    {adding ? '...' : 'Add'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {memberSearch.trim().length >= 2 && !searchLoading && memberResults.length === 0 && (
+            <p className="text-xs text-gray-500">No matching users found.</p>
+          )}
+        </div>
+      )}
 
       {/* Player Cards */}
       {sortedRoster.length === 0 ? (
@@ -392,6 +509,8 @@ function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle }) {
               isProspect={prospectPlayerIds?.includes(player.id)}
               canManageProspects={userRole === 'admin' || userRole === 'coach'}
               onToggleProspect={() => onProspectToggle(player)}
+              canRemove={isStaff}
+              onRemove={() => handleRemoveMember(player.id)}
             />
           ))}
         </div>
@@ -400,7 +519,7 @@ function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle }) {
   );
 }
 
-function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect }) {
+function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect, canRemove, onRemove }) {
   const profile = player.player_profile || {};
 
   return (
@@ -430,16 +549,27 @@ function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect }
           </div>
         </div>
 
-        {/* Prospect Star Toggle */}
-        {canManageProspects && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleProspect(); }}
-            className={`p-1.5 rounded-full transition flex-shrink-0 ${isProspect ? 'text-yellow-500 hover:text-yellow-600' : 'text-gray-300 hover:text-yellow-400'}`}
-            title={isProspect ? 'Remove from prospects' : 'Add to prospects'}
-          >
-            <Star size={20} fill={isProspect ? 'currentColor' : 'none'} />
-          </button>
-        )}
+        <div className="flex items-center space-x-1 flex-shrink-0">
+          {/* Prospect Star Toggle */}
+          {canManageProspects && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleProspect(); }}
+              className={`p-1.5 rounded-full transition ${isProspect ? 'text-yellow-500 hover:text-yellow-600' : 'text-gray-300 hover:text-yellow-400'}`}
+              title={isProspect ? 'Remove from prospects' : 'Add to prospects'}
+            >
+              <Star size={20} fill={isProspect ? 'currentColor' : 'none'} />
+            </button>
+          )}
+          {canRemove && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRemove(); }}
+              className="p-1.5 rounded-full text-gray-300 hover:text-red-500 transition"
+              title="Remove from team"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
