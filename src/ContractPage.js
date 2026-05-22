@@ -85,6 +85,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
   const [loading, setLoading] = useState(true);
   const [existingContract, setExistingContract] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [contractDoc, setContractDoc] = useState(null); // { title, signedUrl }
 
   // Player Info
   const [playerName, setPlayerName] = useState('');
@@ -146,7 +147,29 @@ export default function ContractPage({ userId, userRole, onSigned }) {
 
   useEffect(() => {
     fetchContract();
+    fetchContractDocument();
   }, [userId]);
+
+  const fetchContractDocument = async () => {
+    try {
+      const { data: rows, error } = await supabase
+        .from('staff_documents')
+        .select('id, title, file_path, created_at')
+        .ilike('title', 'Naturals Player Contract%')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const row = rows && rows[0];
+      if (!row) return;
+      const { data: signed, error: sErr } = await supabase.storage
+        .from('staff-documents')
+        .createSignedUrl(row.file_path, 60 * 60);
+      if (sErr || !signed?.signedUrl) return;
+      setContractDoc({ title: row.title, signedUrl: signed.signedUrl });
+    } catch (e) {
+      console.error('Error loading contract document:', e);
+    }
+  };
 
   const fetchContract = async () => {
     try {
@@ -357,6 +380,21 @@ export default function ContractPage({ userId, userRole, onSigned }) {
           </div>
         </div>
 
+        {contractDoc && (
+          <div className="bg-white rounded-lg shadow">
+            <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">{contractDoc.title}</h3>
+              <a href={contractDoc.signedUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">Open in new tab</a>
+            </div>
+            <iframe
+              title="Player Contract"
+              src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
+              className="w-full"
+              style={{ height: '720px', border: 0 }}
+            />
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow p-6 space-y-6">
           {/* Player Info Summary */}
           <div>
@@ -497,6 +535,21 @@ export default function ContractPage({ userId, userRole, onSigned }) {
         <AlertTriangle className="text-yellow-600 flex-shrink-0" size={24} />
         <p className="text-sm text-yellow-800">Please complete all sections and sign the contract below.</p>
       </div>
+
+      {contractDoc && (
+        <div className="bg-white rounded-lg shadow">
+          <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-gray-900">{contractDoc.title}</h3>
+            <a href={contractDoc.signedUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">Open in new tab</a>
+          </div>
+          <iframe
+            title="Player Contract"
+            src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
+            className="w-full"
+            style={{ height: '720px', border: 0 }}
+          />
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow">
         <div className="p-6 space-y-8">
