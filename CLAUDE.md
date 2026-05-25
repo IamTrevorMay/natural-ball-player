@@ -33,6 +33,7 @@ When creating new tables:
 - `player_profiles` — player-specific data (sport, jersey_number, position, grade, bats, throws)
 - `teams` / `team_members` — team organization
 - `prospects` / `team_prospects` — prospect management (added 2026-03-28)
+- `fields` — shared venue directory (name, address, notes) for the Fields sidebar tab. RLS: read for all authenticated; insert/update/delete for admin + coach. Address rendered as a Google Maps link in `Fields.js`
 - `recruitment_teams` — recruitment tracking per athlete profile (added 2026-03-28)
 - `training_programs` / `training_days` / `training_exercises` — workout system
 - `workout_templates` — saved workout templates (exercises stored as JSONB with name, sets, reps, rest, load, link, category, superSet)

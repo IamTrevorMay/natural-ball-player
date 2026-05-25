@@ -8,6 +8,7 @@ import Schedule from './Schedule';
 import Messages from './Messages';
 import MyTeam from './MyTeam';
 import KnowledgeBase from './KnowledgeBase';
+import Fields from './Fields';
 import ManageAthletes from './ManageAthletes';
 import ManageCoaches from './ManageCoaches';
 import WaiverPage from './WaiverPage';
@@ -16,7 +17,7 @@ import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -512,6 +513,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
+            {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
             {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
@@ -642,7 +644,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <span>My Team</span>
         </button>
 
-        <button 
+        <button
           onClick={() => setCurrentView('schedule')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'schedule' ? 'bg-blue-600' : 'hover:bg-gray-800'
@@ -652,7 +654,17 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <span>Schedule</span>
         </button>
 
-        <button 
+        <button
+          onClick={() => setCurrentView('fields')}
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+            currentView === 'fields' ? 'bg-blue-600' : 'hover:bg-gray-800'
+          }`}
+        >
+          <MapPin size={18} />
+          <span>Fields</span>
+        </button>
+
+        <button
           onClick={() => setCurrentView('knowledge')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
             currentView === 'knowledge' ? 'bg-blue-600' : 'hover:bg-gray-800'

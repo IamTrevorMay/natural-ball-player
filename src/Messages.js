@@ -116,7 +116,7 @@ export default function Messages({ userId, userRole }) {
     if (userRole === 'admin' || userRole === 'coach') {
       const { data } = await supabase
         .from('users')
-        .select('id, full_name, role')
+        .select('id, full_name, role, is_intern')
         .order('full_name');
       if (data) setUsers(data);
     }
@@ -1102,6 +1102,12 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (messageType === 'direct' && formData.recipientIds.length === 0) {
+      setError('Please select at least one recipient.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -1276,8 +1282,48 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
           {messageType === 'direct' && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Recipient * (select one)
+                Recipients * <span className="text-xs font-normal text-gray-500">({formData.recipientIds.length} selected)</span>
               </label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {[
+                  { label: 'All Coaches', match: (u) => u.role === 'coach' && !u.is_intern },
+                  { label: 'All Players', match: (u) => u.role === 'player' },
+                  { label: 'All Interns', match: (u) => u.role === 'coach' && u.is_intern },
+                  { label: 'All Admins', match: (u) => u.role === 'admin' },
+                ].map(group => {
+                  const ids = users.filter(u => u.id !== userId && group.match(u)).map(u => u.id);
+                  if (ids.length === 0) return null;
+                  const allSelected = ids.every(id => formData.recipientIds.includes(id));
+                  return (
+                    <button
+                      type="button"
+                      key={group.label}
+                      onClick={() => {
+                        const set = new Set(formData.recipientIds);
+                        if (allSelected) ids.forEach(id => set.delete(id));
+                        else ids.forEach(id => set.add(id));
+                        setFormData({ ...formData, recipientIds: Array.from(set) });
+                      }}
+                      className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                        allSelected
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {allSelected ? 'Clear' : 'Add'} {group.label}
+                    </button>
+                  );
+                })}
+                {formData.recipientIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, recipientIds: [] })}
+                    className="text-xs px-2.5 py-1 rounded-full border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
                 value={recipientSearch}
@@ -1291,7 +1337,8 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
                   .filter(u => {
                     const q = recipientSearch.trim().toLowerCase();
                     if (!q) return true;
-                    return (u.full_name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q);
+                    const label = u.is_intern ? 'intern' : (u.role || '');
+                    return (u.full_name || '').toLowerCase().includes(q) || label.toLowerCase().includes(q);
                   })
                   .map(user => (
                   <label
@@ -1299,13 +1346,18 @@ function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess })
                     className="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
                   >
                     <input
-                      type="radio"
+                      type="checkbox"
                       checked={formData.recipientIds.includes(user.id)}
-                      onChange={() => setFormData({...formData, recipientIds: [user.id]})}
+                      onChange={() => {
+                        const set = new Set(formData.recipientIds);
+                        if (set.has(user.id)) set.delete(user.id);
+                        else set.add(user.id);
+                        setFormData({ ...formData, recipientIds: Array.from(set) });
+                      }}
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                     />
                     <span className="text-sm text-gray-900">{user.full_name}</span>
-                    <span className="text-xs text-gray-500">({user.role})</span>
+                    <span className="text-xs text-gray-500">({user.is_intern ? 'intern' : user.role})</span>
                   </label>
                 ))}
               </div>

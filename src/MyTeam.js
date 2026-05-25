@@ -303,7 +303,7 @@ export default function MyTeam({ userId, userRole }) {
         </div>
 
         <div className="p-6">
-          {activeTab === 'roster' && <RosterTab roster={roster} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} />}
+          {activeTab === 'roster' && <RosterTab roster={roster} coaches={coaches} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} />}
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
@@ -320,7 +320,7 @@ export default function MyTeam({ userId, userRole }) {
 // ROSTER TAB
 // ============================================
 
-function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle, teamId, onRosterChange }) {
+function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspectToggle, teamId, onRosterChange }) {
   const [sortBy, setSortBy] = useState('name');
   const [filterPosition, setFilterPosition] = useState('all');
   const [showAddMember, setShowAddMember] = useState(false);
@@ -494,27 +494,44 @@ function RosterTab({ roster, prospectPlayerIds, userRole, onProspectToggle, team
         </div>
       )}
 
-      {/* Player Cards */}
-      {sortedRoster.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <Users size={40} className="mx-auto mb-3 text-gray-300" />
-          <p>No players found with the selected filter.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedRoster.map(player => (
-            <PlayerCard
-              key={player.id}
-              player={player}
-              isProspect={prospectPlayerIds?.includes(player.id)}
-              canManageProspects={userRole === 'admin' || userRole === 'coach'}
-              onToggleProspect={() => onProspectToggle(player)}
-              canRemove={isStaff}
-              onRemove={() => handleRemoveMember(player.id)}
-            />
-          ))}
+      {/* Coaches first */}
+      {coaches.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Coaches</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[...coaches].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '')).map(coach => (
+              <CoachCard key={coach.id} coach={coach} />
+            ))}
+          </div>
         </div>
       )}
+
+      {/* Players */}
+      <div className="space-y-2">
+        {coaches.length > 0 && (
+          <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide pt-2">Players</h4>
+        )}
+        {sortedRoster.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <Users size={40} className="mx-auto mb-3 text-gray-300" />
+            <p>No players found with the selected filter.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sortedRoster.map(player => (
+              <PlayerCard
+                key={player.id}
+                player={player}
+                isProspect={prospectPlayerIds?.includes(player.id)}
+                canManageProspects={userRole === 'admin' || userRole === 'coach'}
+                onToggleProspect={() => onProspectToggle(player)}
+                canRemove={isStaff}
+                onRemove={() => handleRemoveMember(player.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
