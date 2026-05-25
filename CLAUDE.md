@@ -31,16 +31,17 @@ When creating new tables:
 ## Database Tables (notable)
 - `users` — core user table (id, email, full_name, role, phone, height, weight, avatar_url)
 - `player_profiles` — player-specific data (sport, jersey_number, position, grade, bats, throws)
-- `teams` / `team_members` — team organization
+- `teams` / `team_members` — team organization. `RosterTab` in `MyTeam.js` supports search/add/remove members (debounced search against `users` by name/email, role selector for player/coach)
 - `prospects` / `team_prospects` — prospect management (added 2026-03-28)
 - `fields` — shared venue directory (name, address, notes) for the Fields sidebar tab. RLS: read for all authenticated; insert/update/delete for admin + coach. Address rendered as a Google Maps link in `Fields.js`
 - `recruitment_teams` — recruitment tracking per athlete profile (added 2026-03-28)
 - `training_programs` / `training_days` / `training_exercises` — workout system
-- `workout_templates` — saved workout templates (exercises stored as JSONB with name, sets, reps, rest, load, link, category, superSet)
+- `workout_templates` — saved workout templates (exercises stored as JSONB with name, sets, reps, rest, load, link, category, superSet). Dragging a template onto the schedule fetches exercises and serializes them into the `notes` field (pipe-delimited: `Name | 3x10 | rest | load | link` with `--- Exercises ---` delimiter)
+- `training_slots` — coach availability slots. `repeat_weekly` + `repeat_end_date` for recurrence (NOT `is_recurring`). Virtual occurrences expanded client-side; first visible occurrence per master marked non-virtual for drag. `CreateSlotPanel` supports edit mode via `existingSlot` prop
 - `equipment_sizes` — player equipment sizes
 - `assessment_templates` / `assessment_submissions` — assessment system
 - `custom_status_options` — custom status dropdowns for Manage Athletes/Coaches
-- `facility_events` — facility calendar events with lane reservations
+- `facility_events` — facility calendar events with lane reservations. `coach_ids uuid[]` supports multi-coach assignment (mirrors `team_ids` pattern); `coach_id` is kept as primary/legacy (set to first selected coach). UI uses multi-select checkboxes in `AddFacilityEventPanel`; `FacilityEventDetail` resolves names client-side from the `coaches` state
 - `event_signups` — player sign-ups for facility events (per occurrence: `event_id` + `event_date` + `user_id` unique). RLS: own-only insert/update/delete + staff-read-all + admin-delete-any. Surfaced in `FacilityEventDetail` (Schedule.js): players see a Yes/No + notes prompt, staff see a sign-ups list. MonthView/WeekView take an `allowEventClick` prop so players can open the modal without manage rights
 - `schedule_events.team_ids uuid[]` — multi-team events. Backfilled from `team_id`; existing `team_id` is kept as the primary/legacy team (set to first selected team on insert). Filter team-scoped queries with `.contains('team_ids', [teamId])` (or `.overlaps('team_ids', teamIds)` for multi-team scopes). One row per shared event — do NOT create one row per team
 - `users.is_intern boolean default false` — flips a coach into the Manage Interns view (`<ManageCoaches mode="interns" />`). Interns are still `role='coach'` for permissions; only the management list is partitioned
@@ -64,5 +65,13 @@ The Work Portal is a separate shell at the same URL (toggled via the bottom of t
 - `work-attachments` Storage bucket — paths are `channel/{channel_id}/...` or `dm/{thread_id}/...`; storage RLS uses `storage.foldername(name)` to defer to channel access / thread membership
 - `public.user_can_access_channel(channel_id, user_id)` SECURITY DEFINER function — used by every channel/message/storage policy. Reuse it for any future channel-scoped feature instead of inlining the access logic
 - `work_roadmap_items` — V2 placeholder; UI is "Coming soon"
+
+### Scheduling drag & drop
+- Custom MIME types: `application/x-event-id` (move events), `application/x-program-item` (copy from Program Library), `application/x-slot-id` (move slots)
+- `ProgramLibrarySidebar` sets `effectAllowed = 'copy'`; MonthView/WeekView check `e.dataTransfer.types` to set correct `dropEffect` (copy for program items, move for events/slots)
+- `RecurrenceDecisionModal` offers deletion modes: one/future/all (with `allowOne` prop; slots pass `allowOne: false` since they lack per-occurrence exceptions)
+
+### Contract page
+- `ContractPage.js` fetches an uploaded document from `staff_documents` where title matches `Naturals Player Contract%` and displays it in an iframe. Hard-coded contract sections (conduct, violations, medical release, payment) were removed — the uploaded document is the sole contract content. The signing form retains: player info, parent info, equipment sizing, consent to treat minor, and signatures
 
 Notification/cross-portal pattern: `src/useNotifications.js` exposes `useMainPortalCounts` and `useWorkPortalCounts` hooks; `src/NotificationBell.js` is the shared bell rendered in both shells. Items from the other portal carry a portal tag and clicking jumps across via the `onJump(portal, view)` callback (Work Portal's `currentView` is lifted to `App.js` so cross-portal jumps can target a specific Work view).
