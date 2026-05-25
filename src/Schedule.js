@@ -232,15 +232,24 @@ export default function Schedule({ userId, userRole }) {
     const startStr = fmtLocalDate(startOfMonth);
     const endStr = fmtLocalDate(endOfMonth);
 
-    const [{ data }, { data: mpa }] = await Promise.all([
+    const { data: tmRows } = await supabase.from('team_members').select('team_id').in('user_id', ids);
+    const playerTeamIds = Array.from(new Set((tmRows || []).map(r => r.team_id).filter(Boolean)));
+
+    const [{ data }, { data: mpa }, { data: teamEv }] = await Promise.all([
       supabase.from('schedule_events').select('*').in('player_id', ids)
         .gte('event_date', startStr).lte('event_date', endStr),
       supabase.from('meal_plan_assignments').select('*, meal_plans(name)').in('player_id', ids)
         .lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`),
+      playerTeamIds.length > 0
+        ? supabase.from('schedule_events').select('*')
+            .overlaps('team_ids', playerTeamIds).gte('event_date', startStr).lte('event_date', endStr)
+        : Promise.resolve({ data: [] }),
     ]);
 
+    const directIds = new Set((data || []).map(e => e.id));
+    const teamOnly = (teamEv || []).filter(e => !directIds.has(e.id));
     const mealEvents = expandMealPlanAssignments(mpa || [], startOfMonth, endOfMonth);
-    setEvents([...(data || []), ...mealEvents]);
+    setEvents([...(data || []), ...teamOnly, ...mealEvents]);
   };
 
   const fetchMyScheduleEvents = async () => {
@@ -249,7 +258,7 @@ export default function Schedule({ userId, userRole }) {
     const startStr = fmtLocalDate(startOfMonth);
     const endStr = fmtLocalDate(endOfMonth);
 
-    // Fetch schedule events
+    // Fetch schedule events directly assigned to this player
     const { data, error: evErr } = await supabase.from('schedule_events').select('*')
       .eq('player_id', userId).gte('event_date', startStr).lte('event_date', endStr);
     if (evErr) console.error('Error fetching schedule events:', evErr);
@@ -259,20 +268,30 @@ export default function Schedule({ userId, userRole }) {
       .eq('player_id', userId).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
     if (mpaErr) console.error('Error fetching meal plan assignments:', mpaErr);
 
-    // Fetch team-based meal plan assignments
+    // Resolve team memberships once for both team events and team meal plans
     const { data: myTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
     const teamIds = (myTeams || []).map(t => t.team_id);
+
+    let teamEvents = [];
     let teamMpa = [];
     if (teamIds.length > 0) {
-      const { data: tMpa, error: tErr } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
-        .in('team_id', teamIds).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
+      const [{ data: tEv, error: tEvErr }, { data: tMpa, error: tErr }] = await Promise.all([
+        supabase.from('schedule_events').select('*')
+          .overlaps('team_ids', teamIds).gte('event_date', startStr).lte('event_date', endStr),
+        supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
+          .in('team_id', teamIds).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`),
+      ]);
+      if (tEvErr) console.error('Error fetching team schedule events:', tEvErr);
       if (tErr) console.error('Error fetching team meal plan assignments:', tErr);
+
+      const directIds = new Set((data || []).map(e => e.id));
+      teamEvents = (tEv || []).filter(e => !directIds.has(e.id));
       teamMpa = (tMpa || []).map(a => ({ ...a, player_id: userId }));
     }
 
     const allMpa = [...(directMpa || []), ...teamMpa];
     const mealEvents = expandMealPlanAssignments(allMpa, startOfMonth, endOfMonth);
-    setMyScheduleEvents([...(data || []), ...mealEvents]);
+    setMyScheduleEvents([...(data || []), ...teamEvents, ...mealEvents]);
   };
 
   const fetchFacilityEvents = async () => {
@@ -1313,6 +1332,7 @@ export default function Schedule({ userId, userRole }) {
         ) : (
           <EventDetailModal
             event={selectedEvent}
+            userRole={userRole}
             onClose={() => {
               setShowEventDetail(false);
               setSelectedEvent(null);
@@ -3526,9 +3546,10 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
 // EVENT DETAIL/EDIT/DELETE MODAL - COMPLETE VERSION
 // ============================================
 
-function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
+function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole }) {
   console.log('🔵 EventDetailModal rendered with event:', event);
-  
+
+  const canManage = userRole === 'admin' || userRole === 'coach';
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -3665,7 +3686,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
       };
 
       // For team events, also update opponent
-      if (event.team_id) {
+      if (event.team_id || (Array.isArray(event.team_ids) && event.team_ids.length > 0)) {
         updates.opponent = formData.title;
       }
 
@@ -3859,7 +3880,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
                     />
                   </div>
 
-                  {event.team_id && (
+                  {(event.team_id || (Array.isArray(event.team_ids) && event.team_ids.length > 0)) && (
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Time</label>
@@ -4036,7 +4057,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate }) {
                 >
                   Close
                 </button>
-                {!event._isMealPlan && (
+                {!event._isMealPlan && canManage && (
                   <>
                     <button
                       onClick={() => setEditing(true)}

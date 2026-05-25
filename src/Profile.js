@@ -6,6 +6,7 @@ import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
 import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
+import { fmtLocalDate } from './scheduleUtils';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -791,8 +792,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       const d = refDate || scheduleDate;
       const year = d.getFullYear();
       const month = d.getMonth();
-      const start = new Date(year, month, 1).toISOString().split('T')[0];
-      const end = new Date(year, month + 1, 0).toISOString().split('T')[0];
+      const start = fmtLocalDate(new Date(year, month, 1));
+      const end = fmtLocalDate(new Date(year, month + 1, 0));
       const { data: teamRows } = await supabase
         .from('team_members')
         .select('team_id')
@@ -922,7 +923,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   const startNewPtVisit = () => {
     setEditingPtVisitId('new');
-    const today = new Date().toISOString().split('T')[0];
+    const today = fmtLocalDate(new Date());
     setPtDraft({ visit_date: today, visit_type: 'Treatment', body_area: '', pain_level: '', content: '', exercises: [], follow_up_at: '' });
   };
 
@@ -1030,7 +1031,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const fetchAttendanceData = async () => {
     try {
       const teamIds = (userData.team_members || []).map(tm => tm.team_id);
-      const today = new Date().toISOString().split('T')[0];
+      const today = fmtLocalDate(new Date());
 
       let allEvents = [];
 
@@ -2793,7 +2794,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto pt-8 pb-8">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl mx-4">
                 <AddEventPanel
-                  date={scheduleSelectedDay ? `${scheduleDate.getFullYear()}-${String(scheduleDate.getMonth() + 1).padStart(2, '0')}-${String(scheduleSelectedDay).padStart(2, '0')}` : new Date().toISOString().split('T')[0]}
+                  date={scheduleSelectedDay ? `${scheduleDate.getFullYear()}-${String(scheduleDate.getMonth() + 1).padStart(2, '0')}-${String(scheduleSelectedDay).padStart(2, '0')}` : fmtLocalDate(new Date())}
                   view="player"
                   teamId={null}
                   playerIds={[userId]}
@@ -2805,7 +2806,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'programming' && (() => {
-            const today = new Date().toISOString().split('T')[0];
+            const today = fmtLocalDate(new Date());
             const isActive = (a) => {
               if (!a.start_date && !a.end_date) return true;
               if (a.start_date && a.start_date > today) return false;
@@ -3407,7 +3408,7 @@ function SubmissionView({ submission }) {
 function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
   const [responses, setResponses] = useState({});
   const [notes, setNotes] = useState('');
-  const [assessmentDate, setAssessmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
   const [saving, setSaving] = useState(false);
 
   const schema = (template.schema || []).sort((a, b) => a.sort_order - b.sort_order);

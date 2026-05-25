@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase, supabaseUrl } from './supabaseClient';
 import { Activity, RefreshCw, Link2, Unlink } from 'lucide-react';
+import { fmtLocalDate } from './scheduleUtils';
 
 // ---- Readiness algorithm ----
 
@@ -398,7 +399,7 @@ export default function WhoopTab({ userId, userRole }) {
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [range, setRange] = useState(30);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(fmtLocalDate(new Date()));
   const [selectedGraph, setSelectedGraph] = useState('recovery');
   const [dataSubTab, setDataSubTab] = useState('cycles');
 
@@ -415,8 +416,8 @@ export default function WhoopTab({ userId, userRole }) {
   const fetchData = useCallback(async () => {
     try {
       const headers = await getAuthHeaders();
-      const to = new Date().toISOString().split('T')[0];
-      const from = new Date(Date.now() - range * 86_400_000).toISOString().split('T')[0];
+      const to = fmtLocalDate(new Date());
+      const from = fmtLocalDate(new Date(Date.now() - range * 86_400_000));
       const res = await fetch(
         `${functionUrl}?action=data&target_user_id=${userId}&from=${from}&to=${to}`,
         { headers }
@@ -514,7 +515,7 @@ export default function WhoopTab({ userId, userRole }) {
   }
 
   // Date navigation
-  const today = new Date().toISOString().split('T')[0];
+  const today = fmtLocalDate(new Date());
   const cycleDates = cycles.map(c => c.cycle_date).sort();
   const todayCycle = cycles.find(c => c.cycle_date === selectedDate) || null;
   const todaySleep = sleep.find(s => s.sleep_date === selectedDate) || null;
@@ -545,7 +546,7 @@ export default function WhoopTab({ userId, userRole }) {
     const d = new Date(selectedDate + 'T12:00:00');
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    if (selectedDate === yesterday.toISOString().split('T')[0]) return 'Yesterday';
+    if (selectedDate === fmtLocalDate(yesterday)) return 'Yesterday';
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   })();
 

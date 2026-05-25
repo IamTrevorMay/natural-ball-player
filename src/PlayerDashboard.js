@@ -43,12 +43,27 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
       const today = fmtLocalDate(new Date());
       const todayDow = new Date().getDay();
 
-      // Fetch today's schedule events for the player
-      const { data: scheduleEvents } = await supabase
-        .from('schedule_events')
-        .select('*')
-        .eq('player_id', userId)
-        .eq('event_date', today);
+      // Fetch today's schedule events for the player (direct + via team_ids)
+      const playerTeamIds = (userData.team_members || []).map(tm => tm.team_id).filter(Boolean);
+      const [{ data: directEvents }, { data: teamEvents }] = await Promise.all([
+        supabase
+          .from('schedule_events')
+          .select('*')
+          .eq('player_id', userId)
+          .eq('event_date', today),
+        playerTeamIds.length > 0
+          ? supabase
+              .from('schedule_events')
+              .select('*')
+              .overlaps('team_ids', playerTeamIds)
+              .eq('event_date', today)
+          : Promise.resolve({ data: [] }),
+      ]);
+      const directIds = new Set((directEvents || []).map(e => e.id));
+      const scheduleEvents = [
+        ...(directEvents || []),
+        ...((teamEvents || []).filter(e => !directIds.has(e.id))),
+      ];
 
       // Fetch facility events for today (non-recurring)
       const { data: facilityNonRecurring } = await supabase

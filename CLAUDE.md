@@ -21,7 +21,7 @@ When creating new tables:
 
 ## Pending Manual Configuration
 1. **Supabase Auth Redirect URLs (for forgot password #78):** Go to Supabase Dashboard → Project Settings → Authentication → URL Configuration. Set **Site URL** to `https://natural-ball-player.vercel.app`. Add `https://natural-ball-player.vercel.app/**` to the **Redirect URLs** allowlist.
-2. **Resend Custom Domain (for email player #79):** Verify a custom domain at https://resend.com/domains, add the DNS records (SPF, DKIM). Then update the `from` field in `supabase/functions/send-email/index.ts` from `onboarding@resend.dev` to the verified domain (e.g. `NBP Portal <noreply@yourdomain.com>`), and redeploy with `npx supabase functions deploy send-email`.
+2. **Enable leaked-password protection:** Supabase Dashboard → Authentication → Policies → toggle on "Leaked Password Protection" (checks HaveIBeenPwned).
 
 ## Workflow
 - Trevor prefers batched feature requests and "commit push deploy" as a single flow

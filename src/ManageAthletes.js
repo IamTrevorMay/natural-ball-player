@@ -260,19 +260,21 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
   };
 
-  const getTrainer = (player) => {
+  const getTrainerNames = (player) => {
     const explicit = player?.player_profiles?.[0]?.trainer_id;
     if (explicit) {
       const coach = allCoaches.find(c => c.id === explicit);
-      if (coach) return coach.full_name;
+      if (coach) return [coach.full_name];
     }
     const teamIds = (player.team_members || []).map(tm => tm.team_id);
     const names = [];
     teamIds.forEach(tid => {
       if (teamCoachMap[tid]) names.push(...teamCoachMap[tid]);
     });
-    return [...new Set(names)].join(', ') || '';
+    return [...new Set(names)];
   };
+
+  const getTrainer = (player) => getTrainerNames(player).join(', ');
 
   const allTrainerNames = [...new Set(Object.values(teamCoachMap).flat())].sort();
   const allTeamNames = [...new Set(
@@ -282,13 +284,13 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const displayPlayers = rosterPlayers.filter(p => {
     const profile = p.player_profiles?.[0] || {};
     const teamNames = (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean);
-    const trainerName = getTrainer(p);
+    const trainerNames = getTrainerNames(p);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       if (!p.full_name.toLowerCase().includes(q)) return false;
     }
     if (filterTeam !== 'All' && !teamNames.includes(filterTeam)) return false;
-    if (filterTrainer !== 'All' && !trainerName.includes(filterTrainer)) return false;
+    if (filterTrainer !== 'All' && !trainerNames.includes(filterTrainer)) return false;
     if (filterProgram !== 'All' && profile.program !== filterProgram) return false;
     if (filterLevel !== 'All' && profile.level !== filterLevel) return false;
     if (filterStatus !== 'All' && profile.status !== filterStatus) return false;

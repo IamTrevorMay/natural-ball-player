@@ -576,6 +576,23 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Per-target authorization: a caller can target themselves; admins can target anyone;
+    // a coach can target an athlete only when they're listed as that athlete's trainer.
+    const assertCanTarget = async (targetId: string | null | undefined): Promise<Response | null> => {
+      if (!targetId || targetId === user.id) return null;
+      if (userData.role === "admin") return null;
+      const { data: profile } = await adminClient
+        .from("player_profiles")
+        .select("trainer_id")
+        .eq("user_id", targetId)
+        .maybeSingle();
+      if (profile?.trainer_id === user.id) return null;
+      return new Response(
+        JSON.stringify({ error: "Not authorized to access this athlete's WHOOP data" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    };
+
     switch (action) {
       case "connect":
         return await handleConnect(user.id);
@@ -583,12 +600,16 @@ Deno.serve(async (req) => {
       case "disconnect": {
         const body = await req.json().catch(() => ({}));
         const targetId = body.target_user_id || user.id;
+        const denied = await assertCanTarget(targetId);
+        if (denied) return denied;
         return await handleDisconnect(targetId);
       }
 
       case "sync": {
         const body = await req.json().catch(() => ({}));
         const targetId = body.target_user_id || user.id;
+        const denied = await assertCanTarget(targetId);
+        if (denied) return denied;
         return await handleSync(user.id, targetId);
       }
 
@@ -596,6 +617,8 @@ Deno.serve(async (req) => {
         const targetId = url.searchParams.get("target_user_id");
         const from = url.searchParams.get("from");
         const to = url.searchParams.get("to");
+        const denied = await assertCanTarget(targetId);
+        if (denied) return denied;
         return await handleData(user.id, targetId, from, to);
       }
 

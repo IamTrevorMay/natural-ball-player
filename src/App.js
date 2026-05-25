@@ -434,6 +434,13 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   useEffect(() => { setViewMode(userRole); }, [userRole]);
   const effectiveRole = hasSecondary ? viewMode : userRole;
 
+  // If a coach toggles to "view as player", kick them out of the Work Portal too
+  useEffect(() => {
+    if (effectiveRole === 'player' && currentPortal === 'work') {
+      setCurrentPortal('main');
+    }
+  }, [effectiveRole, currentPortal, setCurrentPortal]);
+
   const mainCounts = useMainPortalCounts(userId, effectiveRole);
   const workCounts = useWorkPortalCounts(userId, effectiveRole);
 

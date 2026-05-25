@@ -87,13 +87,16 @@ function ScheduleTab({ teams }) {
   useEffect(() => { fetchEvents(); }, []);
 
   const fetchEvents = async () => {
+    // Team events: either legacy team_id is set, OR team_ids[] is non-empty
     const { data, error } = await supabase
       .from('schedule_events')
       .select('*, teams(name)')
-      .not('team_id', 'is', null) // Only show team events
+      .or('team_id.not.is.null,team_ids.not.is.null')
       .is('player_id', null) // Exclude player-specific events
       .order('event_date', { ascending: true });
-    if (!error) setEvents(data);
+    if (error) { console.error('Error fetching team events:', error); return; }
+    // Drop rows where team_ids is an empty array (PostgREST's not-null check passes those)
+    setEvents((data || []).filter(e => e.team_id || (Array.isArray(e.team_ids) && e.team_ids.length > 0)));
   };
 
   const handleDeleteEvent = async (eventId) => {
@@ -1981,20 +1984,49 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
+
+    // Validate calendar inputs before any DB writes so we don't silently no-op
+    if (scheduleOnCalendar) {
+      if (!startDate || !endDate) {
+        setError('Please pick a start and end date, or turn off "Add to calendar".');
+        setLoading(false); return;
+      }
+      if (endDate < startDate) {
+        setError('End date must be on or after start date.');
+        setLoading(false); return;
+      }
+      if (!weekdays.some(Boolean)) {
+        setError('Please pick at least one weekday, or turn off "Add to calendar".');
+        setLoading(false); return;
+      }
+    }
+
     const { data: { user } } = await supabase.auth.getUser();
+
+    // Track inserted assignment IDs so we can roll back if event generation fails
+    const insertedAssignmentIds = [];
+    const rollback = async () => {
+      if (insertedAssignmentIds.length === 0) return;
+      await supabase.from('training_program_assignments').delete().in('id', insertedAssignmentIds);
+    };
 
     try {
       if (assignType === 'team') {
         if (!teamId) { setError('Please select a team.'); setLoading(false); return; }
-        const { error: insertError } = await supabase.from('training_program_assignments').insert({
-          program_id: program.id,
-          team_id: teamId,
-          player_id: null,
-          start_date: startDate || null,
-          end_date: endDate || null,
-          assigned_by: user?.id,
-        });
+        const { data: inserted, error: insertError } = await supabase
+          .from('training_program_assignments')
+          .insert({
+            program_id: program.id,
+            team_id: teamId,
+            player_id: null,
+            start_date: startDate || null,
+            end_date: endDate || null,
+            assigned_by: user?.id,
+          })
+          .select('id');
         if (insertError) { setError(insertError.message); setLoading(false); return; }
+        (inserted || []).forEach(r => insertedAssignmentIds.push(r.id));
+
         const { count } = await generateWorkoutEvents({ teamId });
         if (count > 0) alert(`Assigned program. Added ${count} workout${count === 1 ? '' : 's'} to the calendar.`);
         onSuccess();
@@ -2020,14 +2052,20 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
           end_date: endDate || null,
           assigned_by: user?.id,
         }));
-        const { error: insertError } = await supabase.from('training_program_assignments').insert(rows);
-        if (insertError) { setError(insertError.message); setLoading(false); return; }
+        const { data: inserted, error: insertError } = await supabase
+          .from('training_program_assignments')
+          .insert(rows)
+          .select('id');
+        if (insertError) { setError(insertError.message); await rollback(); setLoading(false); return; }
+        (inserted || []).forEach(r => insertedAssignmentIds.push(r.id));
+
         const { count } = await generateWorkoutEvents({ playerIds: batch });
         totalCount += (count || 0);
       }
       if (totalCount > 0) alert(`Assigned program. Added ${totalCount} workout${totalCount === 1 ? '' : 's'} to the calendar.`);
       onSuccess();
     } catch (err) {
+      await rollback();
       setError(err.message || String(err));
       setLoading(false);
     }

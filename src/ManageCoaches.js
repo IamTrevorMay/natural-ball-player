@@ -47,12 +47,14 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
 
   const handleInlineUpdate = async (coachId, field, value) => {
     const { error } = await supabase.from('users').update({ [field]: value }).eq('id', coachId);
-    if (!error) {
-      if (isInternsMode && field === 'is_intern' && !value) {
-        setCoaches(prev => prev.filter(c => c.id !== coachId));
-      } else {
-        setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, [field]: value } : c));
-      }
+    if (error) {
+      alert(`Could not update: ${error.message}`);
+      return;
+    }
+    if (isInternsMode && field === 'is_intern' && !value) {
+      setCoaches(prev => prev.filter(c => c.id !== coachId));
+    } else {
+      setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, [field]: value } : c));
     }
   };
 
