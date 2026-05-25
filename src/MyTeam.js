@@ -5,7 +5,7 @@ import EmailComposeModal from './EmailComposeModal';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-export default function MyTeam({ userId, userRole }) {
+export default function MyTeam({ userId, userRole, initialTeamId }) {
   const [loading, setLoading] = useState(true);
   const [teamData, setTeamData] = useState(null);
   const [roster, setRoster] = useState([]);
@@ -75,18 +75,11 @@ export default function MyTeam({ userId, userRole }) {
 
       const memberTeams = (memberships || []).map(m => m.teams).filter(Boolean);
 
-      if (memberTeams.length === 1) {
-        // Exactly one team — auto-select
+      if (memberTeams.length >= 1) {
         setAvailableTeams(memberTeams);
-        setSelectedTeamId(memberTeams[0].id);
-        setLoading(false);
-        return;
-      }
-
-      if (memberTeams.length > 1) {
-        // Multiple teams — show picker, auto-select first
-        setAvailableTeams(memberTeams);
-        setSelectedTeamId(memberTeams[0].id);
+        // Use initialTeamId if provided and valid, otherwise first team
+        const target = initialTeamId && memberTeams.find(t => t.id === initialTeamId);
+        setSelectedTeamId(target ? target.id : memberTeams[0].id);
         setLoading(false);
         return;
       }
@@ -101,7 +94,8 @@ export default function MyTeam({ userId, userRole }) {
 
         if (allTeams && allTeams.length > 0) {
           setAvailableTeams(allTeams);
-          setSelectedTeamId(allTeams[0].id);
+          const target = initialTeamId && allTeams.find(t => t.id === initialTeamId);
+          setSelectedTeamId(target ? target.id : allTeams[0].id);
         }
       }
       // Players/coaches with 0 teams fall through to "No Team" state

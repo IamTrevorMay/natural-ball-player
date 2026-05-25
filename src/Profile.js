@@ -81,10 +81,10 @@ const PITCHING_RESULT_OPTIONS = ['Ball', 'Called Strike', 'Swing & Miss', 'Foul'
 
 const isPitchCategory = (cat) => cat === 'hitting' || cat === 'pitching';
 
-function TeamsList({ teamNames }) {
+function TeamsList({ teams, onNavigateToTeam }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const sorted = [...teamNames].sort((a, b) => a.localeCompare(b));
+  const sorted = [...teams].sort((a, b) => a.name.localeCompare(b.name));
 
   useEffect(() => {
     if (!open) return;
@@ -93,11 +93,29 @@ function TeamsList({ teamNames }) {
     return () => document.removeEventListener('mousedown', onClick);
   }, [open]);
 
+  const handleClick = (teamId) => {
+    setOpen(false);
+    if (onNavigateToTeam) onNavigateToTeam(teamId);
+  };
+
   if (sorted.length <= 3) {
-    return <p className="text-sm text-blue-600 mt-1">{sorted.join(', ')}</p>;
+    return (
+      <div className="flex flex-wrap gap-x-1 mt-1">
+        {sorted.map((t, i) => (
+          <span key={t.id}>
+            {onNavigateToTeam ? (
+              <button type="button" onClick={() => handleClick(t.id)} className="text-sm text-blue-600 hover:text-blue-800 hover:underline">{t.name}</button>
+            ) : (
+              <span className="text-sm text-blue-600">{t.name}</span>
+            )}
+            {i < sorted.length - 1 && <span className="text-sm text-gray-400">, </span>}
+          </span>
+        ))}
+      </div>
+    );
   }
 
-  const preview = sorted.slice(0, 2).join(', ');
+  const preview = sorted.slice(0, 2);
   return (
     <div className="relative inline-block mt-1" ref={ref}>
       <button
@@ -105,7 +123,7 @@ function TeamsList({ teamNames }) {
         onClick={() => setOpen(o => !o)}
         className="text-sm text-blue-600 hover:text-blue-700 inline-flex items-center"
       >
-        <span>{preview}</span>
+        <span>{preview.map(t => t.name).join(', ')}</span>
         <span className="ml-1 text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full border border-blue-100">
           +{sorted.length - 2} more
         </span>
@@ -115,8 +133,15 @@ function TeamsList({ teamNames }) {
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2 pb-1 border-b border-gray-100 mb-1">
             All Teams ({sorted.length})
           </div>
-          {sorted.map(name => (
-            <div key={name} className="px-2 py-1 text-gray-800 hover:bg-gray-50 rounded">{name}</div>
+          {sorted.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => handleClick(t.id)}
+              className="w-full text-left px-2 py-1.5 text-gray-800 hover:bg-blue-50 hover:text-blue-700 rounded cursor-pointer"
+            >
+              {t.name}
+            </button>
           ))}
         </div>
       )}
@@ -124,7 +149,7 @@ function TeamsList({ teamNames }) {
   );
 }
 
-export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile }) {
+export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile, onNavigateToTeam }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -1367,7 +1392,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               )}
               <p className="text-gray-600 capitalize mt-1">{userData.role}</p>
               {userData.team_members && userData.team_members.length > 0 && (
-                <TeamsList teamNames={userData.team_members.map(tm => tm.teams?.name).filter(Boolean)} />
+                <TeamsList
+                  teams={userData.team_members.map(tm => ({ id: tm.team_id, name: tm.teams?.name })).filter(t => t.name)}
+                  onNavigateToTeam={onNavigateToTeam}
+                />
               )}
               <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-gray-500">
                 {profile?.sport && <span>Sport: <span className="text-gray-700 font-medium">{profile.sport}</span></span>}

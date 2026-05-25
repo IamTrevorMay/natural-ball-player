@@ -428,6 +428,7 @@ function ResetPasswordPage({ onComplete }) {
 
 function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, loiSigned, setLoiSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
+  const [navigateTeamId, setNavigateTeamId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSecondary = !!secondaryRole && secondaryRole !== userRole;
   const [viewMode, setViewMode] = useState(userRole);
@@ -515,9 +516,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                 <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
