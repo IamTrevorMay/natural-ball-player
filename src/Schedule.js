@@ -212,15 +212,31 @@ export default function Schedule({ userId, userRole }) {
 
     const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
     const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    const startStr = fmtLocalDate(startOfMonth);
+    const endStr = fmtLocalDate(endOfMonth);
 
-    const { data } = await supabase
-      .from('schedule_events')
-      .select('*')
-      .contains('team_ids', [selectedTeam])
-      .gte('event_date', fmtLocalDate(startOfMonth))
-      .lte('event_date', fmtLocalDate(endOfMonth));
+    // Fetch team members so we can also pull their individual events
+    const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', selectedTeam);
+    const memberIds = (members || []).map(m => m.user_id).filter(Boolean);
 
-    setEvents(data || []);
+    const [{ data: teamData }, { data: playerData }] = await Promise.all([
+      supabase.from('schedule_events').select('*')
+        .contains('team_ids', [selectedTeam])
+        .gte('event_date', startStr).lte('event_date', endStr),
+      memberIds.length > 0
+        ? supabase.from('schedule_events').select('*')
+            .in('player_id', memberIds)
+            .gte('event_date', startStr).lte('event_date', endStr)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    // Merge and dedupe by id
+    const seen = new Set();
+    const merged = [];
+    for (const ev of [...(teamData || []), ...(playerData || [])]) {
+      if (!seen.has(ev.id)) { seen.add(ev.id); merged.push(ev); }
+    }
+    setEvents(merged);
   };
 
   const fetchPlayerEvents = async () => {
@@ -673,7 +689,11 @@ export default function Schedule({ userId, userRole }) {
     let targets = {};
     if (view === 'team') {
       if (!selectedTeam) { alert('Select a team first.'); return; }
-      targets = { team_id: selectedTeam, team_ids: [selectedTeam] };
+      // Fetch team members to create per-player events (visible on individual schedules)
+      const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', selectedTeam);
+      const memberIds = (members || []).map(m => m.user_id).filter(Boolean);
+      if (memberIds.length === 0) { alert('No players on this team.'); return; }
+      targets = { _playerIds: memberIds };
     } else if (view === 'player') {
       const playerIds = selectedPlayers.length > 0 ? selectedPlayers : (selectedPlayer ? [selectedPlayer] : []);
       if (playerIds.length === 0) { alert('Select a player first.'); return; }
@@ -1262,10 +1282,7 @@ export default function Schedule({ userId, userRole }) {
                 if (error) { alert('Failed to move event: ' + error.message); return; }
                 if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
               }}
-              eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
-                const idx = selectedPlayers.indexOf(ev.player_id);
-                return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].month : undefined;
-              } : undefined}
+              playerNames={(view === 'player' && selectedPlayers.length > 1) || view === 'team' ? players.reduce((m, p) => { m[p.id] = p.full_name; return m; }, {}) : null}
             />
           ) : (
             <WeekView
@@ -1286,10 +1303,7 @@ export default function Schedule({ userId, userRole }) {
                 if (error) { alert('Failed to move event: ' + error.message); return; }
                 if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
               }}
-              eventColorFn={view === 'player' && selectedPlayers.length > 0 ? (ev) => {
-                const idx = selectedPlayers.indexOf(ev.player_id);
-                return idx >= 0 ? PLAYER_OVERLAY_PALETTE[idx % PLAYER_OVERLAY_PALETTE.length].week : undefined;
-              } : undefined}
+              playerNames={(view === 'player' && selectedPlayers.length > 1) || view === 'team' ? players.reduce((m, p) => { m[p.id] = p.full_name; return m; }, {}) : null}
             />
           )}
         </div>
@@ -1430,7 +1444,7 @@ export default function Schedule({ userId, userRole }) {
 // MONTH VIEW
 // ============================================
 
-function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop }) {
+function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop, playerNames }) {
   const eventsAreClickable = canManage || allowEventClick;
   const isSelected = (e) => selecting && selectedIds && selectedIds.has(String(e.id));
   const year = selectedDate.getFullYear();
@@ -1581,6 +1595,9 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                   >
                     <span className="truncate">
                       {isSelected(event) && <Check size={10} className="inline mr-1" />}
+                      {playerNames && event.player_id && playerNames[event.player_id] && (
+                        <span className="font-semibold mr-1 opacity-70">{playerNames[event.player_id].split(' ').map(n => n[0]).join('')}</span>
+                      )}
                       {(event.start_time || event.event_time) && <span className="font-medium">{formatTimeDisplay(event.start_time || event.event_time)} </span>}
                       {event.title || event.opponent || event.event_type}
                     </span>
@@ -1616,7 +1633,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
 // WEEK VIEW
 // ============================================
 
-function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop }) {
+function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, onEventClick, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop, playerNames }) {
   // Get the week containing selectedDate
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
@@ -1693,6 +1710,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
                     event={event}
                     compact
                     eventColorFn={eventColorFn}
+                    playerNames={playerNames}
                     onClick={(ev) => {
                       if (selecting && onToggleSelect) { onToggleSelect(ev); return; }
                       if ((canManage || allowEventClick) && onEventClick) onEventClick(ev);
@@ -1722,7 +1740,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
   );
 }
 
-function EventCard({ event, compact, eventColorFn, onClick, draggable, onContextMenu, selected }) {
+function EventCard({ event, compact, eventColorFn, onClick, draggable, onContextMenu, selected, playerNames }) {
   const getEventColor = (ev) => {
     const eventType = typeof ev === 'string' ? ev : ev?.event_type;
     if (eventType === 'workout') {
@@ -1763,6 +1781,9 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
         <Edit2 size={12} className="absolute top-1.5 right-1.5 text-gray-500 opacity-0 group-hover:opacity-100 transition" />
       )}
       <div className="text-xs font-semibold text-gray-900 pr-4">
+        {playerNames && event.player_id && playerNames[event.player_id] && (
+          <span className="opacity-70 mr-1">{playerNames[event.player_id].split(' ').map(n => n[0]).join('')}</span>
+        )}
         {displayText}
       </div>
       <div className="text-xs text-gray-600 mt-1">{formatTimeDisplay(event.event_time) || 'TBD'}</div>
