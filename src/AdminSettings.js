@@ -1275,104 +1275,35 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
     setLoading(true);
     setError('');
 
-    let adminSession = null;
     let newUserId = null;
 
     try {
       const isIntern = formData.role === 'intern';
       const dbRole = isIntern ? 'coach' : formData.role;
 
-      // Save admin session before signUp (signUp may switch the active session)
+      // 1. Create auth user via edge function (admin API — does NOT affect current session)
       const { data: { session } } = await supabase.auth.getSession();
-      adminSession = session;
-
-      // 1. Create auth user using signUp
-      let { data: authData, error: authError } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-        options: {
-          data: {
-            full_name: formData.full_name,
-            role: dbRole
-          }
-        }
-      });
-
-      // Handle "User already registered" — clean up orphaned records and retry
-      if (authError && authError.message.includes('User already registered')) {
-        // Restore admin session before cleanup
-        if (adminSession) {
-          await supabase.auth.setSession({
-            access_token: adminSession.access_token,
-            refresh_token: adminSession.refresh_token,
-          });
-        }
-
-        // Look up in public.users to get the ID for the edge function
-        const { data: existingUser } = await supabase
-          .from('users')
-          .select('id')
-          .eq('email', formData.email)
-          .single();
-
-        if (existingUser) {
-          // Delete auth user via edge function, then public.users row
-          await deleteAuthUser(existingUser.id);
-          await supabase.from('users').delete().eq('id', existingUser.id);
-        } else {
-          // Orphaned auth user (exists in auth but not in users table).
-          // Try signing in to get the user ID so we can clean it up.
-          const { data: signInData } = await supabase.auth.signInWithPassword({
+      const res = await fetch(
+        `${supabaseUrl}/functions/v1/create-user`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+            'apikey': supabaseAnonKey,
+          },
+          body: JSON.stringify({
             email: formData.email,
             password: formData.password,
-          });
-          if (signInData?.user?.id) {
-            if (adminSession) {
-              await supabase.auth.setSession({
-                access_token: adminSession.access_token,
-                refresh_token: adminSession.refresh_token,
-              });
-            }
-            await deleteAuthUser(signInData.user.id);
-          } else {
-            throw new Error(
-              'This email has an orphaned auth record. Please delete it from the Supabase Authentication dashboard (Auth → Users), then try again.'
-            );
-          }
+            full_name: formData.full_name,
+            role: dbRole,
+          }),
         }
+      );
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to create auth user');
 
-        // Re-save admin session (may have been refreshed)
-        const { data: { session: freshSession } } = await supabase.auth.getSession();
-        adminSession = freshSession;
-
-        // Retry signUp
-        const retry = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-          options: {
-            data: {
-              full_name: formData.full_name,
-              role: dbRole
-            }
-          }
-        });
-
-        if (retry.error) throw retry.error;
-        authData = retry.data;
-        authError = null;
-      } else if (authError) {
-        throw authError;
-      }
-
-      newUserId = authData.user.id;
-
-      // Restore admin session so subsequent DB operations use admin RLS context
-      if (adminSession) {
-        await supabase.auth.setSession({
-          access_token: adminSession.access_token,
-          refresh_token: adminSession.refresh_token,
-        });
-      }
+      newUserId = result.user_id;
 
       // 2. Insert into users table
       const { error: userError } = await supabase
@@ -1420,7 +1351,7 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
       }
 
       newUserId = null; // Clear so catch block doesn't delete a successfully created user
-      alert('User created successfully! They will need to verify their email before logging in.');
+      alert('User created successfully!');
       onSuccess();
     } catch (err) {
       // If auth user was created but DB inserts failed, clean up the orphaned auth user
@@ -1429,15 +1360,6 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
       }
       setError(err.message);
     } finally {
-      // Always restore admin session
-      if (adminSession) {
-        try {
-          await supabase.auth.setSession({
-            access_token: adminSession.access_token,
-            refresh_token: adminSession.refresh_token,
-          });
-        } catch (_) {}
-      }
       setLoading(false);
     }
   };

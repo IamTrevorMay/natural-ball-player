@@ -774,6 +774,7 @@ export default function Schedule({ userId, userRole }) {
     if (userRole === 'admin') return true;
     if (userRole === 'coach') {
       if (view === 'facility') return true;
+      if (view === 'team') return true;
       if (view === 'player') {
         const player = players.find(p => p.id === selectedPlayer);
         return player !== undefined;
@@ -1268,6 +1269,7 @@ export default function Schedule({ userId, userRole }) {
               hoveredDate={hoveredDate}
               setHoveredDate={setHoveredDate}
               canManage={canManageCalendar()}
+              allowEventClick={true}
               setSelectedEvent={setSelectedEvent}
               setShowEventDetail={setShowEventDetail}
               selecting={selecting}
@@ -1290,6 +1292,7 @@ export default function Schedule({ userId, userRole }) {
               events={events}
               onDateClick={(date) => canManageCalendar() && setShowAddPanel(date)}
               canManage={canManageCalendar()}
+              allowEventClick={true}
               onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
               selecting={selecting}
               selectedIds={selectedIds}

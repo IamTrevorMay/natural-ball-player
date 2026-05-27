@@ -18,7 +18,6 @@ export default function MyTeam({ userId, userRole, initialTeamId }) {
   const [prospects, setProspects] = useState([]);
 
   const fetchProspects = async (teamId) => {
-    if (userRole !== 'admin' && userRole !== 'coach') return;
     try {
       const { data } = await supabase
         .from('prospects')
@@ -278,7 +277,7 @@ export default function MyTeam({ userId, userRole, initialTeamId }) {
               { key: 'coaches', label: 'Coaches', icon: User },
               { key: 'schedule', label: 'Schedule', icon: Calendar },
               { key: 'announcements', label: 'Announcements', icon: MessageSquare },
-              ...((userRole === 'admin' || userRole === 'coach') ? [{ key: 'prospects', label: 'Prospects', icon: Star }] : [])
+              { key: 'prospects', label: 'Prospects', icon: Star }
             ].map(tab => (
               <button
                 key={tab.key}
@@ -301,8 +300,8 @@ export default function MyTeam({ userId, userRole, initialTeamId }) {
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
-          {activeTab === 'prospects' && (userRole === 'admin' || userRole === 'coach') && (
-            <ProspectsTab teamId={teamData.id} userId={userId} roster={roster} prospects={prospects} onProspectsChange={() => fetchProspects(selectedTeamId)} />
+          {activeTab === 'prospects' && (
+            <ProspectsTab teamId={teamData.id} userId={userId} userRole={userRole} roster={roster} prospects={prospects} onProspectsChange={() => fetchProspects(selectedTeamId)} />
           )}
         </div>
       </div>
@@ -782,7 +781,8 @@ function AnnouncementCard({ announcement }) {
 // PROSPECTS TAB (Coach/Admin Only)
 // ============================================
 
-function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) {
+function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspectsChange }) {
+  const canEdit = userRole === 'admin' || userRole === 'coach';
   const [addMode, setAddMode] = useState(null); // null, 'member', 'external'
   const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '', position: '' });
   const [hoveredPosition, setHoveredPosition] = useState(null);
@@ -811,7 +811,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
         const existingPlayerIds = prospects.filter(p => p.player_id).map(p => p.player_id);
         const { data } = await supabase
           .from('users')
-          .select('id, full_name, email, role, player_profiles(position)')
+          .select('id, full_name, email, role, player_profiles!player_profiles_user_id_fkey(position)')
           .or(`full_name.ilike.%${memberSearch.trim()}%,email.ilike.%${memberSearch.trim()}%`)
           .limit(20);
         const filtered = (data || []).filter(u => !existingPlayerIds.includes(u.id));
@@ -967,7 +967,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
 
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900">Prospects List</h3>
-        {!addMode && (
+        {canEdit && !addMode && (
           <div className="flex items-center space-x-2">
             <button
               onClick={() => { setAddMode('member'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); setMemberSearch(''); setMemberResults([]); }}
@@ -1185,6 +1185,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
                     </p>
                   </div>
                 </div>
+                {canEdit && (
                 <div className="flex items-center space-x-1 ml-2">
                   <button
                     onClick={() => { setEditingId(prospect.id); setEditNotes(prospect.notes || ''); setEditPosition(prospect.position || ''); }}
@@ -1210,6 +1211,7 @@ function ProspectsTab({ teamId, userId, roster, prospects, onProspectsChange }) 
                     <Trash2 size={16} />
                   </button>
                 </div>
+                )}
               </div>
             </div>
           ))}

@@ -1498,8 +1498,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {/* Tab Bar */}
-          <div className="border-b border-gray-200 mb-6 -mx-2 px-2 overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-            <nav className="flex md:flex-wrap gap-1 pb-2 min-w-0">
+          <div className="border-b border-gray-200 mb-6 -mx-2 px-2">
+            <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
               {PROFILE_TABS.filter(tab => {
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
