@@ -67,7 +67,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Delete from Supabase Auth
+    // Delete from public.users first (cascades to child tables via FK rules)
+    const { error: dbError } = await serviceClient
+      .from("users")
+      .delete()
+      .eq("id", user_id);
+    if (dbError) {
+      return new Response(
+        JSON.stringify({ error: "Failed to delete user data: " + dbError.message }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Then delete from Supabase Auth
     const { error: deleteError } = await serviceClient.auth.admin.deleteUser(user_id);
     if (deleteError) {
       return new Response(

@@ -981,9 +981,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   const handleDeleteUser = async () => {
     setDeleting(true);
     try {
-      await deleteAuthUser(user.id);
-      const { error } = await supabase.from('users').delete().eq('id', user.id);
-      if (error) throw error;
+      await deleteAuthUser(user.id); // Edge function deletes public.users row + auth user
       onSuccess();
     } catch (err) {
       console.error('Error deleting user:', err);
