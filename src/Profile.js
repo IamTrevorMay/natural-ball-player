@@ -933,11 +933,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         if (parts[4]) link = parts[4];
         return { name, sets, reps, rest, load, link };
       } else {
-        // Legacy format: Name - 3 sets x 10 reps (link)
+        // Legacy format: Name - 3 sets x 10 reps (link) — reps may be a range like 12-15
         const name = line.replace(/ - \d.*$/, '').replace(/ \(https?:.*$/, '').trim();
         let sets = '', reps = '', link = '';
-        const srMatch = line.match(/(\d+)\s*sets?\s*x\s*(\d+)\s*reps?/i);
-        if (srMatch) { sets = srMatch[1]; reps = srMatch[2]; }
+        const srMatch = line.match(/(\d+)\s*sets?\s*x\s*(\d+(?:\s*-\s*\d+)?)\s*reps?/i);
+        if (srMatch) { sets = srMatch[1]; reps = srMatch[2].replace(/\s+/g, ''); }
         const linkMatch = line.match(/\((https?:\/\/[^\s)]+)\)/);
         if (linkMatch) link = linkMatch[1];
         return { name, sets, reps, rest: '', load: '', link };

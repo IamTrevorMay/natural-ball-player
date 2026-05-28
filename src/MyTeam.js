@@ -36,11 +36,13 @@ export default function MyTeam({ userId, userRole, initialTeamId }) {
       if (existing) {
         await supabase.from('prospects').delete().eq('id', existing.id);
       } else {
+        const pos = (player.player_profile?.position || '').toUpperCase().trim();
         await supabase.from('prospects').insert({
           team_id: selectedTeamId,
           player_id: player.id,
           name: player.full_name,
-          position: player.player_profile?.position || null,
+          position: pos || null,
+          positions: pos ? [pos] : [],
           added_by: userId,
         });
       }
@@ -781,14 +783,36 @@ function AnnouncementCard({ announcement }) {
 // PROSPECTS TAB (Coach/Admin Only)
 // ============================================
 
+const PROSPECT_POSITION_OPTIONS = [
+  { code: 'P', label: 'P — Pitcher' },
+  { code: 'C', label: 'C — Catcher' },
+  { code: '1B', label: '1B — First Base' },
+  { code: '2B', label: '2B — Second Base' },
+  { code: '3B', label: '3B — Third Base' },
+  { code: 'SS', label: 'SS — Shortstop' },
+  { code: 'LF', label: 'LF — Left Field' },
+  { code: 'CF', label: 'CF — Center Field' },
+  { code: 'RF', label: 'RF — Right Field' },
+  { code: 'DH', label: 'DH — Designated Hitter' },
+  { code: 'UT', label: 'UT — Utility' },
+];
+
+const getProspectPositions = (p) => {
+  if (Array.isArray(p?.positions) && p.positions.length > 0) {
+    return p.positions.map(pos => (pos || '').toUpperCase().trim()).filter(Boolean);
+  }
+  const single = (p?.position || '').toUpperCase().trim();
+  return single ? [single] : [];
+};
+
 function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspectsChange }) {
   const canEdit = userRole === 'admin' || userRole === 'coach';
   const [addMode, setAddMode] = useState(null); // null, 'member', 'external'
-  const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '', position: '' });
+  const [newProspect, setNewProspect] = useState({ name: '', notes: '', player_id: '', positions: [] });
   const [hoveredPosition, setHoveredPosition] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editNotes, setEditNotes] = useState('');
-  const [editPosition, setEditPosition] = useState('');
+  const [editPositions, setEditPositions] = useState([]);
   const [saving, setSaving] = useState(false);
   const [emailTarget, setEmailTarget] = useState(null);
   const [memberSearch, setMemberSearch] = useState('');
@@ -840,19 +864,23 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
     if (!newProspect.name.trim()) return;
     setSaving(true);
     try {
+      const normalized = (newProspect.positions || [])
+        .map(p => (p || '').toUpperCase().trim())
+        .filter(Boolean);
       const { error } = await supabase
         .from('prospects')
         .insert({
           team_id: teamId,
           player_id: newProspect.player_id || null,
           name: newProspect.name,
-          position: newProspect.position || null,
+          position: normalized[0] || null,
+          positions: normalized,
           notes: newProspect.notes || null,
           added_by: userId,
         });
 
       if (error) throw error;
-      setNewProspect({ name: '', notes: '', player_id: '', position: '' });
+      setNewProspect({ name: '', notes: '', player_id: '', positions: [] });
       setAddMode(null);
       setMemberSearch('');
       await onProspectsChange();
@@ -862,6 +890,18 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleNewPosition = (code) => {
+    setNewProspect(prev => {
+      const current = prev.positions || [];
+      const exists = current.includes(code);
+      return { ...prev, positions: exists ? current.filter(c => c !== code) : [...current, code] };
+    });
+  };
+
+  const toggleEditPosition = (code) => {
+    setEditPositions(prev => prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]);
   };
 
   const handleDeleteProspect = async (id) => {
@@ -881,9 +921,16 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
 
   const handleUpdateNotes = async (id) => {
     try {
+      const normalized = (editPositions || [])
+        .map(p => (p || '').toUpperCase().trim())
+        .filter(Boolean);
       const { error } = await supabase
         .from('prospects')
-        .update({ notes: editNotes || null, position: editPosition || null })
+        .update({
+          notes: editNotes || null,
+          position: normalized[0] || null,
+          positions: normalized,
+        })
         .eq('id', id);
 
       if (error) throw error;
@@ -894,15 +941,14 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
     }
   };
 
-  // Group prospects by position for field view
+  // Group prospects by position for field view — a prospect counts in every position they hold.
   const positionMap = {};
-  const FIELD_POSITIONS = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH'];
   prospects.forEach(p => {
-    const pos = (p.position || '').toUpperCase().trim();
-    if (pos) {
+    const positions = getProspectPositions(p);
+    positions.forEach(pos => {
       if (!positionMap[pos]) positionMap[pos] = [];
       positionMap[pos].push(p);
-    }
+    });
   });
 
   return (
@@ -970,14 +1016,14 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
         {canEdit && !addMode && (
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => { setAddMode('member'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); setMemberSearch(''); setMemberResults([]); }}
+              onClick={() => { setAddMode('member'); setNewProspect({ name: '', notes: '', player_id: '', positions: [] }); setMemberSearch(''); setMemberResults([]); }}
               className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center space-x-1"
             >
               <UserPlus size={16} />
               <span>Any Member</span>
             </button>
             <button
-              onClick={() => { setAddMode('external'); setNewProspect({ name: '', notes: '', player_id: '', position: '' }); }}
+              onClick={() => { setAddMode('external'); setNewProspect({ name: '', notes: '', player_id: '', positions: [] }); }}
               className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center space-x-1"
             >
               <Plus size={16} />
@@ -1013,10 +1059,11 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
                       <button
                         key={u.id}
                         onClick={() => {
+                          const pos = (u.player_profiles?.[0]?.position || '').toUpperCase().trim();
                           setNewProspect({
                             name: u.full_name,
                             player_id: u.id,
-                            position: u.player_profiles?.[0]?.position || '',
+                            positions: pos ? [pos] : [],
                             notes: newProspect.notes,
                           });
                           setMemberSearch('');
@@ -1039,7 +1086,7 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
                 {newProspect.player_id && (
                   <div className="mt-2 bg-blue-100 text-blue-800 px-3 py-1.5 rounded-lg text-sm flex items-center justify-between">
                     <span>Selected: <strong>{newProspect.name}</strong></span>
-                    <button onClick={() => setNewProspect({ name: '', notes: newProspect.notes, player_id: '', position: '' })} className="text-blue-600 hover:text-blue-800">
+                    <button onClick={() => setNewProspect({ name: '', notes: newProspect.notes, player_id: '', positions: [] })} className="text-blue-600 hover:text-blue-800">
                       <X size={14} />
                     </button>
                   </div>
@@ -1054,24 +1101,28 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             )}
-            <select
-              value={newProspect.position}
-              onChange={(e) => setNewProspect({...newProspect, position: e.target.value})}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">No position</option>
-              <option value="P">P — Pitcher</option>
-              <option value="C">C — Catcher</option>
-              <option value="1B">1B — First Base</option>
-              <option value="2B">2B — Second Base</option>
-              <option value="3B">3B — Third Base</option>
-              <option value="SS">SS — Shortstop</option>
-              <option value="LF">LF — Left Field</option>
-              <option value="CF">CF — Center Field</option>
-              <option value="RF">RF — Right Field</option>
-              <option value="DH">DH — Designated Hitter</option>
-              <option value="UT">UT — Utility</option>
-            </select>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Positions (select one or more)</label>
+              <div className="flex flex-wrap gap-1.5">
+                {PROSPECT_POSITION_OPTIONS.map(opt => {
+                  const selected = (newProspect.positions || []).includes(opt.code);
+                  return (
+                    <button
+                      type="button"
+                      key={opt.code}
+                      onClick={() => toggleNewPosition(opt.code)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${
+                        selected
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {opt.code}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <textarea
               value={newProspect.notes}
               onChange={(e) => setNewProspect({...newProspect, notes: e.target.value})}
@@ -1127,33 +1178,37 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
                       }`}>
                         {prospect.player_id ? 'Member' : 'External'}
                       </span>
-                      {prospect.position && (
-                        <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">
-                          {prospect.position}
+                      {getProspectPositions(prospect).map(pos => (
+                        <span key={pos} className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+                          {pos}
                         </span>
-                      )}
+                      ))}
                     </div>
                     {editingId === prospect.id ? (
                       <div className="mt-2 space-y-2">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Positions</label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {PROSPECT_POSITION_OPTIONS.map(opt => {
+                              const selected = editPositions.includes(opt.code);
+                              return (
+                                <button
+                                  type="button"
+                                  key={opt.code}
+                                  onClick={() => toggleEditPosition(opt.code)}
+                                  className={`px-2 py-0.5 rounded-full text-xs font-medium border transition ${
+                                    selected
+                                      ? 'bg-blue-600 text-white border-blue-600'
+                                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {opt.code}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                         <div className="flex items-center space-x-2">
-                          <select
-                            value={editPosition}
-                            onChange={(e) => setEditPosition(e.target.value)}
-                            className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="">No position</option>
-                            <option value="P">P</option>
-                            <option value="C">C</option>
-                            <option value="1B">1B</option>
-                            <option value="2B">2B</option>
-                            <option value="3B">3B</option>
-                            <option value="SS">SS</option>
-                            <option value="LF">LF</option>
-                            <option value="CF">CF</option>
-                            <option value="RF">RF</option>
-                            <option value="DH">DH</option>
-                            <option value="UT">UT</option>
-                          </select>
                           <input
                             type="text"
                             value={editNotes}
@@ -1188,7 +1243,7 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
                 {canEdit && (
                 <div className="flex items-center space-x-1 ml-2">
                   <button
-                    onClick={() => { setEditingId(prospect.id); setEditNotes(prospect.notes || ''); setEditPosition(prospect.position || ''); }}
+                    onClick={() => { setEditingId(prospect.id); setEditNotes(prospect.notes || ''); setEditPositions(getProspectPositions(prospect)); }}
                     className="p-1.5 text-gray-400 hover:text-blue-600 transition"
                     title="Edit notes"
                   >
@@ -1263,8 +1318,14 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
     if (pos && rosterByPos[pos]) rosterByPos[pos].push(player);
   });
   prospects.forEach(pr => {
-    const pos = normalizePosition(pr.position);
-    if (pos && prospectByPos[pos]) prospectByPos[pos].push(pr);
+    const seen = new Set();
+    getProspectPositions(pr).forEach(raw => {
+      const pos = normalizePosition(raw);
+      if (pos && prospectByPos[pos] && !seen.has(pos)) {
+        prospectByPos[pos].push(pr);
+        seen.add(pos);
+      }
+    });
   });
 
   const hovered = POSITIONS.find(p => p.code === hoveredPosition);

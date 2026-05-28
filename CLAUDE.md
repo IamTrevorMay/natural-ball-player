@@ -20,7 +20,7 @@ When creating new tables:
 3. **Use separate policies** for SELECT/INSERT/UPDATE/DELETE — INSERT requires `WITH CHECK`, not `USING`. Avoid `FOR ALL`.
 
 ## Pending Manual Configuration
-1. **Supabase Auth Redirect URLs (for forgot password #78):** Go to Supabase Dashboard → Project Settings → Authentication → URL Configuration. Set **Site URL** to `https://natural-ball-player.vercel.app`. Add `https://natural-ball-player.vercel.app/**` to the **Redirect URLs** allowlist.
+1. **Supabase Auth Redirect URLs (for forgot password #78, #139):** Go to Supabase Dashboard → Project Settings → Authentication → URL Configuration. Set **Site URL** to `https://nbp-portal.vercel.app`. Add `https://nbp-portal.vercel.app/**` to the **Redirect URLs** allowlist. (Production Vercel domain is `nbp-portal.vercel.app` — NOT `natural-ball-player.vercel.app`.)
 2. **Enable leaked-password protection:** Supabase Dashboard → Authentication → Policies → toggle on "Leaked Password Protection" (checks HaveIBeenPwned).
 
 ## Workflow
