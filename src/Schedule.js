@@ -316,11 +316,43 @@ export default function Schedule({ userId, userRole }) {
     const startStr = fmtLocalDate(startOfMonth);
     const endStr = fmtLocalDate(endOfMonth);
     const facSelect = '*, athlete:athlete_id(full_name), coach:coach_id(full_name)';
-    const { data: nonRecurring } = await supabase.from('facility_events').select(facSelect).eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
-    const { data: masters } = await supabase.from('facility_events').select(facSelect).eq('is_recurring', true).is('recurrence_parent_id', null);
-    const { data: exceptions } = await supabase.from('facility_events').select(facSelect).not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr);
+    let nrQuery = supabase.from('facility_events').select(facSelect).eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
+    let masterQuery = supabase.from('facility_events').select(facSelect).eq('is_recurring', true).is('recurrence_parent_id', null);
+    let exceptionsQuery = supabase.from('facility_events').select(facSelect).not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr);
+    // Players only see facility events they're the athlete for, or signed up for.
+    const restrictToPlayer = userRole === 'player';
+    let signedUpIds = new Set();
+    if (restrictToPlayer) {
+      nrQuery = nrQuery.eq('athlete_id', userId);
+      masterQuery = masterQuery.eq('athlete_id', userId);
+      exceptionsQuery = exceptionsQuery.eq('athlete_id', userId);
+      const { data: signups } = await supabase
+        .from('event_signups')
+        .select('event_id')
+        .eq('user_id', userId)
+        .gte('event_date', startStr)
+        .lte('event_date', endStr);
+      signedUpIds = new Set((signups || []).map(s => s.event_id));
+    }
+    const { data: nonRecurring } = await nrQuery;
+    const { data: masters } = await masterQuery;
+    const { data: exceptions } = await exceptionsQuery;
     const expanded = expandRecurringEvents(masters || [], exceptions || [], startOfMonth, endOfMonth);
-    setFacilityEvents([...(nonRecurring || []), ...expanded]);
+    let combined = [...(nonRecurring || []), ...expanded];
+    if (restrictToPlayer && signedUpIds.size > 0) {
+      const haveIds = new Set(combined.map(e => e.id));
+      const missingIds = [...signedUpIds].filter(id => !haveIds.has(id));
+      if (missingIds.length > 0) {
+        const { data: signedUpEvents } = await supabase
+          .from('facility_events')
+          .select(facSelect)
+          .in('id', missingIds)
+          .gte('event_date', startStr)
+          .lte('event_date', endStr);
+        combined = [...combined, ...(signedUpEvents || [])];
+      }
+    }
+    setFacilityEvents(combined);
   };
 
   const fetchCoaches = async () => {
@@ -852,7 +884,9 @@ export default function Schedule({ userId, userRole }) {
       {/* My Schedule View (Player) */}
       {view === 'my-schedule' && (
         <div className="flex space-x-4">
-          <ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} />
+          {(userRole === 'admin' || userRole === 'coach') && (
+            <ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} />
+          )}
           <div className="bg-white rounded-lg shadow flex-1 min-w-0">
           <div className="border-b border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
@@ -1088,7 +1122,7 @@ export default function Schedule({ userId, userRole }) {
       )}
 
       {/* Team/Player Calendar Container */}
-      {view !== 'facility' && view !== 'my-schedule' && <><div className="flex space-x-4"><ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} /><div className="bg-white rounded-lg shadow flex-1 min-w-0">
+      {view !== 'facility' && view !== 'my-schedule' && <><div className="flex space-x-4">{(userRole === 'admin' || userRole === 'coach') && <ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} />}<div className="bg-white rounded-lg shadow flex-1 min-w-0">
         {/* Calendar Header */}
         <div className="border-b border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
@@ -2192,6 +2226,19 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
     })();
 
     try {
+      // For meal/workout events on a team, expand to every team member.
+      if ((eventType === 'workout' || eventType === 'meal') && playerIds.length === 0 && view === 'team' && teamId) {
+        const { data: members, error: membersErr } = await supabase
+          .from('team_members')
+          .select('user_id')
+          .eq('team_id', teamId);
+        if (membersErr) throw membersErr;
+        playerIds = (members || []).map(m => m.user_id).filter(Boolean);
+        if (playerIds.length === 0) {
+          throw new Error('This team has no members. Add players to the team before scheduling.');
+        }
+      }
+
       // Guard: meal/workout events require at least one player
       if ((eventType === 'workout' || eventType === 'meal') && playerIds.length === 0) {
         throw new Error('No player selected. Please select a player first.');
@@ -4673,8 +4720,8 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
   };
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="grid grid-cols-7 divide-x divide-gray-200">
+    <div className="border border-gray-200 rounded-lg overflow-x-auto">
+      <div className="grid grid-cols-7 divide-x divide-gray-200 min-w-[840px]">
         {weekDays.map((date, idx) => {
           const dateStr = formatLocal(date);
           const daySlots = slots.filter(s => s.slot_date === dateStr);
@@ -4767,28 +4814,75 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
 
 function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, existingSlot }) {
   const isEdit = !!existingSlot;
-  const [slotDate, setSlotDate] = useState(existingSlot?.slot_date || initialDate || fmtLocalDate(new Date()));
+  const initialDateStr = existingSlot?.slot_date || initialDate || fmtLocalDate(new Date());
+  const initialDow = new Date(initialDateStr + 'T00:00:00').getDay();
+  const [slotDate, setSlotDate] = useState(initialDateStr);
   const [startTime, setStartTime] = useState(existingSlot?.start_time || '09:00');
   const [duration, setDuration] = useState(existingSlot?.duration_minutes || 60);
   const [autoConfirm, setAutoConfirm] = useState(existingSlot?.auto_confirm || false);
   const [repeatWeekly, setRepeatWeekly] = useState(existingSlot?.repeat_weekly || false);
   const [repeatEndDate, setRepeatEndDate] = useState(existingSlot?.repeat_end_date || '');
+  // When creating: default to the weekday of slotDate. When editing: locked to existing weekday.
+  const [repeatDows, setRepeatDows] = useState(() => new Set([initialDow]));
   const [maxPlayers, setMaxPlayers] = useState(existingSlot?.max_players || 1);
   const [notes, setNotes] = useState(existingSlot?.notes || '');
   const [loading, setLoading] = useState(false);
 
+  // Keep the slot's own weekday selected when slotDate changes.
+  useEffect(() => {
+    if (isEdit) return;
+    const dow = new Date(slotDate + 'T00:00:00').getDay();
+    setRepeatDows(prev => prev.has(dow) ? prev : new Set([...prev, dow]));
+  }, [slotDate, isEdit]);
+
+  const toggleDow = (dow) => {
+    setRepeatDows(prev => {
+      const next = new Set(prev);
+      if (next.has(dow)) next.delete(dow); else next.add(dow);
+      return next;
+    });
+  };
+
+  const firstDateOnOrAfter = (fromDateStr, targetDow) => {
+    const d = new Date(fromDateStr + 'T00:00:00');
+    const offset = (targetDow - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + offset);
+    return fmtLocalDate(d);
+  };
+
   const handleSave = async () => {
     setLoading(true);
     try {
-      const payload = {
-        coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
-        auto_confirm: autoConfirm, repeat_weekly: repeatWeekly,
-        repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
-      };
       if (isEdit) {
+        const payload = {
+          coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
+          auto_confirm: autoConfirm, repeat_weekly: repeatWeekly,
+          repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
+        };
         const { error } = await supabase.from('training_slots').update(payload).eq('id', existingSlot.id);
         if (error) throw error;
+      } else if (repeatWeekly && repeatDows.size > 1) {
+        // Create one master slot per selected weekday, anchored to the first occurrence on/after slotDate.
+        const baseDow = new Date(slotDate + 'T00:00:00').getDay();
+        const rows = [...repeatDows].sort().map(dow => ({
+          coach_id: coachId,
+          slot_date: dow === baseDow ? slotDate : firstDateOnOrAfter(slotDate, dow),
+          start_time: startTime,
+          duration_minutes: duration,
+          auto_confirm: autoConfirm,
+          repeat_weekly: true,
+          repeat_end_date: repeatEndDate || null,
+          max_players: maxPlayers,
+          notes: notes || null,
+        }));
+        const { error } = await supabase.from('training_slots').insert(rows);
+        if (error) throw error;
       } else {
+        const payload = {
+          coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
+          auto_confirm: autoConfirm, repeat_weekly: repeatWeekly,
+          repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
+        };
         const { error } = await supabase.from('training_slots').insert(payload);
         if (error) throw error;
       }
@@ -4812,7 +4906,34 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="10" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="autoConfirm" checked={autoConfirm} onChange={(e) => setAutoConfirm(e.target.checked)} className="rounded" /><label htmlFor="autoConfirm" className="text-sm text-gray-700">Auto-confirm reservations</label></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="repeatWeekly" checked={repeatWeekly} onChange={(e) => setRepeatWeekly(e.target.checked)} className="rounded" /><label htmlFor="repeatWeekly" className="text-sm text-gray-700">Repeat weekly</label></div>
-          {repeatWeekly && <div><label className="block text-sm font-medium text-gray-700 mb-1">Repeat until</label><input type="date" value={repeatEndDate} onChange={(e) => setRepeatEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>}
+          {repeatWeekly && (
+            <>
+              {!isEdit && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Days of week</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((label, dow) => {
+                      const selected = repeatDows.has(dow);
+                      return (
+                        <button
+                          type="button"
+                          key={dow}
+                          onClick={() => toggleDow(dow)}
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${
+                            selected ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">First occurrence of each weekday on/after the start date becomes the master slot.</p>
+                </div>
+              )}
+              <div><label className="block text-sm font-medium text-gray-700 mb-1">Repeat until</label><input type="date" value={repeatEndDate} onChange={(e) => setRepeatEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+            </>
+          )}
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g., Hitting session, Pitching mechanics" rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>

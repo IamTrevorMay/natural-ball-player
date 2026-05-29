@@ -5,7 +5,7 @@ import EmailComposeModal from './EmailComposeModal';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-export default function MyTeam({ userId, userRole, initialTeamId }) {
+export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToProfile }) {
   const [loading, setLoading] = useState(true);
   const [teamData, setTeamData] = useState(null);
   const [roster, setRoster] = useState([]);
@@ -298,7 +298,7 @@ export default function MyTeam({ userId, userRole, initialTeamId }) {
         </div>
 
         <div className="p-6">
-          {activeTab === 'roster' && <RosterTab roster={roster} coaches={coaches} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} />}
+          {activeTab === 'roster' && <RosterTab roster={roster} coaches={coaches} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} onNavigateToProfile={onNavigateToProfile} />}
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
@@ -315,7 +315,7 @@ export default function MyTeam({ userId, userRole, initialTeamId }) {
 // ROSTER TAB
 // ============================================
 
-function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspectToggle, teamId, onRosterChange }) {
+function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspectToggle, teamId, onRosterChange, onNavigateToProfile }) {
   const [sortBy, setSortBy] = useState('name');
   const [filterPosition, setFilterPosition] = useState('all');
   const [showAddMember, setShowAddMember] = useState(false);
@@ -522,6 +522,7 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
                 onToggleProspect={() => onProspectToggle(player)}
                 canRemove={isStaff}
                 onRemove={() => handleRemoveMember(player.id)}
+                onOpen={onNavigateToProfile ? () => onNavigateToProfile(player.id) : null}
               />
             ))}
           </div>
@@ -531,11 +532,18 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
   );
 }
 
-function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect, canRemove, onRemove }) {
+function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect, canRemove, onRemove, onOpen }) {
   const profile = player.player_profile || {};
+  const clickable = !!onOpen;
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition border border-gray-200">
+    <div
+      onClick={clickable ? onOpen : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } } : undefined}
+      className={`bg-gray-50 rounded-lg p-4 transition border border-gray-200 ${clickable ? 'cursor-pointer hover:bg-blue-50 hover:border-blue-200' : 'hover:bg-gray-100'}`}
+    >
       <div className="flex items-start space-x-4">
         {/* Jersey Number */}
         <div className="w-16 h-16 bg-blue-600 rounded-lg flex items-center justify-center text-white flex-shrink-0">

@@ -30,7 +30,7 @@ const PROFILE_TABS = [
   { key: 'programming', label: 'Programming', roles: ['admin', 'coach'] },
   { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
-  { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
+  { key: 'whoop', label: 'Whoop' },
   { key: 'hittrax', label: 'Hittrax' },
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },

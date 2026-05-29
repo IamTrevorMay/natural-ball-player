@@ -1006,7 +1006,7 @@ function TrainingTab({ teams, players }) {
         *,
         training_days(
           id, day_number, title, notes,
-          training_exercises(id, category, name, description, sets, reps, weight, video_url, image_url, sort_order)
+          training_exercises(id, category, name, description, sets, reps, weight, video_url, image_url, sort_order, rest, load, super_set)
         ),
         training_program_assignments(
           id, player_id, team_id, start_date, end_date,

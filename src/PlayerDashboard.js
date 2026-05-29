@@ -65,23 +65,31 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
         ...((teamEvents || []).filter(e => !directIds.has(e.id))),
       ];
 
-      // Fetch facility events for today (non-recurring)
-      const { data: facilityNonRecurring } = await supabase
-        .from('facility_events')
-        .select('*')
-        .eq('is_recurring', false)
-        .is('recurrence_parent_id', null)
-        .eq('event_date', today);
+      // Fetch facility events for today — only ones the player is involved in:
+      // their own lesson/assessment (athlete_id) or events they signed up for.
+      const [{ data: ownFacilityToday }, { data: ownFacilityMasters }, { data: signups }] = await Promise.all([
+        supabase
+          .from('facility_events')
+          .select('*')
+          .eq('athlete_id', userId)
+          .eq('is_recurring', false)
+          .is('recurrence_parent_id', null)
+          .eq('event_date', today),
+        supabase
+          .from('facility_events')
+          .select('*')
+          .eq('athlete_id', userId)
+          .eq('is_recurring', true)
+          .is('recurrence_parent_id', null),
+        supabase
+          .from('event_signups')
+          .select('event_id, facility_events:event_id(*)')
+          .eq('user_id', userId)
+          .eq('event_date', today),
+      ]);
 
-      // Fetch recurring facility events that might apply today
-      const { data: facilityMasters } = await supabase
-        .from('facility_events')
-        .select('*')
-        .eq('is_recurring', true)
-        .is('recurrence_parent_id', null);
-
-      const todayFacility = [...(facilityNonRecurring || [])];
-      (facilityMasters || []).forEach(master => {
+      const todayFacility = [...(ownFacilityToday || [])];
+      (ownFacilityMasters || []).forEach(master => {
         const masterDate = new Date(master.event_date + 'T00:00:00');
         const todayDate = new Date(today + 'T00:00:00');
         if (todayDate >= masterDate) {
@@ -91,6 +99,14 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
               todayFacility.push({ ...master, event_date: today });
             }
           }
+        }
+      });
+      const seenIds = new Set(todayFacility.map(e => e.id));
+      (signups || []).forEach(s => {
+        const ev = s.facility_events;
+        if (ev && !seenIds.has(ev.id)) {
+          todayFacility.push({ ...ev, event_date: today });
+          seenIds.add(ev.id);
         }
       });
 
