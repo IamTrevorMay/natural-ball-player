@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient';
+import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
@@ -239,10 +239,46 @@ function LoginPage({ onLogin }) {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
+  const [showSignup, setShowSignup] = useState(false);
+  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '' });
+  const [signupLoading, setSignupLoading] = useState(false);
+  const [signupSent, setSignupSent] = useState(false);
+  const [signupError, setSignupError] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onLogin(email, password);
+  };
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    setSignupError('');
+    setSignupLoading(true);
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify(signup),
+      });
+      const result = await res.json();
+      if (!res.ok || result.error) throw new Error(result.error || 'Could not create account.');
+      setSignupSent(true);
+    } catch (err) {
+      setSignupError(err.message);
+    } finally {
+      setSignupLoading(false);
+    }
+  };
+
+  const resetSignup = () => {
+    setShowSignup(false);
+    setSignupSent(false);
+    setSignupError('');
+    setSignup({ full_name: '', email: '', phone: '', password: '' });
   };
 
   const handleForgotPassword = async (e) => {
@@ -268,7 +304,83 @@ function LoginPage({ onLogin }) {
           <p className="text-gray-600 mt-2">Training Portal</p>
         </div>
 
-        {showForgot ? (
+        {showSignup ? (
+          signupSent ? (
+            <div className="text-center space-y-4">
+              <Mail size={40} className="mx-auto text-blue-500" />
+              <h2 className="text-lg font-semibold text-gray-900">Almost there!</h2>
+              <p className="text-sm text-gray-600">We sent a confirmation link to <strong>{signup.email}</strong>. Click it to activate your account, then sign in.</p>
+              <button
+                onClick={resetSignup}
+                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSignup} className="space-y-4">
+              <button
+                type="button"
+                onClick={resetSignup}
+                className="flex items-center space-x-1 text-sm text-blue-600 hover:text-blue-800"
+              >
+                <ArrowLeft size={16} />
+                <span>Back to Sign In</span>
+              </button>
+              <h2 className="text-lg font-semibold text-gray-900">Create Account</h2>
+              <p className="text-sm text-gray-600">New to NBP? Create your athlete account. A coach will get you set up after you confirm your email.</p>
+              {signupError && <p className="text-sm text-red-600">{signupError}</p>}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                <input
+                  type="text"
+                  value={signup.full_name}
+                  onChange={(e) => setSignup(s => ({ ...s, full_name: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                <input
+                  type="email"
+                  value={signup.email}
+                  onChange={(e) => setSignup(s => ({ ...s, email: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Phone <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input
+                  type="tel"
+                  value={signup.phone}
+                  onChange={(e) => setSignup(s => ({ ...s, phone: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <input
+                  type="password"
+                  value={signup.password}
+                  onChange={(e) => setSignup(s => ({ ...s, password: e.target.value }))}
+                  minLength={6}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+                <p className="text-xs text-gray-400 mt-1">At least 6 characters.</p>
+              </div>
+              <button
+                type="submit"
+                disabled={signupLoading}
+                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
+              >
+                {signupLoading ? 'Creating...' : 'Create Account'}
+              </button>
+            </form>
+          )
+        ) : showForgot ? (
           forgotSent ? (
             <div className="text-center space-y-4">
               <Mail size={40} className="mx-auto text-blue-500" />
@@ -347,6 +459,16 @@ function LoginPage({ onLogin }) {
                 className="text-sm text-blue-600 hover:text-blue-800"
               >
                 Forgot Password?
+              </button>
+            </div>
+            <div className="text-center border-t border-gray-100 pt-4">
+              <span className="text-sm text-gray-500">New here? </span>
+              <button
+                type="button"
+                onClick={() => setShowSignup(true)}
+                className="text-sm font-medium text-blue-600 hover:text-blue-800"
+              >
+                Create an account
               </button>
             </div>
           </form>

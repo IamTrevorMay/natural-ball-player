@@ -30,7 +30,7 @@ const PROFILE_TABS = [
   { key: 'programming', label: 'Programming', roles: ['admin', 'coach'] },
   { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
-  { key: 'whoop', label: 'Whoop' },
+  { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
   { key: 'hittrax', label: 'Hittrax' },
   { key: 'assessment', label: 'Assessment' },
   { key: 'armcare', label: 'Arm Care' },
@@ -159,6 +159,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeProfileTab, setActiveProfileTab] = useState('general');
+  const [viewProgram, setViewProgram] = useState(null); // { id, name } — read-only program viewer
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
   const [discountCodes, setDiscountCodes] = useState([]);
@@ -1501,6 +1502,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           <div className="border-b border-gray-200 mb-6 -mx-2 px-2">
             <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
               {PROFILE_TABS.filter(tab => {
+                // Players get a read-only Programming tab on their OWN profile so they can
+                // see what's programmed for them (#153). Staff keep it via tab.roles below.
+                if (tab.key === 'programming' && userRole === 'player') return loggedInUserId === userId;
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
                 return true;
@@ -2870,10 +2874,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   ) : (
                     <div className="space-y-2">
                       {activePrograms.map(a => (
-                        <div key={a.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => a.training_programs?.id && setViewProgram({ id: a.training_programs.id, name: a.training_programs.name })}
+                          disabled={!a.training_programs?.id}
+                          className="w-full text-left border border-gray-200 rounded-lg p-3 bg-white hover:border-blue-300 hover:bg-blue-50/40 transition disabled:hover:bg-white disabled:hover:border-gray-200"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <div className="font-medium text-gray-900">{a.training_programs?.name || 'Untitled program'}</div>
+                              <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                                {a.training_programs?.name || 'Untitled program'}
+                                {a.training_programs?.id && <Eye size={14} className="text-gray-400 flex-shrink-0" />}
+                              </div>
                               {a.training_programs?.description && <div className="text-xs text-gray-500 mt-0.5">{a.training_programs.description}</div>}
                             </div>
                             <div className="text-right text-xs text-gray-500 flex-shrink-0">
@@ -2881,7 +2894,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               {a.team_id && <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Team</div>}
                             </div>
                           </div>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   )}
@@ -2945,9 +2958,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     <h4 className="text-sm font-semibold text-gray-500 mb-2 uppercase tracking-wide">Past Programs</h4>
                     <div className="space-y-1.5">
                       {pastPrograms.map(a => (
-                        <div key={a.id} className="text-xs text-gray-500 px-3 py-1.5 border border-gray-100 rounded bg-gray-50">
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => a.training_programs?.id && setViewProgram({ id: a.training_programs.id, name: a.training_programs.name })}
+                          disabled={!a.training_programs?.id}
+                          className="w-full text-left text-xs text-gray-500 px-3 py-1.5 border border-gray-100 rounded bg-gray-50 hover:bg-gray-100 transition disabled:hover:bg-gray-50"
+                        >
                           {a.training_programs?.name || 'Untitled'} — {fmtDate(a.start_date)} to {fmtDate(a.end_date)}
-                        </div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -3369,6 +3388,125 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           onSubmitted={() => { fetchAssessmentData(); setAssessmentFormTemplate(null); }}
         />
       )}
+
+      {viewProgram && (
+        <ProgramViewerModal
+          programId={viewProgram.id}
+          programName={viewProgram.name}
+          onClose={() => setViewProgram(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Read-only viewer for a training program: shows each day's exercises. Used by players
+// (and staff) to view what's programmed for them without any edit controls (#153).
+function ProgramViewerModal({ programId, programName, onClose }) {
+  const [days, setDays] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      const { data: dayRows } = await supabase
+        .from('training_days')
+        .select('id, day_number, title, notes')
+        .eq('program_id', programId)
+        .order('day_number', { ascending: true });
+      const dayList = dayRows || [];
+      const dayIds = dayList.map(d => d.id);
+      let exRows = [];
+      if (dayIds.length > 0) {
+        const { data: ex } = await supabase
+          .from('training_exercises')
+          .select('id, day_id, category, name, sets, reps, weight, rest, load, video_url, sort_order')
+          .in('day_id', dayIds)
+          .order('sort_order', { ascending: true });
+        exRows = ex || [];
+      }
+      const byDay = dayList.map(d => ({
+        ...d,
+        exercises: exRows.filter(e => e.day_id === d.id),
+      }));
+      if (!cancelled) { setDays(byDay); setLoading(false); }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [programId]);
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-5 flex items-start justify-between flex-shrink-0">
+          <div className="flex items-center space-x-3 min-w-0">
+            <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
+              <ClipboardList size={22} className="text-orange-600" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold text-gray-900 truncate">{programName || 'Program'}</h2>
+              <div className="text-xs text-gray-500 mt-0.5">View only</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+            <X size={22} />
+          </button>
+        </div>
+
+        <div className="p-5 overflow-y-auto flex-1">
+          {loading ? (
+            <div className="text-center py-10 text-gray-500 text-sm">Loading program...</div>
+          ) : days.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 text-sm">This program has no days yet.</div>
+          ) : (
+            days.map(day => (
+              <div key={day.id} className="mb-6">
+                <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-1">
+                  {day.title || `Day ${day.day_number}`}
+                </h3>
+                {day.notes && <div className="text-sm text-gray-600 mb-2 whitespace-pre-wrap">{day.notes}</div>}
+                {day.exercises.length === 0 ? (
+                  <div className="text-xs text-gray-400 py-2">No exercises.</div>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                          <th className="px-3 py-2">Exercise</th>
+                          <th className="px-3 py-2 w-14 text-center">Sets</th>
+                          <th className="px-3 py-2 w-16 text-center">Reps</th>
+                          <th className="px-3 py-2 w-20 text-center">Load</th>
+                          <th className="px-3 py-2 w-16 text-center">Rest</th>
+                          <th className="px-3 py-2 w-12 text-center">Video</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {day.exercises.map(ex => (
+                          <tr key={ex.id}>
+                            <td className="px-3 py-2 text-gray-900">{ex.name}</td>
+                            <td className="px-3 py-2 text-center text-gray-600">{ex.sets || '—'}</td>
+                            <td className="px-3 py-2 text-center text-gray-600">{ex.reps || '—'}</td>
+                            <td className="px-3 py-2 text-center text-gray-600">{ex.load || ex.weight || '—'}</td>
+                            <td className="px-3 py-2 text-center text-gray-600">{ex.rest || '—'}</td>
+                            <td className="px-3 py-2 text-center">
+                              {ex.video_url ? (
+                                <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 inline-flex justify-center">
+                                  <ExternalLink size={15} />
+                                </a>
+                              ) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }
