@@ -27,7 +27,7 @@ export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
       setLoading(true);
       const [tplRes, progRes, mpRes, mealRes] = await Promise.all([
         supabase.from('workout_templates').select('id, name, folder, program, notes').order('name'),
-        supabase.from('training_programs').select('id, name, description, duration_weeks').order('name'),
+        supabase.from('training_programs').select('id, name, description, duration_weeks').order('created_at'), // build order, not alphabetical (#158)
         supabase.from('meal_plans').select('id, name, description').order('name'),
         supabase.from('meals').select('id, name, meal_type, calories').order('name'),
       ]);

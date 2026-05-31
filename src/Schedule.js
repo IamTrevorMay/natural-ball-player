@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy } from 'lucide-react';
-import { fmtLocalDate, expandRecurringEvents } from './scheduleUtils';
+import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
@@ -177,11 +177,12 @@ export default function Schedule({ userId, userRole }) {
     let query = supabase
       .from('users')
       .select(`
-        id, 
+        id,
         full_name,
         team_members(team_id, teams(name))
       `)
-      .or('role.eq.player,secondary_role.eq.player')
+      // Include everyone (players, coaches, interns, admins) so staff can be programmed
+      // just like athletes (#156). Coach view is still scoped to their teams below.
       .order('full_name');
 
     // If coach, only show players from their teams
@@ -210,10 +211,7 @@ export default function Schedule({ userId, userRole }) {
   const fetchTeamEvents = async () => {
     if (!selectedTeam) return;
 
-    const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-    const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = fmtLocalDate(startOfMonth);
-    const endStr = fmtLocalDate(endOfMonth);
+    const { startStr, endStr } = monthWeekRange(selectedDate);
 
     // Fetch team members so we can also pull their individual events
     const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', selectedTeam);
@@ -243,10 +241,7 @@ export default function Schedule({ userId, userRole }) {
     const ids = selectedPlayers.length > 0 ? selectedPlayers : (selectedPlayer ? [selectedPlayer] : []);
     if (ids.length === 0) { setEvents([]); return; }
 
-    const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-    const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = fmtLocalDate(startOfMonth);
-    const endStr = fmtLocalDate(endOfMonth);
+    const { rangeStart, rangeEnd, startStr, endStr } = monthWeekRange(selectedDate);
 
     const { data: tmRows } = await supabase.from('team_members').select('team_id').in('user_id', ids);
     const playerTeamIds = Array.from(new Set((tmRows || []).map(r => r.team_id).filter(Boolean)));
@@ -264,15 +259,12 @@ export default function Schedule({ userId, userRole }) {
 
     const directIds = new Set((data || []).map(e => e.id));
     const teamOnly = (teamEv || []).filter(e => !directIds.has(e.id));
-    const mealEvents = expandMealPlanAssignments(mpa || [], startOfMonth, endOfMonth);
+    const mealEvents = expandMealPlanAssignments(mpa || [], rangeStart, rangeEnd);
     setEvents([...(data || []), ...teamOnly, ...mealEvents]);
   };
 
   const fetchMyScheduleEvents = async () => {
-    const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-    const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = fmtLocalDate(startOfMonth);
-    const endStr = fmtLocalDate(endOfMonth);
+    const { rangeStart, rangeEnd, startStr, endStr } = monthWeekRange(selectedDate);
 
     // Fetch schedule events directly assigned to this player
     const { data, error: evErr } = await supabase.from('schedule_events').select('*')
@@ -306,7 +298,7 @@ export default function Schedule({ userId, userRole }) {
     }
 
     const allMpa = [...(directMpa || []), ...teamMpa];
-    const mealEvents = expandMealPlanAssignments(allMpa, startOfMonth, endOfMonth);
+    const mealEvents = expandMealPlanAssignments(allMpa, rangeStart, rangeEnd);
     setMyScheduleEvents([...(data || []), ...teamEvents, ...mealEvents]);
   };
 
@@ -2182,7 +2174,7 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
     const { data } = await supabase
       .from('training_programs')
       .select('id, name, description')
-      .order('name');
+      .order('created_at'); // build order, not alphabetical (#158)
     setTrainingPrograms(data || []);
   };
 

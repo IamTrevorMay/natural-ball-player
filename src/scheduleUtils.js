@@ -3,6 +3,23 @@
 export const fmtLocalDate = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+// Date range covering the calendar month of `selectedDate`, widened to include the
+// full Sun–Sat week it sits in. Ensures week-view fetches don't drop days that fall
+// in the adjacent month when a week straddles a month boundary (#157). In month view
+// the week is inside the month, so the range is just the month.
+export function monthWeekRange(selectedDate) {
+  const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+  const startOfWeek = new Date(selectedDate);
+  startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  const rangeStart = startOfWeek < startOfMonth ? startOfWeek : startOfMonth;
+  const rangeEnd = endOfWeek > endOfMonth ? endOfWeek : endOfMonth;
+  return { rangeStart, rangeEnd, startStr: fmtLocalDate(rangeStart), endStr: fmtLocalDate(rangeEnd) };
+}
+
 export function generateOccurrenceDates(startDate, rule, rangeStart, rangeEnd) {
   const dates = [];
   if (!rule || !rule.freq) return dates;
