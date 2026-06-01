@@ -321,10 +321,7 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const fetchFacilityEvents = async () => {
-    const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-    const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
-    const startStr = fmtLocalDate(startOfMonth);
-    const endStr = fmtLocalDate(endOfMonth);
+    const { rangeStart, rangeEnd, startStr, endStr } = monthWeekRange(selectedDate);
     const facSelect = '*, athlete:athlete_id(full_name), coach:coach_id(full_name)';
     let nrQuery = supabase.from('facility_events').select(facSelect).eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
     let masterQuery = supabase.from('facility_events').select(facSelect).eq('is_recurring', true).is('recurrence_parent_id', null);
@@ -347,7 +344,7 @@ export default function Schedule({ userId, userRole }) {
     const { data: nonRecurring } = await nrQuery;
     const { data: masters } = await masterQuery;
     const { data: exceptions } = await exceptionsQuery;
-    const expanded = expandRecurringEvents(masters || [], exceptions || [], startOfMonth, endOfMonth);
+    const expanded = expandRecurringEvents(masters || [], exceptions || [], rangeStart, rangeEnd);
     let combined = [...(nonRecurring || []), ...expanded];
     if (restrictToPlayer && signedUpIds.size > 0) {
       const haveIds = new Set(combined.map(e => e.id));

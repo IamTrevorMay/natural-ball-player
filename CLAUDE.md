@@ -27,6 +27,7 @@ When creating new tables:
 - Trevor prefers batched feature requests and "commit push deploy" as a single flow
 - Build must pass (`npx react-scripts build`) before committing
 - Vercel auto-deploys from main branch on push
+- **Before implementing any suggested change**, ask clarifying questions using the AskUserQuestion multiple-choice selector before starting work
 
 ## Database Tables (notable)
 - `users` — core user table (id, email, full_name, role, phone, height, weight, avatar_url)
