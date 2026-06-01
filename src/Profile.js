@@ -189,6 +189,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [medicalHistory, setMedicalHistory] = useState(null);
   const [showMedicalForm, setShowMedicalForm] = useState(false);
   const [expandedSubmission, setExpandedSubmission] = useState(null);
+  const [ageGroupAverages, setAgeGroupAverages] = useState({});
+  const [ageGroupLoading, setAgeGroupLoading] = useState({});
   const [assessmentFormTemplate, setAssessmentFormTemplate] = useState(null);
   const [ptVisits, setPtVisits] = useState([]);
   const [editingPtVisitId, setEditingPtVisitId] = useState(null);
@@ -1228,6 +1230,123 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     }
   };
 
+  const getAgeBracket = (dob) => {
+    if (!dob) return null;
+    const age = Math.floor((new Date() - new Date(dob + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000));
+    if (age < 10) return 'Under 10';
+    if (age <= 12) return '10-12';
+    if (age <= 14) return '13-14';
+    if (age <= 16) return '15-16';
+    if (age <= 18) return '17-18';
+    return '19+';
+  };
+
+  const extractNumericAverage = (text) => {
+    if (!text || typeof text !== 'string') return null;
+    const nums = text.match(/-?\d+\.?\d*/g);
+    if (!nums || nums.length === 0) return null;
+    const values = nums.map(Number);
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  };
+
+  const computeAgeGroupAverages = (allSubs, dobMap, currentDob, schema) => {
+    const bracket = getAgeBracket(currentDob);
+    if (!bracket) return null;
+
+    // Dedup to latest submission per player
+    const latestByPlayer = {};
+    for (const sub of allSubs) {
+      const pid = sub.player_id;
+      if (!latestByPlayer[pid] || sub.created_at > latestByPlayer[pid].created_at) {
+        latestByPlayer[pid] = sub;
+      }
+    }
+
+    // Filter to same bracket
+    const inBracket = Object.values(latestByPlayer).filter(sub => {
+      const dob = dobMap[sub.player_id];
+      return dob && getAgeBracket(dob) === bracket;
+    });
+
+    if (inBracket.length < 2) return null;
+
+    // Compute per-element averages
+    const averages = {};
+    for (const el of schema) {
+      if (el.type === 'combo_box' || el.type === 'date') continue;
+
+      if (el.type === 'table') {
+        const tableAvg = {};
+        let hasAny = false;
+        for (const row of (el.rows || [])) {
+          tableAvg[row] = {};
+          for (const col of (el.columns || [])) {
+            const vals = [];
+            for (const sub of inBracket) {
+              const cellVal = sub.responses?.[el.id]?.[row]?.[col];
+              const num = extractNumericAverage(String(cellVal || ''));
+              if (num !== null) vals.push(num);
+            }
+            if (vals.length >= 2) {
+              tableAvg[row][col] = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+              hasAny = true;
+            }
+          }
+        }
+        if (hasAny) averages[el.id] = tableAvg;
+      } else {
+        const vals = [];
+        for (const sub of inBracket) {
+          const raw = sub.responses?.[el.id];
+          const num = extractNumericAverage(String(raw || ''));
+          if (num !== null) vals.push(num);
+        }
+        if (vals.length >= 2) {
+          averages[el.id] = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+        }
+      }
+    }
+
+    return { bracket, averages, sampleSize: inBracket.length };
+  };
+
+  const fetchAgeGroupAverages = async (templateId, schema) => {
+    if (ageGroupAverages[templateId] !== undefined || ageGroupLoading[templateId]) return;
+    if (!userData?.date_of_birth) return;
+
+    setAgeGroupLoading(prev => ({ ...prev, [templateId]: true }));
+    try {
+      const { data: allSubs } = await supabase
+        .from('assessment_submissions')
+        .select('player_id, responses, created_at')
+        .eq('template_id', templateId);
+
+      if (!allSubs || allSubs.length === 0) {
+        setAgeGroupAverages(prev => ({ ...prev, [templateId]: null }));
+        return;
+      }
+
+      const playerIds = [...new Set(allSubs.map(s => s.player_id))];
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, date_of_birth')
+        .in('id', playerIds);
+
+      const dobMap = {};
+      for (const u of (users || [])) {
+        if (u.date_of_birth) dobMap[u.id] = u.date_of_birth;
+      }
+
+      const result = computeAgeGroupAverages(allSubs, dobMap, userData.date_of_birth, schema);
+      setAgeGroupAverages(prev => ({ ...prev, [templateId]: result }));
+    } catch (error) {
+      console.error('Error fetching age group averages:', error);
+      setAgeGroupAverages(prev => ({ ...prev, [templateId]: null }));
+    } finally {
+      setAgeGroupLoading(prev => ({ ...prev, [templateId]: false }));
+    }
+  };
+
   const addRecruitmentTeam = async () => {
     try {
       const { data, error } = await supabase
@@ -1718,7 +1837,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               )}
                               {latestSub && (
                                 <button
-                                  onClick={() => setExpandedSubmission(expandedSubmission === latestSub.id ? null : latestSub.id)}
+                                  onClick={() => {
+                                    const expanding = expandedSubmission !== latestSub.id;
+                                    setExpandedSubmission(expanding ? latestSub.id : null);
+                                    if (expanding) fetchAgeGroupAverages(latestSub.template_id, latestSub.assessment_templates?.schema || []);
+                                  }}
                                   className="text-sm text-gray-500 hover:text-gray-700 font-medium flex items-center space-x-1"
                                 >
                                   <Eye size={14} />
@@ -1732,7 +1855,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               <div className="text-xs text-gray-500 mb-3">
                                 {latestSub.assessment_date} &middot; Assessed by {latestSub.assessor?.full_name || 'Unknown'}
                               </div>
-                              <SubmissionView submission={latestSub} />
+                              {ageGroupAverages[latestSub.template_id] && (
+                                <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded px-3 py-1.5 mb-3">
+                                  Showing averages for age group {ageGroupAverages[latestSub.template_id].bracket} (n={ageGroupAverages[latestSub.template_id].sampleSize})
+                                </p>
+                              )}
+                              <SubmissionView submission={latestSub} ageGroupData={ageGroupAverages[latestSub.template_id]} />
                             </div>
                           )}
                         </div>
@@ -1753,7 +1881,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     {assessmentSubmissions.map(sub => (
                       <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
                         <button
-                          onClick={() => setExpandedSubmission(expandedSubmission === sub.id ? null : sub.id)}
+                          onClick={() => {
+                            const expanding = expandedSubmission !== sub.id;
+                            setExpandedSubmission(expanding ? sub.id : null);
+                            if (expanding) fetchAgeGroupAverages(sub.template_id, sub.assessment_templates?.schema || []);
+                          }}
                           className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left"
                         >
                           <div className="flex items-center space-x-3">
@@ -1769,7 +1901,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         </button>
                         {expandedSubmission === sub.id && (
                           <div className="border-t border-gray-200 p-4 bg-gray-50">
-                            <SubmissionView submission={sub} />
+                            {ageGroupAverages[sub.template_id] && (
+                              <p className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded px-3 py-1.5 mb-3">
+                                Showing averages for age group {ageGroupAverages[sub.template_id].bracket} (n={ageGroupAverages[sub.template_id].sampleSize})
+                              </p>
+                            )}
+                            <SubmissionView submission={sub} ageGroupData={ageGroupAverages[sub.template_id]} />
                           </div>
                         )}
                       </div>
@@ -3514,9 +3651,11 @@ function ProgramViewerModal({ programId, programName, onClose }) {
   );
 }
 
-function SubmissionView({ submission }) {
+function SubmissionView({ submission, ageGroupData }) {
   const schema = submission.assessment_templates?.schema || [];
   const responses = submission.responses || {};
+  const avg = ageGroupData?.averages || {};
+  const bracket = ageGroupData?.bracket;
 
   if (schema.length === 0) {
     return <p className="text-sm text-gray-500 italic">No template schema available.</p>;
@@ -3528,7 +3667,10 @@ function SubmissionView({ submission }) {
         <div key={el.id} className="space-y-1">
           <label className="block text-xs font-semibold text-gray-700">{el.label || el.type}</label>
           {(el.type === 'text_field' || el.type === 'text_area' || el.type === 'notes') && (
-            <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{responses[el.id] || <span className="text-gray-400 italic">No response</span>}</p>
+            <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">
+              {responses[el.id] || <span className="text-gray-400 italic">No response</span>}
+              {avg[el.id] != null && <span className="text-xs text-blue-500 ml-2">(Avg {bracket}: {avg[el.id]})</span>}
+            </p>
           )}
           {el.type === 'combo_box' && (
             <p className="text-sm text-gray-800 bg-white px-3 py-2 rounded border border-gray-200">{responses[el.id] || <span className="text-gray-400 italic">No selection</span>}</p>
@@ -3551,11 +3693,15 @@ function SubmissionView({ submission }) {
                   {(el.rows || []).map(row => (
                     <tr key={row}>
                       <td className="border border-gray-300 px-3 py-1.5 font-medium text-gray-700 bg-gray-50 text-xs">{row}</td>
-                      {(el.columns || []).map(col => (
-                        <td key={col} className="border border-gray-300 px-3 py-1.5 text-gray-700 text-xs">
-                          {responses[el.id]?.[row]?.[col] || '—'}
-                        </td>
-                      ))}
+                      {(el.columns || []).map(col => {
+                        const cellAvg = avg[el.id]?.[row]?.[col];
+                        return (
+                          <td key={col} className="border border-gray-300 px-3 py-1.5 text-gray-700 text-xs">
+                            <div>{responses[el.id]?.[row]?.[col] || '—'}</div>
+                            {cellAvg != null && <div className="text-[10px] text-blue-500">Avg: {cellAvg}</div>}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>
