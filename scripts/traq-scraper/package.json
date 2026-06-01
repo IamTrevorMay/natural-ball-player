@@ -4,9 +4,12 @@
   "private": true,
   "description": "Scrape TRAQ assessment data to CSV for NBP import",
   "scripts": {
-    "scrape": "node scrape.js"
+    "scrape": "node scrape.js",
+    "import": "node import.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "csv-parse": "^5.6.0",
     "csv-stringify": "^6.5.2",
     "playwright": "^1.52.0"
   }
