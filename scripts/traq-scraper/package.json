@@ -1,0 +1,13 @@
+{
+  "name": "traq-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scrape TRAQ assessment data to CSV for NBP import",
+  "scripts": {
+    "scrape": "node scrape.js"
+  },
+  "dependencies": {
+    "csv-stringify": "^6.5.2",
+    "playwright": "^1.52.0"
+  }
+}
