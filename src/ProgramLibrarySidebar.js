@@ -12,6 +12,36 @@ function getWorkoutCategory(title) {
   return 'General';
 }
 
+// Order templates by training-cycle logic instead of alphabetically (#158):
+// Month (M#) → Week (W#) → day type (Lower, Upper, DE Lower, DE Upper).
+// Templates named like "HS Lower M1W1" / "HS DE Upper M2W3" follow the lifting
+// cycle; ones that don't (drills, mobility, meals) fall back to build order.
+function programOrderKey(name) {
+  const n = (name || '').toLowerCase();
+  const mw = n.match(/m(\d+)\s*w(\d+)/);
+  const month = mw ? parseInt(mw[1], 10) : Infinity;
+  const week = mw ? parseInt(mw[2], 10) : Infinity;
+  const isDE = /\bde\b/.test(n);
+  const isLower = n.includes('lower');
+  const isUpper = n.includes('upper');
+  let dayRank = 9; // non lower/upper templates sort after the four lifting days
+  if (isLower && !isDE) dayRank = 0;
+  else if (isUpper && !isDE) dayRank = 1;
+  else if (isLower && isDE) dayRank = 2;
+  else if (isUpper && isDE) dayRank = 3;
+  return { month, week, dayRank };
+}
+
+export function compareTemplates(a, b) {
+  const ka = programOrderKey(a.name), kb = programOrderKey(b.name);
+  if (ka.month !== kb.month) return ka.month - kb.month;
+  if (ka.week !== kb.week) return ka.week - kb.week;
+  if (ka.dayRank !== kb.dayRank) return ka.dayRank - kb.dayRank;
+  const ca = a.created_at || '', cb = b.created_at || ''; // build order, then name
+  if (ca !== cb) return ca < cb ? -1 : 1;
+  return (a.name || '').localeCompare(b.name || '');
+}
+
 export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
   const [templates, setTemplates] = useState([]);
   const [programs, setPrograms] = useState([]);
@@ -26,7 +56,7 @@ export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
     (async () => {
       setLoading(true);
       const [tplRes, progRes, mpRes, mealRes] = await Promise.all([
-        supabase.from('workout_templates').select('id, name, folder, program, notes').order('name'),
+        supabase.from('workout_templates').select('id, name, folder, program, notes, created_at').order('created_at'),
         supabase.from('training_programs').select('id, name, description, duration_weeks').order('created_at'), // build order, not alphabetical (#158)
         supabase.from('meal_plans').select('id, name, description').order('name'),
         supabase.from('meals').select('id, name, meal_type, calories').order('name'),
@@ -52,6 +82,8 @@ export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
       if (!tplByFolder[folder]) tplByFolder[folder] = [];
       tplByFolder[folder].push(t);
     });
+    // Sort each folder by training-cycle order (month → week → day type), not alphabetically (#158)
+    Object.values(tplByFolder).forEach((arr) => arr.sort(compareTemplates));
 
     const mealsByType = {};
     meals.forEach((m) => {

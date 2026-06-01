@@ -5,7 +5,7 @@ import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleU
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
-import ProgramLibrarySidebar from './ProgramLibrarySidebar';
+import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -208,6 +208,26 @@ export default function Schedule({ userId, userRole }) {
     setPlayers(data || []);
   };
 
+  // Fetch schedule events for a set of players, chunked by member count.
+  // A single Supabase query caps at 1000 rows, and a very large .in() list blows the
+  // request URL length limit — both silently drop team-programmed workouts on big
+  // rosters, so mass-programmed events "don't show" (#155). Chunking keeps each query
+  // small enough to return every row and stay under the URL limit.
+  const fetchEventsForPlayers = async (playerIds, startStr, endStr) => {
+    const CHUNK = 25;
+    const all = [];
+    for (let i = 0; i < playerIds.length; i += CHUNK) {
+      const chunk = playerIds.slice(i, i + CHUNK);
+      const { data, error } = await supabase.from('schedule_events').select('*')
+        .in('player_id', chunk)
+        .gte('event_date', startStr).lte('event_date', endStr)
+        .order('event_date');
+      if (error) { console.error('Error fetching player schedule events:', error); continue; }
+      all.push(...(data || []));
+    }
+    return all;
+  };
+
   const fetchTeamEvents = async () => {
     if (!selectedTeam) return;
 
@@ -217,15 +237,13 @@ export default function Schedule({ userId, userRole }) {
     const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', selectedTeam);
     const memberIds = (members || []).map(m => m.user_id).filter(Boolean);
 
-    const [{ data: teamData }, { data: playerData }] = await Promise.all([
+    const [{ data: teamData }, playerData] = await Promise.all([
       supabase.from('schedule_events').select('*')
         .contains('team_ids', [selectedTeam])
         .gte('event_date', startStr).lte('event_date', endStr),
       memberIds.length > 0
-        ? supabase.from('schedule_events').select('*')
-            .in('player_id', memberIds)
-            .gte('event_date', startStr).lte('event_date', endStr)
-        : Promise.resolve({ data: [] }),
+        ? fetchEventsForPlayers(memberIds, startStr, endStr)
+        : Promise.resolve([]),
     ]);
 
     // Merge and dedupe by id
@@ -1031,13 +1049,17 @@ export default function Schedule({ userId, userRole }) {
                 )}
                 {viewMode !== 'lanes' && (
                 <div className="flex items-center justify-between">
+                  {/* When a coach is selected we always render CoachSlotsWeekView (a week
+                      grid), so navigation must move by week regardless of viewMode —
+                      otherwise players jump a whole month at a time and can't browse
+                      availability to book (#152). */}
                   <button onClick={() => {
-                    if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() - 7); setSelectedDate(d); }
+                    if (viewMode === 'week' || selectedCoach) { const d = new Date(selectedDate); d.setDate(d.getDate() - 7); setSelectedDate(d); }
                     else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
                   }} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft size={20} /></button>
-                  <h3 className="text-xl font-semibold text-gray-900">{viewMode === 'week' ? getWeekRangeLabel(selectedDate) : selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+                  <h3 className="text-xl font-semibold text-gray-900">{(viewMode === 'week' || selectedCoach) ? getWeekRangeLabel(selectedDate) : selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
                   <button onClick={() => {
-                    if (viewMode === 'week') { const d = new Date(selectedDate); d.setDate(d.getDate() + 7); setSelectedDate(d); }
+                    if (viewMode === 'week' || selectedCoach) { const d = new Date(selectedDate); d.setDate(d.getDate() + 7); setSelectedDate(d); }
                     else setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
                   }} className="p-2 hover:bg-gray-100 rounded-lg transition"><ChevronRight size={20} /></button>
                 </div>
@@ -1356,6 +1378,12 @@ export default function Schedule({ userId, userRole }) {
       )}
 
       {/* Event Detail/Edit Modal */}
+      </>}
+
+      {/* Event detail modal — rendered at top level so it works in every view
+          (team/player AND the player's My Schedule view). Previously this lived
+          inside the team/player fragment, so players clicking a workout on their
+          own schedule set the state but no modal ever mounted (#153, #159). */}
       {showEventDetail && selectedEvent && (
         selectedEvent.event_type === 'workout' ? (
           <WorkoutDetailModal
@@ -1369,6 +1397,7 @@ export default function Schedule({ userId, userRole }) {
               setShowEventDetail(false);
               setSelectedEvent(null);
               if (view === 'team') fetchTeamEvents();
+              else if (view === 'my-schedule') fetchMyScheduleEvents();
               else fetchPlayerEvents();
             }}
           />
@@ -1384,18 +1413,19 @@ export default function Schedule({ userId, userRole }) {
               setShowEventDetail(false);
               setSelectedEvent(null);
               if (view === 'team') fetchTeamEvents();
+              else if (view === 'my-schedule') fetchMyScheduleEvents();
               else fetchPlayerEvents();
             }}
             onUpdate={() => {
               setShowEventDetail(false);
               setSelectedEvent(null);
               if (view === 'team') fetchTeamEvents();
+              else if (view === 'my-schedule') fetchMyScheduleEvents();
               else fetchPlayerEvents();
             }}
           />
         )
       )}
-      </>}
 
       {/* Facility Event Panels */}
       {showAddFacilityEvent && (
@@ -2160,8 +2190,14 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
     const { data } = await supabase
       .from('workout_templates')
       .select('*')
-      .order('name');
-    setWorkoutTemplates(data || []);
+      .order('created_at');
+    // Group by program, then training-cycle order within each (month → week → day type) (#158)
+    const sorted = (data || []).sort((a, b) => {
+      const pa = a.program || '', pb = b.program || '';
+      if (pa !== pb) return pa.localeCompare(pb);
+      return compareTemplates(a, b);
+    });
+    setWorkoutTemplates(sorted);
   };
 
   useEffect(() => {

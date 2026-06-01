@@ -1505,6 +1505,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 // Players get a read-only Programming tab on their OWN profile so they can
                 // see what's programmed for them (#153). Staff keep it via tab.roles below.
                 if (tab.key === 'programming' && userRole === 'player') return loggedInUserId === userId;
+                // Players can connect their OWN WHOOP on their own profile (#154); the
+                // edge function scopes them to self-access only.
+                if (tab.key === 'whoop' && userRole === 'player') return loggedInUserId === userId;
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
                 return true;

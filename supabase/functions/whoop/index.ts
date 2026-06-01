@@ -558,7 +558,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check role — only admin/coach can use whoop for now
+    // Look up the caller's role. Players may connect and view their OWN WHOOP;
+    // coaches/admins may additionally act on athletes they're authorized for.
+    // Cross-user access is enforced per-action by assertCanTarget below (#154).
     const adminClient = getAdminClient();
     const { data: userData } = await adminClient
       .from("users")
@@ -566,9 +568,9 @@ Deno.serve(async (req) => {
       .eq("id", user.id)
       .single();
 
-    if (!userData || !["admin", "coach"].includes(userData.role)) {
+    if (!userData) {
       return new Response(
-        JSON.stringify({ error: "Whoop is currently available for staff only" }),
+        JSON.stringify({ error: "No user record found" }),
         {
           status: 403,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
