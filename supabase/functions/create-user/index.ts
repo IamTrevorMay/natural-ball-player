@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Only admins can create users
+    // Admins and coaches can create users; coaches are restricted to role='player'
     const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
     const { data: caller, error: roleError } = await serviceClient
       .from("users")
@@ -44,9 +44,9 @@ Deno.serve(async (req) => {
       .eq("id", user.id)
       .single();
 
-    if (roleError || !caller || caller.role !== "admin") {
+    if (roleError || !caller || (caller.role !== "admin" && caller.role !== "coach")) {
       return new Response(
-        JSON.stringify({ error: "Unauthorized: admin only" }),
+        JSON.stringify({ error: "Unauthorized: admin or coach only" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -56,6 +56,13 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ error: "Missing required fields: email, password, full_name, role" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (caller.role === "coach" && role !== "player") {
+      return new Response(
+        JSON.stringify({ error: "Coaches can only create player accounts" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 

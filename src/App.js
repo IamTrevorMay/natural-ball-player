@@ -139,9 +139,24 @@ export default function App() {
   const fetchUserRole = async (userId) => {
     const { data, error } = await supabase
       .from('users')
-      .select('role, secondary_role, full_name, avatar_url')
+      .select('role, secondary_role, full_name, email, avatar_url')
       .eq('id', userId)
       .single();
+
+    const applyUserRow = (row) => {
+      setUserRole(row.role);
+      setSecondaryRole(row.secondary_role || null);
+      // Prefer freshly-fetched full_name; fall back to existing state, then auth
+      // metadata, then email, so we never replace a good name with "User".
+      setUserName((prev) => {
+        const fetched = (row.full_name || '').trim();
+        if (fetched) return fetched;
+        if (prev && prev.trim()) return prev;
+        const meta = row.email || '';
+        return meta;
+      });
+      if (row.avatar_url !== undefined) setUserAvatar(row.avatar_url || null);
+    };
 
     if (error) {
       console.error('Error fetching user role:', error);
@@ -150,24 +165,19 @@ export default function App() {
       if (refreshData?.session) {
         const { data: retryData, error: retryError } = await supabase
           .from('users')
-          .select('role, secondary_role, full_name, avatar_url')
+          .select('role, secondary_role, full_name, email, avatar_url')
           .eq('id', userId)
           .single();
         if (!retryError && retryData) {
-          setUserRole(retryData.role);
-          setSecondaryRole(retryData.secondary_role || null);
-          setUserName(retryData.full_name || '');
-          setUserAvatar(retryData.avatar_url || null);
+          applyUserRow(retryData);
           return;
         }
       }
-      // If refresh also failed, sign out to force re-login
-      await supabase.auth.signOut();
+      // Don't auto sign-out on a transient fetch failure — that would log the
+      // user out mid-session and is the root of issue #164's "logs in then
+      // says User" flicker. Keep prior state; user can manually retry.
     } else {
-      setUserRole(data.role);
-      setSecondaryRole(data.secondary_role || null);
-      setUserName(data.full_name || '');
-      setUserAvatar(data.avatar_url || null);
+      applyUserRow(data);
     }
   };
 

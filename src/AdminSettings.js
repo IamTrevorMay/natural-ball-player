@@ -246,6 +246,7 @@ export default function AdminSettings({ userId, userRole, onNavigateToProfile })
               setShowCreateUser={setShowCreateUser}
               refreshUsers={fetchUsers}
               userId={userId}
+              userRole={userRole}
               onNavigateToProfile={onNavigateToProfile}
             />
           )}
@@ -676,7 +677,7 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 // USERS TAB
 // ============================================
 
-function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId, onNavigateToProfile }) {
+function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId, userRole, onNavigateToProfile }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterRole, setFilterRole] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -774,6 +775,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
       {showCreateUser && (
         <CreateUserModal
           teams={teams}
+          callerRole={userRole}
           onClose={() => setShowCreateUser(false)}
           onSuccess={() => {
             setShowCreateUser(false);
@@ -1248,7 +1250,8 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   );
 }
 
-function CreateUserModal({ teams, onClose, onSuccess }) {
+function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
+  const isCoachCaller = callerRole === 'coach';
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -1430,13 +1433,17 @@ function CreateUserModal({ teams, onClose, onSuccess }) {
               <select
                 value={formData.role}
                 onChange={(e) => setFormData({...formData, role: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={isCoachCaller}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
               >
                 <option value="player">Player</option>
-                <option value="coach">Coach</option>
-                <option value="intern">Intern</option>
-                <option value="admin">Admin</option>
+                {!isCoachCaller && <option value="coach">Coach</option>}
+                {!isCoachCaller && <option value="intern">Intern</option>}
+                {!isCoachCaller && <option value="admin">Admin</option>}
               </select>
+              {isCoachCaller && (
+                <p className="mt-1 text-xs text-gray-500">Coaches can only create player accounts.</p>
+              )}
             </div>
 
             <div>
