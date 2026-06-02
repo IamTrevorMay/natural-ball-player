@@ -1553,18 +1553,18 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
     if (eventType === 'workout') {
       const cat = getWorkoutCategory(typeof event === 'string' ? '' : event?.title);
       switch(cat) {
-        case 'pitching': return 'bg-green-100 text-green-700 border-green-200';
-        case 'hitting': return 'bg-blue-100 text-blue-700 border-blue-200';
-        case 'warmup': return 'bg-purple-100 text-purple-700 border-purple-200';
-        default: return 'bg-orange-100 text-orange-700 border-orange-200';
+        case 'pitching': return 'bg-green-500 text-white border-green-600';
+        case 'hitting': return 'bg-blue-500 text-white border-blue-600';
+        case 'warmup': return 'bg-purple-500 text-white border-purple-600';
+        default: return 'bg-orange-500 text-white border-orange-600';
       }
     }
     switch(eventType) {
-      case 'game': return 'bg-slate-100 text-slate-700 border-slate-200';
-      case 'practice': return 'bg-green-100 text-green-700 border-green-200';
-      case 'tryout': return 'bg-amber-100 text-amber-700 border-amber-200';
-      case 'meal': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-      default: return 'bg-gray-100 text-gray-700 border-gray-200';
+      case 'game': return 'bg-slate-600 text-white border-slate-700';
+      case 'practice': return 'bg-green-500 text-white border-green-600';
+      case 'tryout': return 'bg-amber-500 text-white border-amber-600';
+      case 'meal': return 'bg-yellow-400 text-yellow-900 border-yellow-500';
+      default: return 'bg-gray-500 text-white border-gray-600';
     }
   };
 
@@ -1802,18 +1802,18 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
     if (eventType === 'workout') {
       const cat = getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
       switch(cat) {
-        case 'pitching': return 'border-l-4 border-green-500 bg-green-50';
-        case 'hitting': return 'border-l-4 border-blue-500 bg-blue-50';
-        case 'warmup': return 'border-l-4 border-purple-500 bg-purple-50';
-        default: return 'border-l-4 border-orange-500 bg-orange-50';
+        case 'pitching': return 'border-l-4 border-green-600 bg-green-100';
+        case 'hitting': return 'border-l-4 border-blue-600 bg-blue-100';
+        case 'warmup': return 'border-l-4 border-purple-600 bg-purple-100';
+        default: return 'border-l-4 border-orange-600 bg-orange-100';
       }
     }
     switch(eventType) {
-      case 'game': return 'border-l-4 border-slate-500 bg-slate-50';
-      case 'practice': return 'border-l-4 border-green-500 bg-green-50';
-      case 'tryout': return 'border-l-4 border-amber-500 bg-amber-50';
-      case 'meal': return 'border-l-4 border-yellow-500 bg-yellow-50';
-      default: return 'border-l-4 border-gray-500 bg-gray-50';
+      case 'game': return 'border-l-4 border-slate-600 bg-slate-100';
+      case 'practice': return 'border-l-4 border-green-600 bg-green-100';
+      case 'tryout': return 'border-l-4 border-amber-600 bg-amber-100';
+      case 'meal': return 'border-l-4 border-yellow-600 bg-yellow-100';
+      default: return 'border-l-4 border-gray-600 bg-gray-100';
     }
   };
 
@@ -3553,7 +3553,42 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                         <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide">{label}</h3>
                         <span className="ml-2 text-xs text-gray-400">({exs.length})</span>
                       </div>
-                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="sm:hidden space-y-2">
+                        {exs.map((ex, i) => {
+                          const sr = ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : (ex.sets || ex.reps || '');
+                          const loadVal = ex.load || ex.weight;
+                          const meta = [sr, loadVal, ex.rest].filter(Boolean);
+                          return (
+                            <div key={ex.id || i} className="border border-gray-200 rounded-lg p-3 bg-white">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-start min-w-0 flex-1">
+                                  {ex.super_set && (
+                                    <span className="mr-2 mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase flex-shrink-0">
+                                      {ex.super_set}
+                                    </span>
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-gray-900 break-words">{ex.name}</div>
+                                    {ex.description && <div className="text-xs text-gray-500 mt-0.5 break-words">{ex.description}</div>}
+                                  </div>
+                                </div>
+                                {ex.video_url && (
+                                  <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0" title="Open video">
+                                    <ExternalLink size={12} />
+                                    Video
+                                  </a>
+                                )}
+                              </div>
+                              {meta.length > 0 && (
+                                <div className="mt-2 text-sm text-gray-700 tabular-nums">
+                                  {meta.join(' · ')}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden">
                         <table className="w-full text-sm">
                           <thead className="bg-gray-50">
                             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
