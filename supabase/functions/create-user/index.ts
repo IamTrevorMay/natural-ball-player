@@ -75,6 +75,44 @@ Deno.serve(async (req) => {
     });
 
     if (createError) {
+      // Handle orphan auth users: if the email is already registered in auth
+      // but has no public.users row (issue #166: Rory Swanson — auth account
+      // existed, public.users missing, so search couldn't find him and the
+      // UI re-create attempt failed with "user already exists"), look up the
+      // existing auth user and backfill the public.users row instead of
+      // returning the duplicate-email error.
+      const msg = (createError.message || "").toLowerCase();
+      const looksDup =
+        msg.includes("already") || msg.includes("registered") ||
+        msg.includes("duplicate") || msg.includes("exists");
+
+      if (looksDup) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const { data: page } = await serviceClient.auth.admin.listUsers({ page: 1, perPage: 200 });
+        const existingAuth = (page?.users || []).find(
+          (u: any) => (u.email || "").toLowerCase() === normalizedEmail
+        );
+        if (existingAuth) {
+          const { data: existingPub } = await serviceClient
+            .from("users")
+            .select("id")
+            .eq("id", existingAuth.id)
+            .maybeSingle();
+          if (!existingPub) {
+            // Backfill public row; the downstream client INSERT will then
+            // ON CONFLICT no-op and the caller treats this as a fresh create.
+            return new Response(
+              JSON.stringify({ success: true, user_id: existingAuth.id, backfilled: true }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+          return new Response(
+            JSON.stringify({ error: "A user with this email already exists in the portal." }),
+            { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+
       return new Response(
         JSON.stringify({ error: createError.message }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

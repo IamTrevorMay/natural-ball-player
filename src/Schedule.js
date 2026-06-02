@@ -283,16 +283,27 @@ export default function Schedule({ userId, userRole }) {
 
   const fetchMyScheduleEvents = async () => {
     const { rangeStart, rangeEnd, startStr, endStr } = monthWeekRange(selectedDate);
+    const isCoach = userRole === 'coach' || userRole === 'admin';
 
-    // Fetch schedule events directly assigned to this player
-    const { data, error: evErr } = await supabase.from('schedule_events').select('*')
-      .eq('player_id', userId).gte('event_date', startStr).lte('event_date', endStr);
-    if (evErr) console.error('Error fetching schedule events:', evErr);
+    // Direct per-player events only make sense for players. For coaches/admins
+    // we skip this query entirely so a coach's My Schedule does not pull in
+    // per-athlete rows where player_id happens to equal their user id.
+    let data = [];
+    if (!isCoach) {
+      const { data: directData, error: evErr } = await supabase.from('schedule_events').select('*')
+        .eq('player_id', userId).gte('event_date', startStr).lte('event_date', endStr);
+      if (evErr) console.error('Error fetching schedule events:', evErr);
+      data = directData || [];
+    }
 
-    // Fetch direct meal plan assignments
-    const { data: directMpa, error: mpaErr } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
-      .eq('player_id', userId).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
-    if (mpaErr) console.error('Error fetching meal plan assignments:', mpaErr);
+    // Fetch direct meal plan assignments (player view only)
+    let directMpa = [];
+    if (!isCoach) {
+      const { data: mpa, error: mpaErr } = await supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
+        .eq('player_id', userId).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`);
+      if (mpaErr) console.error('Error fetching meal plan assignments:', mpaErr);
+      directMpa = mpa || [];
+    }
 
     // Resolve team memberships once for both team events and team meal plans
     const { data: myTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
@@ -301,23 +312,30 @@ export default function Schedule({ userId, userRole }) {
     let teamEvents = [];
     let teamMpa = [];
     if (teamIds.length > 0) {
+      // For coaches the team overlap must exclude per-player rows (issue #165):
+      // team programming creates one schedule_events row per athlete with both
+      // player_id set AND team_ids populated, so .overlaps('team_ids', ...)
+      // would otherwise pull every athlete's workout onto the coach calendar.
+      let teamEvQuery = supabase.from('schedule_events').select('*')
+        .overlaps('team_ids', teamIds).gte('event_date', startStr).lte('event_date', endStr);
+      if (isCoach) teamEvQuery = teamEvQuery.is('player_id', null);
+
       const [{ data: tEv, error: tEvErr }, { data: tMpa, error: tErr }] = await Promise.all([
-        supabase.from('schedule_events').select('*')
-          .overlaps('team_ids', teamIds).gte('event_date', startStr).lte('event_date', endStr),
+        teamEvQuery,
         supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
           .in('team_id', teamIds).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`),
       ]);
       if (tEvErr) console.error('Error fetching team schedule events:', tEvErr);
       if (tErr) console.error('Error fetching team meal plan assignments:', tErr);
 
-      const directIds = new Set((data || []).map(e => e.id));
+      const directIds = new Set(data.map(e => e.id));
       teamEvents = (tEv || []).filter(e => !directIds.has(e.id));
       teamMpa = (tMpa || []).map(a => ({ ...a, player_id: userId }));
     }
 
-    const allMpa = [...(directMpa || []), ...teamMpa];
+    const allMpa = [...directMpa, ...teamMpa];
     const mealEvents = expandMealPlanAssignments(allMpa, rangeStart, rangeEnd);
-    setMyScheduleEvents([...(data || []), ...teamEvents, ...mealEvents]);
+    setMyScheduleEvents([...data, ...teamEvents, ...mealEvents]);
   };
 
   const fetchFacilityEvents = async () => {
