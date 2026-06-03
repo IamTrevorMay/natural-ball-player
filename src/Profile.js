@@ -3609,38 +3609,67 @@ function ProgramViewerModal({ programId, programName, onClose }) {
                 {day.exercises.length === 0 ? (
                   <div className="text-xs text-gray-400 py-2">No exercises.</div>
                 ) : (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                          <th className="px-3 py-2">Exercise</th>
-                          <th className="px-3 py-2 w-14 text-center">Sets</th>
-                          <th className="px-3 py-2 w-16 text-center">Reps</th>
-                          <th className="px-3 py-2 w-20 text-center">Load</th>
-                          <th className="px-3 py-2 w-16 text-center">Rest</th>
-                          <th className="px-3 py-2 w-12 text-center">Video</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {day.exercises.map(ex => (
-                          <tr key={ex.id}>
-                            <td className="px-3 py-2 text-gray-900">{ex.name}</td>
-                            <td className="px-3 py-2 text-center text-gray-600">{ex.sets || '—'}</td>
-                            <td className="px-3 py-2 text-center text-gray-600">{ex.reps || '—'}</td>
-                            <td className="px-3 py-2 text-center text-gray-600">{ex.load || ex.weight || '—'}</td>
-                            <td className="px-3 py-2 text-center text-gray-600">{ex.rest || '—'}</td>
-                            <td className="px-3 py-2 text-center">
-                              {ex.video_url ? (
-                                <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 inline-flex justify-center">
-                                  <ExternalLink size={15} />
+                  <>
+                    <div className="sm:hidden space-y-2">
+                      {day.exercises.map(ex => {
+                        const sr = ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : (ex.sets || ex.reps || '');
+                        const loadVal = ex.load || ex.weight;
+                        const meta = [sr, loadVal, ex.rest].filter(Boolean);
+                        return (
+                          <div key={ex.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="font-semibold text-gray-900 break-words min-w-0 flex-1">{ex.name}</div>
+                              {ex.video_url && (
+                                <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0">
+                                  <ExternalLink size={12} />
+                                  Video
                                 </a>
-                              ) : '—'}
-                            </td>
+                              )}
+                            </div>
+                            {meta.length > 0 && (
+                              <div className="mt-2 text-sm text-gray-700 tabular-nums">
+                                {meta.join(' · ')}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50">
+                          <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                            <th className="px-3 py-2">Exercise</th>
+                            <th className="px-3 py-2 w-16 text-center">Sets</th>
+                            <th className="px-3 py-2 w-20 text-center">Reps</th>
+                            <th className="px-3 py-2 w-24 text-center">Load</th>
+                            <th className="px-3 py-2 w-20 text-center">Rest</th>
+                            <th className="px-3 py-2 w-12 text-center">Video</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {day.exercises.map(ex => (
+                            <tr key={ex.id} className="hover:bg-gray-50">
+                              <td className="px-3 py-2 text-gray-900">{ex.name}</td>
+                              <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{ex.sets || '—'}</td>
+                              <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{ex.reps || '—'}</td>
+                              <td className="px-3 py-2 text-center text-gray-700">{ex.load || ex.weight || '—'}</td>
+                              <td className="px-3 py-2 text-center text-gray-700">{ex.rest || '—'}</td>
+                              <td className="px-3 py-2 text-center">
+                                {ex.video_url ? (
+                                  <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 inline-flex justify-center">
+                                    <ExternalLink size={14} />
+                                  </a>
+                                ) : (
+                                  <span className="text-gray-300">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </div>
             ))
