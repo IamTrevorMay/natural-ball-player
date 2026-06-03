@@ -42,6 +42,34 @@ export function compareTemplates(a, b) {
   return (a.name || '').localeCompare(b.name || '');
 }
 
+const FOLDER_COLORS = {
+  // Orange — strength / lifting programs
+  'Body Builder': { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  'College':      { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  'High School':  { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  'Pro':          { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  'Strength':     { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  'Youth':        { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  'Youth Weighted': { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50', border: 'border-orange-200', dot: 'bg-orange-400' },
+  // Purple — recovery / nutrition
+  'Meals':     { bg: 'bg-purple-500', text: 'text-purple-700', light: 'bg-purple-50', border: 'border-purple-200', dot: 'bg-purple-400' },
+  'Recovery':  { bg: 'bg-purple-500', text: 'text-purple-700', light: 'bg-purple-50', border: 'border-purple-200', dot: 'bg-purple-400' },
+  'Rehab':     { bg: 'bg-purple-500', text: 'text-purple-700', light: 'bg-purple-50', border: 'border-purple-200', dot: 'bg-purple-400' },
+  'Warmup':    { bg: 'bg-purple-500', text: 'text-purple-700', light: 'bg-purple-50', border: 'border-purple-200', dot: 'bg-purple-400' },
+  // Green — position-specific / sport skills
+  'Catching':  { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
+  'Football':  { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
+  'Infield':   { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
+  'Outfield':  { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
+  'Pitching':  { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
+  'Submarine': { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
+  // Blue — hitting
+  'Hitting': { bg: 'bg-blue-500', text: 'text-blue-700', light: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-400' },
+  // Yellow — cardio
+  'Cardio': { bg: 'bg-yellow-500', text: 'text-yellow-700', light: 'bg-yellow-50', border: 'border-yellow-200', dot: 'bg-yellow-400' },
+};
+const DEFAULT_FOLDER_COLOR = { bg: 'bg-gray-500', text: 'text-gray-700', light: 'bg-gray-50', border: 'border-gray-200', dot: 'bg-gray-400' };
+
 export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
   const [templates, setTemplates] = useState([]);
   const [programs, setPrograms] = useState([]);
@@ -221,16 +249,18 @@ function SubFolder({ label, count, children }) {
 
 function CategoryFolder({ label, count, children }) {
   const [open, setOpen] = useState(false);
+  const c = FOLDER_COLORS[label] || DEFAULT_FOLDER_COLOR;
   return (
     <div className="ml-4">
-      <button onClick={() => setOpen((s) => !s)} className="w-full px-3 py-1 flex items-center justify-between hover:bg-gray-100 transition">
+      <button onClick={() => setOpen((s) => !s)} className={`w-full px-3 py-1 flex items-center justify-between hover:bg-gray-100 transition rounded ${open ? c.light : ''}`}>
         <div className="flex items-center space-x-1.5">
-          {open ? <ChevronDown size={11} className="text-gray-400" /> : <ChevronRight size={11} className="text-gray-400" />}
-          <span className="text-xs text-gray-600">{label}</span>
+          {open ? <ChevronDown size={11} className={c.text} /> : <ChevronRight size={11} className={c.text} />}
+          <span className={`w-2 h-2 rounded-full ${c.dot} flex-shrink-0`} />
+          <span className={`text-xs font-medium ${c.text}`}>{label}</span>
         </div>
-        <span className="text-[10px] text-gray-400">{count}</span>
+        <span className={`text-[10px] ${c.text} opacity-60`}>{count}</span>
       </button>
-      {open && <div className="ml-5">{children}</div>}
+      {open && <div className={`ml-5 border-l-2 ${c.border}`}>{children}</div>}
     </div>
   );
 }
