@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip, Search } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
@@ -162,6 +162,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [viewProgram, setViewProgram] = useState(null); // { id, name } — read-only program viewer
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
+  const [schools, setSchools] = useState([]);
+  const [schoolContacts, setSchoolContacts] = useState({});
+  const [schoolSearch, setSchoolSearch] = useState('');
+  const [schoolLevelFilter, setSchoolLevelFilter] = useState('all');
+  const [expandedSchool, setExpandedSchool] = useState(null);
+  const [addingSchool, setAddingSchool] = useState(false);
+  const [newSchool, setNewSchool] = useState({ name: '', level: 'D1', state: '', city: '', conference: '' });
+  const [addingContact, setAddingContact] = useState(null);
+  const [newContact, setNewContact] = useState({ name: '', title: '', email: '', phone: '' });
   const [discountCodes, setDiscountCodes] = useState([]);
   const [waiverData, setWaiverData] = useState(null);
   const [contractData, setContractData] = useState(null);
@@ -213,6 +222,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   useEffect(() => {
     fetchUserData();
     fetchRecruitmentTeams();
+    fetchSchools();
     fetchDiscountCodes();
     fetchWaiverData();
     fetchContractData();
@@ -461,6 +471,101 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setRecruitmentTeams(data || []);
     } catch (error) {
       console.error('Error fetching recruitment teams:', error);
+    }
+  };
+
+  const fetchSchools = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('schools')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      setSchools(data || []);
+    } catch (error) {
+      console.error('Error fetching schools:', error);
+    }
+  };
+
+  const fetchSchoolContacts = async (schoolId) => {
+    if (schoolContacts[schoolId]) return;
+    try {
+      const { data, error } = await supabase
+        .from('school_contacts')
+        .select('*')
+        .eq('school_id', schoolId)
+        .order('name');
+      if (error) throw error;
+      setSchoolContacts(prev => ({ ...prev, [schoolId]: data || [] }));
+    } catch (error) {
+      console.error('Error fetching school contacts:', error);
+    }
+  };
+
+  const addSchool = async () => {
+    if (!newSchool.name.trim()) return;
+    try {
+      const { data, error } = await supabase
+        .from('schools')
+        .insert(newSchool)
+        .select()
+        .single();
+      if (error) throw error;
+      setSchools(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewSchool({ name: '', level: 'D1', state: '', city: '', conference: '' });
+      setAddingSchool(false);
+    } catch (error) {
+      console.error('Error adding school:', error);
+      alert('Error adding school: ' + error.message);
+    }
+  };
+
+  const deleteSchool = async (schoolId) => {
+    if (!window.confirm('Delete this school and all its contacts?')) return;
+    try {
+      const { error } = await supabase.from('schools').delete().eq('id', schoolId);
+      if (error) throw error;
+      setSchools(prev => prev.filter(s => s.id !== schoolId));
+      setSchoolContacts(prev => { const next = { ...prev }; delete next[schoolId]; return next; });
+      if (expandedSchool === schoolId) setExpandedSchool(null);
+    } catch (error) {
+      console.error('Error deleting school:', error);
+      alert('Error deleting school: ' + error.message);
+    }
+  };
+
+  const addSchoolContact = async (schoolId) => {
+    if (!newContact.name.trim()) return;
+    try {
+      const { data, error } = await supabase
+        .from('school_contacts')
+        .insert({ ...newContact, school_id: schoolId })
+        .select()
+        .single();
+      if (error) throw error;
+      setSchoolContacts(prev => ({
+        ...prev,
+        [schoolId]: [...(prev[schoolId] || []), data].sort((a, b) => a.name.localeCompare(b.name))
+      }));
+      setNewContact({ name: '', title: '', email: '', phone: '' });
+      setAddingContact(null);
+    } catch (error) {
+      console.error('Error adding contact:', error);
+      alert('Error adding contact: ' + error.message);
+    }
+  };
+
+  const deleteSchoolContact = async (schoolId, contactId) => {
+    try {
+      const { error } = await supabase.from('school_contacts').delete().eq('id', contactId);
+      if (error) throw error;
+      setSchoolContacts(prev => ({
+        ...prev,
+        [schoolId]: (prev[schoolId] || []).filter(c => c.id !== contactId)
+      }));
+    } catch (error) {
+      console.error('Error deleting contact:', error);
+      alert('Error deleting contact: ' + error.message);
     }
   };
 
@@ -2403,6 +2508,155 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
           {activeProfileTab === 'recruitment' && (
             <div>
+              {/* ── School Directory ── */}
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-lg font-semibold text-gray-900">School Directory</h4>
+                  {(userRole === 'admin' || userRole === 'coach') && !addingSchool && (
+                    <button onClick={() => setAddingSchool(true)} className="text-blue-600 hover:text-blue-700 flex items-center space-x-1 text-sm font-medium">
+                      <Plus size={16} /><span>Add School</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Search + Level filter */}
+                <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                  <div className="relative flex-1">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      value={schoolSearch}
+                      onChange={e => setSchoolSearch(e.target.value)}
+                      placeholder="Search by school name..."
+                      className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {['all', 'D1', 'D2', 'D3', 'NAIA', 'JUCO'].map(lvl => (
+                      <button
+                        key={lvl}
+                        onClick={() => setSchoolLevelFilter(lvl)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${schoolLevelFilter === lvl ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                      >
+                        {lvl === 'all' ? 'All' : lvl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Add school form */}
+                {addingSchool && (
+                  <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 mb-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                      <input type="text" placeholder="School name *" value={newSchool.name} onChange={e => setNewSchool(s => ({ ...s, name: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <select value={newSchool.level} onChange={e => setNewSchool(s => ({ ...s, level: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white">
+                        {['D1', 'D2', 'D3', 'NAIA', 'JUCO'].map(l => <option key={l} value={l}>{l}</option>)}
+                      </select>
+                      <input type="text" placeholder="Conference" value={newSchool.conference} onChange={e => setNewSchool(s => ({ ...s, conference: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="text" placeholder="City" value={newSchool.city} onChange={e => setNewSchool(s => ({ ...s, city: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="text" placeholder="State" value={newSchool.state} onChange={e => setNewSchool(s => ({ ...s, state: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={addSchool} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">Save</button>
+                      <button onClick={() => { setAddingSchool(false); setNewSchool({ name: '', level: 'D1', state: '', city: '', conference: '' }); }} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-300 transition">Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* School list */}
+                {(() => {
+                  const filtered = schools.filter(s => {
+                    if (schoolLevelFilter !== 'all' && s.level !== schoolLevelFilter) return false;
+                    if (schoolSearch && !s.name.toLowerCase().includes(schoolSearch.toLowerCase())) return false;
+                    return true;
+                  });
+                  if (filtered.length === 0) {
+                    return <p className="text-sm text-gray-500 py-4 text-center">{schools.length === 0 ? 'No schools yet.' : 'No schools match your search.'}</p>;
+                  }
+                  return (
+                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-200">
+                      {filtered.map(school => {
+                        const isExpanded = expandedSchool === school.id;
+                        const contacts = schoolContacts[school.id];
+                        const meta = [school.level, school.conference, [school.city, school.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+                        return (
+                          <div key={school.id}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isExpanded) { setExpandedSchool(null); }
+                                else { setExpandedSchool(school.id); fetchSchoolContacts(school.id); }
+                              }}
+                              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition"
+                            >
+                              <div className="flex items-center space-x-2 min-w-0">
+                                {isExpanded ? <ChevronDown size={16} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />}
+                                <div className="min-w-0">
+                                  <span className="text-sm font-medium text-gray-900">{school.name}</span>
+                                  {meta && <span className="text-xs text-gray-500 ml-2">{meta}</span>}
+                                </div>
+                              </div>
+                              {contacts && <span className="text-xs text-gray-400 flex-shrink-0">{contacts.length}</span>}
+                            </button>
+                            {isExpanded && (
+                              <div className="px-4 pb-3 pl-10">
+                                {!contacts ? (
+                                  <p className="text-xs text-gray-400">Loading contacts...</p>
+                                ) : contacts.length === 0 && addingContact !== school.id ? (
+                                  <p className="text-xs text-gray-500">No contacts yet.</p>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {contacts.map(c => (
+                                      <div key={c.id} className="flex items-start justify-between bg-gray-50 rounded-lg px-3 py-2">
+                                        <div>
+                                          <p className="text-sm font-medium text-gray-900">{c.name}{c.title && <span className="text-gray-500 font-normal"> · {c.title}</span>}</p>
+                                          <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-0.5">
+                                            {c.email && <a href={`mailto:${c.email}`} className="text-xs text-blue-600 hover:underline flex items-center gap-1"><Mail size={12} />{c.email}</a>}
+                                            {c.phone && <a href={`tel:${c.phone}`} className="text-xs text-blue-600 hover:underline flex items-center gap-1"><Phone size={12} />{c.phone}</a>}
+                                          </div>
+                                        </div>
+                                        {(userRole === 'admin' || userRole === 'coach') && (
+                                          <button onClick={() => deleteSchoolContact(school.id, c.id)} className="text-red-400 hover:text-red-600 ml-2 flex-shrink-0" title="Delete contact"><Trash2 size={14} /></button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {(userRole === 'admin' || userRole === 'coach') && (
+                                  <div className="mt-2">
+                                    {addingContact === school.id ? (
+                                      <div className="border border-blue-200 bg-blue-50 rounded-lg p-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                                          <input type="text" placeholder="Name *" value={newContact.name} onChange={e => setNewContact(c => ({ ...c, name: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                          <input type="text" placeholder="Title" value={newContact.title} onChange={e => setNewContact(c => ({ ...c, title: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                          <input type="email" placeholder="Email" value={newContact.email} onChange={e => setNewContact(c => ({ ...c, email: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                          <input type="text" placeholder="Phone" value={newContact.phone} onChange={e => setNewContact(c => ({ ...c, phone: e.target.value }))} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                        </div>
+                                        <div className="flex gap-2">
+                                          <button onClick={() => addSchoolContact(school.id)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition">Save</button>
+                                          <button onClick={() => { setAddingContact(null); setNewContact({ name: '', title: '', email: '', phone: '' }); }} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-300 transition">Cancel</button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex gap-2">
+                                        <button onClick={() => setAddingContact(school.id)} className="text-blue-600 hover:text-blue-700 text-xs font-medium flex items-center gap-1"><Plus size={14} />Add Contact</button>
+                                        <button onClick={() => deleteSchool(school.id)} className="text-red-500 hover:text-red-700 text-xs font-medium flex items-center gap-1"><Trash2 size={14} />Delete School</button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ── Per-player recruitment entries ── */}
+              <h4 className="text-lg font-semibold text-gray-900 mb-3">Player Recruitment</h4>
               {recruitmentTeams.map((team) => (
                 <div key={team.id} className="border border-gray-200 rounded-lg p-4 mb-4">
                   <div className="flex justify-between items-start mb-3">
