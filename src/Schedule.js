@@ -1645,8 +1645,8 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
               </div>
 
               {/* Events */}
-              <div className="space-y-1">
-                {dayEvents.slice(0, 3).map(event => (
+              <div className="space-y-1 max-h-[140px] overflow-y-auto">
+                {dayEvents.map(event => (
                   <div
                     key={event.id}
                     draggable={canManage && !selecting && !event._is_virtual && !!onEventDrop}
@@ -1678,9 +1678,6 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                     {canManage && !selecting && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
                   </div>
                 ))}
-                {dayEvents.length > 3 && (
-                  <div className="text-xs text-gray-500 px-2">+{dayEvents.length - 3} more</div>
-                )}
               </div>
 
               {/* Add button on hover */}
