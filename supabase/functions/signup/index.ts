@@ -1,26 +1,22 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders, preflight } from "../_shared/cors.ts";
 
 const NEW_USER_TEAM_NAME = "New Users";
+const MIN_PASSWORD_LENGTH = 12;
 
 // Public self-signup (#151). No auth required — always creates a `player`.
 // New athletes are auto-added to the "New Users" team so coaches are notified.
 // Email confirmation is enforced by the project's Auth settings; signUp triggers
 // the confirmation email and the account stays unconfirmed until the user clicks it.
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  const pre = preflight(req);
+  if (pre) return pre;
+  const cors = corsHeaders(req);
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...cors, "Content-Type": "application/json" },
     });
 
   try {
@@ -34,8 +30,11 @@ Deno.serve(async (req) => {
     if (!email || !password || !full_name) {
       return json({ error: "Please provide your name, email, and a password." }, 400);
     }
-    if (String(password).length < 6) {
-      return json({ error: "Password must be at least 6 characters." }, 400);
+    if (String(password).length < MIN_PASSWORD_LENGTH) {
+      return json(
+        { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` },
+        400
+      );
     }
 
     const confirmMessage =

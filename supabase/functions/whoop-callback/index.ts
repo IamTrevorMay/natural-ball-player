@@ -55,18 +55,17 @@ Deno.serve(async (req) => {
       .single();
 
     if (userErr) {
-      console.error("State lookup error:", userErr);
-      return new Response(`State lookup failed: ${JSON.stringify(userErr)}`, { status: 500 });
+      console.error("State lookup error");
+      return new Response("State lookup failed", { status: 500 });
     }
 
     if (!user || user.whoop_oauth_state !== state) {
-      console.error("State mismatch:", { expected: user?.whoop_oauth_state, got: state });
+      console.error("State mismatch");
       return new Response("Invalid state", { status: 403 });
     }
 
     // Exchange code for tokens - use the SAME redirect_uri as was sent in the auth request
     const callbackUrl = `${Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app"}/api/whoop/callback`;
-    console.log("Token exchange with redirect_uri:", callbackUrl);
 
     const tokenRes = await fetch(WHOOP_TOKEN_URL, {
       method: "POST",
@@ -81,13 +80,11 @@ Deno.serve(async (req) => {
     });
 
     if (!tokenRes.ok) {
-      const text = await tokenRes.text();
-      console.error("Token exchange failed:", text);
-      return new Response(`Token exchange failed: ${text}`, { status: 500 });
+      console.error("Token exchange failed");
+      return new Response("Token exchange failed", { status: 500 });
     }
 
     const tokenData = await tokenRes.json();
-    console.log("Token exchange success, has access_token:", !!tokenData.access_token, "has refresh_token:", !!tokenData.refresh_token);
 
     // Get WHOOP user ID
     const profileRes = await fetch(`${WHOOP_API_BASE}/user/profile/basic`, {
@@ -96,17 +93,15 @@ Deno.serve(async (req) => {
 
     if (!profileRes.ok) {
       const text = await profileRes.text();
-      console.error("Profile fetch failed:", text);
+      console.error("Profile fetch failed");
       return new Response(`Profile fetch failed: ${text}`, { status: 500 });
     }
 
     const profile = await profileRes.json();
-    console.log("WHOOP profile user_id:", profile.user_id);
 
     // Encrypt tokens
     const encAccessToken = await encrypt(tokenData.access_token);
     const encRefreshToken = tokenData.refresh_token ? await encrypt(tokenData.refresh_token) : null;
-    console.log("Encryption done, lengths:", encAccessToken.length, encRefreshToken?.length);
 
     // Store encrypted tokens
     const { error: upsertErr } = await adminClient.from("whoop_tokens").upsert(
@@ -124,11 +119,9 @@ Deno.serve(async (req) => {
     );
 
     if (upsertErr) {
-      console.error("Token upsert FAILED:", JSON.stringify(upsertErr));
-      return new Response(`Token storage failed: ${JSON.stringify(upsertErr)}`, { status: 500 });
+      console.error("Token upsert FAILED");
+      return new Response("Token storage failed", { status: 500 });
     }
-
-    console.log("Token upsert SUCCESS for user:", userId);
 
     // Mark user as connected
     const { error: updateErr } = await adminClient
@@ -137,7 +130,7 @@ Deno.serve(async (req) => {
       .eq("id", userId);
 
     if (updateErr) {
-      console.error("User update failed:", JSON.stringify(updateErr));
+      console.error("User update failed");
     }
 
     // Redirect back to the app
@@ -147,7 +140,7 @@ Deno.serve(async (req) => {
       headers: { Location: `${appUrl}?whoop_connected=true` },
     });
   } catch (err) {
-    console.error("Callback unhandled error:", err);
-    return new Response(`Callback error: ${err.message}`, { status: 500 });
+    console.error("Callback unhandled error");
+    return new Response("Callback error", { status: 500 });
   }
 });

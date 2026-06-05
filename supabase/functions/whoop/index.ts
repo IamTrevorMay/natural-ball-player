@@ -1,10 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders as makeCors, preflight } from "../_shared/cors.ts";
 
 const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v2";
 const WHOOP_AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth";
@@ -209,7 +204,7 @@ async function fetchPaginated<T>(
 
 // ---- Route handlers ----
 
-async function handleConnect(userId: string): Promise<Response> {
+async function handleConnect(userId: string, corsHeaders: Record<string, string>): Promise<Response> {
   const adminClient = getAdminClient();
   const state = crypto.randomUUID();
 
@@ -236,7 +231,7 @@ async function handleConnect(userId: string): Promise<Response> {
   );
 }
 
-async function handleCallback(req: Request): Promise<Response> {
+async function handleCallback(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const stateParam = url.searchParams.get("state");
@@ -319,7 +314,7 @@ async function handleCallback(req: Request): Promise<Response> {
   });
 }
 
-async function handleDisconnect(userId: string): Promise<Response> {
+async function handleDisconnect(userId: string, corsHeaders: Record<string, string>): Promise<Response> {
   const adminClient = getAdminClient();
 
   await adminClient.from("whoop_tokens").delete().eq("user_id", userId);
@@ -336,7 +331,7 @@ async function handleDisconnect(userId: string): Promise<Response> {
   });
 }
 
-async function handleSync(userId: string, targetUserId?: string): Promise<Response> {
+async function handleSync(userId: string, targetUserId: string | undefined, corsHeaders: Record<string, string>): Promise<Response> {
   const adminClient = getAdminClient();
   const athleteId = targetUserId || userId;
 
@@ -461,7 +456,8 @@ async function handleData(
   userId: string,
   targetUserId: string | null,
   from: string | null,
-  to: string | null
+  to: string | null,
+  corsHeaders: Record<string, string>
 ): Promise<Response> {
   const adminClient = getAdminClient();
   const athleteId = targetUserId || userId;
@@ -522,9 +518,9 @@ async function handleData(
 // ---- Main handler ----
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  const pre = preflight(req);
+  if (pre) return pre;
+  const corsHeaders = makeCors(req);
 
   try {
     const url = new URL(req.url);
@@ -532,7 +528,7 @@ Deno.serve(async (req) => {
 
     // Callback doesn't require auth (it's the OAuth redirect)
     if (action === "callback") {
-      return await handleCallback(req);
+      return await handleCallback(req, corsHeaders);
     }
 
     // All other actions require auth
@@ -597,14 +593,14 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "connect":
-        return await handleConnect(user.id);
+        return await handleConnect(user.id, corsHeaders);
 
       case "disconnect": {
         const body = await req.json().catch(() => ({}));
         const targetId = body.target_user_id || user.id;
         const denied = await assertCanTarget(targetId);
         if (denied) return denied;
-        return await handleDisconnect(targetId);
+        return await handleDisconnect(targetId, corsHeaders);
       }
 
       case "sync": {
@@ -612,7 +608,7 @@ Deno.serve(async (req) => {
         const targetId = body.target_user_id || user.id;
         const denied = await assertCanTarget(targetId);
         if (denied) return denied;
-        return await handleSync(user.id, targetId);
+        return await handleSync(user.id, targetId, corsHeaders);
       }
 
       case "data": {
@@ -621,7 +617,7 @@ Deno.serve(async (req) => {
         const to = url.searchParams.get("to");
         const denied = await assertCanTarget(targetId);
         if (denied) return denied;
-        return await handleData(user.id, targetId, from, to);
+        return await handleData(user.id, targetId, from, to, corsHeaders);
       }
 
       default:

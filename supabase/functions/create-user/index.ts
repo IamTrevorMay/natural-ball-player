@@ -1,22 +1,17 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import { corsHeaders, preflight } from "../_shared/cors.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  const pre = preflight(req);
+  if (pre) return pre;
+  const cors = corsHeaders(req);
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
         JSON.stringify({ error: "Missing authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 401, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
@@ -32,7 +27,7 @@ Deno.serve(async (req) => {
     if (userError || !user) {
       return new Response(
         JSON.stringify({ error: "Invalid token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 401, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
@@ -47,7 +42,7 @@ Deno.serve(async (req) => {
     if (roleError || !caller || (caller.role !== "admin" && caller.role !== "coach")) {
       return new Response(
         JSON.stringify({ error: "Unauthorized: admin or coach only" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 403, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
@@ -55,14 +50,14 @@ Deno.serve(async (req) => {
     if (!email || !password || !full_name || !role) {
       return new Response(
         JSON.stringify({ error: "Missing required fields: email, password, full_name, role" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
     if (caller.role === "coach" && role !== "player") {
       return new Response(
         JSON.stringify({ error: "Coaches can only create player accounts" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 403, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
@@ -103,30 +98,30 @@ Deno.serve(async (req) => {
             // ON CONFLICT no-op and the caller treats this as a fresh create.
             return new Response(
               JSON.stringify({ success: true, user_id: existingAuth.id, backfilled: true }),
-              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
             );
           }
           return new Response(
             JSON.stringify({ error: "A user with this email already exists in the portal." }),
-            { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            { status: 409, headers: { ...cors, "Content-Type": "application/json" } }
           );
         }
       }
 
       return new Response(
         JSON.stringify({ error: createError.message }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 
     return new Response(
       JSON.stringify({ success: true, user_id: newUser.user.id }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...cors, "Content-Type": "application/json" } }
     );
   } catch (err) {
     return new Response(
       JSON.stringify({ error: err.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 500, headers: { ...cors, "Content-Type": "application/json" } }
     );
   }
 });

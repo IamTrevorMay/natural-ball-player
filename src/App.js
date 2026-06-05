@@ -375,11 +375,11 @@ function LoginPage({ onLogin }) {
                   type="password"
                   value={signup.password}
                   onChange={(e) => setSignup(s => ({ ...s, password: e.target.value }))}
-                  minLength={6}
+                  minLength={12}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
-                <p className="text-xs text-gray-400 mt-1">At least 6 characters.</p>
+                <p className="text-xs text-gray-400 mt-1">At least 12 characters.</p>
               </div>
               <button
                 type="submit"
@@ -495,8 +495,8 @@ function ResetPasswordPage({ onComplete }) {
 
   const handleReset = async (e) => {
     e.preventDefault();
-    if (newPassword.length < 6) {
-      alert('Password must be at least 6 characters.');
+    if (newPassword.length < 12) {
+      alert('Password must be at least 12 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -531,7 +531,7 @@ function ResetPasswordPage({ onComplete }) {
               onChange={(e) => setNewPassword(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
-              minLength={6}
+              minLength={12}
             />
           </div>
           <div>
@@ -542,7 +542,7 @@ function ResetPasswordPage({ onComplete }) {
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
-              minLength={6}
+              minLength={12}
             />
           </div>
           <button
