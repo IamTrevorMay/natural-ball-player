@@ -5112,6 +5112,9 @@ function PlayerAddGameModal({ userId, onClose, onSuccess }) {
       address: formData.address || null,
       notes: formData.notes || null,
       player_id: userId,
+      team_id: null,
+      training_program_id: null,
+      meal_plan_id: null,
     });
     if (insertError) { setError(insertError.message); setLoading(false); return; }
     setLoading(false);

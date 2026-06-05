@@ -1,6 +1,7 @@
 // Centralized CORS origin allowlist. Add new deploy origins here.
 const ALLOWED_ORIGINS = [
   "https://nbp-portal.vercel.app",
+  "https://natural-ball-player.vercel.app",
   "https://www.thenatural-app.com",
   "https://thenatural-app.com",
   "http://localhost:3000",
