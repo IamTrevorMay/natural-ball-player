@@ -799,6 +799,23 @@ function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
     }
   };
 
+  const getStatusBadgeColor = (status) => {
+    switch (status) {
+      case 'Inactive': return 'bg-gray-100 text-gray-700';
+      case 'Archived': return 'bg-red-100 text-red-700';
+      default: return 'bg-emerald-100 text-emerald-700';
+    }
+  };
+
+  const userStatus = (() => {
+    if (user.role === 'player') {
+      const pp = Array.isArray(user.player_profiles) ? user.player_profiles[0] : user.player_profiles;
+      return pp?.status || 'Active';
+    }
+    if (user.role === 'coach') return user.coach_status || 'Active';
+    return 'Active';
+  })();
+
   return (
     <>
       <div
@@ -825,16 +842,21 @@ function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
               )}
             </div>
           </div>
-          <div className="flex items-center space-x-3">
-            <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
-              {user.role}
-            </span>
-            {user.secondary_role && user.secondary_role !== user.role && (
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.secondary_role)} ring-1 ring-inset ring-gray-300`}>
-                +{user.secondary_role}
+          <div className="flex items-start space-x-3">
+            <div className="flex flex-col items-end gap-1">
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>
+                {user.is_intern ? 'intern' : user.role}
               </span>
-            )}
-            <Edit2 size={16} className="text-gray-400" />
+              <span className={`px-3 py-0.5 rounded-full text-[10px] font-medium ${getStatusBadgeColor(userStatus)}`}>
+                {userStatus}
+              </span>
+              {user.secondary_role && user.secondary_role !== user.role && (
+                <span className={`px-3 py-0.5 rounded-full text-[10px] font-medium ${getRoleBadgeColor(user.secondary_role)} ring-1 ring-inset ring-gray-300`}>
+                  +{user.secondary_role}
+                </span>
+              )}
+            </div>
+            <Edit2 size={16} className="text-gray-400 mt-1" />
           </div>
         </div>
       </div>
@@ -863,7 +885,8 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
     full_name: user.full_name || '',
     email: user.email || '',
     phone: user.phone || '',
-    role: user.role || 'player',
+    // Interns are stored as role='coach' with is_intern=true. Surface as 'intern' in the form.
+    role: user.is_intern ? 'intern' : (user.role || 'player'),
     secondary_role: user.secondary_role || '',
     height: user.height || '',
     weight: user.weight || '',
@@ -914,6 +937,9 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
         await updateAuthUserEmail(user.id, formData.email);
       }
 
+      const isIntern = formData.role === 'intern';
+      const dbRole = isIntern ? 'coach' : formData.role;
+
       // 1. Update users table
       const { error: userError } = await supabase
         .from('users')
@@ -921,7 +947,8 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
           full_name: formData.full_name,
           email: formData.email,
           phone: formData.phone || null,
-          role: formData.role,
+          role: dbRole,
+          is_intern: isIntern,
           secondary_role: formData.secondary_role || null,
           height: formData.height || null,
           weight: formData.weight || null,
@@ -930,7 +957,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
       if (userError) throw userError;
 
       // 2. Update player_profiles if player
-      if (formData.role === 'player' && profile?.id) {
+      if (dbRole === 'player' && profile?.id) {
         const { error: profileError } = await supabase
           .from('player_profiles')
           .update({
@@ -1048,6 +1075,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
               >
                 <option value="player">Player</option>
                 <option value="coach">Coach</option>
+                <option value="intern">Intern</option>
                 <option value="admin">Admin</option>
               </select>
             </div>
@@ -1059,7 +1087,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
                 className={inputClass}
               >
                 <option value="">None</option>
-                {['player', 'coach', 'admin'].filter(r => r !== formData.role).map(r => (
+                {['player', 'coach', 'admin'].filter(r => r !== (formData.role === 'intern' ? 'coach' : formData.role)).map(r => (
                   <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
                 ))}
               </select>

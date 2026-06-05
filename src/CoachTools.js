@@ -1296,11 +1296,12 @@ function TrainingTab({ teams, players }) {
 
 /* ---- TRAINING PROGRAM CARD ---- */
 
+// Aligned with ProgramLibrarySidebar FOLDER_COLORS and Schedule CATEGORY_BAR (#179).
 const categoryColors = {
-  hitting: 'bg-red-500 text-white',
-  pitching: 'bg-blue-500 text-white',
+  hitting: 'bg-blue-500 text-white',
+  pitching: 'bg-green-500 text-white',
   fielding: 'bg-green-500 text-white',
-  conditioning: 'bg-amber-500 text-white',
+  conditioning: 'bg-yellow-500 text-white',
   recovery: 'bg-purple-500 text-white',
   other: 'bg-gray-500 text-white',
 };

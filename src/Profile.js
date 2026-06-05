@@ -1613,7 +1613,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   />
                 </div>
               ) : (
-                <h3 className="text-2xl font-bold text-gray-900">{userData.full_name}</h3>
+                <h3 className="text-2xl font-bold text-gray-900">
+                  {userData.full_name}
+                  {userData.date_of_birth && (() => {
+                    const age = Math.floor((new Date() - new Date(userData.date_of_birth + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000));
+                    return <span className="text-lg font-semibold text-gray-500 ml-2">· Age {age}</span>;
+                  })()}
+                </h3>
               )}
               <p className="text-gray-600 capitalize mt-1">{userData.role}</p>
               {userData.team_members && userData.team_members.length > 0 && (

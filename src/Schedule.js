@@ -3435,17 +3435,19 @@ const CATEGORY_LABEL = {
   general: 'Workout',
 };
 
+// Aligned with ProgramLibrarySidebar FOLDER_COLORS so the color a coach sees in the
+// program library matches what the athlete sees on their workout view (#179).
 const CATEGORY_BAR = {
-  warmup: 'bg-amber-500',
-  hitting: 'bg-orange-500',
-  pitching: 'bg-blue-500',
-  fielding: 'bg-emerald-500',
-  conditioning: 'bg-red-500',
+  warmup: 'bg-purple-500',
+  hitting: 'bg-blue-500',
+  pitching: 'bg-green-500',
+  fielding: 'bg-green-500',
+  conditioning: 'bg-yellow-500',
   recovery: 'bg-purple-500',
-  strength: 'bg-slate-700',
-  mobility: 'bg-cyan-500',
+  strength: 'bg-orange-500',
+  mobility: 'bg-purple-500',
   other: 'bg-gray-500',
-  general: 'bg-blue-500',
+  general: 'bg-gray-500',
 };
 
 function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
@@ -3594,11 +3596,9 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                                   </a>
                                 )}
                               </div>
-                              {meta.length > 0 && (
-                                <div className="mt-2 text-sm text-gray-700 tabular-nums">
-                                  {meta.join(' · ')}
-                                </div>
-                              )}
+                              <div className="mt-2 text-sm text-gray-700 tabular-nums">
+                                {meta.length > 0 ? meta.join(' · ') : <span className="text-gray-400 italic">Sets/reps not set</span>}
+                              </div>
                             </div>
                           );
                         })}
