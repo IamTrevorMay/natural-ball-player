@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip, Search } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
@@ -42,6 +42,7 @@ const PROFILE_TABS = [
   { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
   { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
+  { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
 ];
 
 const PT_STATUS_OPTIONS = ['Active', 'Pending Eval', 'In Treatment', 'Maintenance', 'Discharged'];
@@ -3438,6 +3439,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
+          {activeProfileTab === 'practice_stats' && (
+            <PracticeStatsTab playerId={userId} canEdit={canEditProfile} />
+          )}
+
           {activeProfileTab === 'general' && (
           <>
           {/* Contact Information */}
@@ -4442,6 +4447,237 @@ function PtVisitEditor({ draft, setDraft, addExercise, updateExercise, removeExe
           className="px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// PRACTICE STATS TAB (#186)
+// Track at-bats during practice, lives, cage, fall ball, scrimmage.
+// ============================================
+const AB_RESULTS = ['1B', '2B', '3B', 'HR', 'BB', 'HBP', 'K', 'GO', 'FO', 'LO', 'PO', 'FC', 'SAC'];
+const AB_CONTEXTS = [
+  { value: 'practice', label: 'Practice' },
+  { value: 'lives', label: 'Lives' },
+  { value: 'scrimmage', label: 'Scrimmage' },
+  { value: 'fall_ball', label: 'Fall Ball' },
+  { value: 'cage', label: 'Cage' },
+  { value: 'other', label: 'Other' },
+];
+const HIT_RESULTS = ['1B', '2B', '3B', 'HR'];
+const AB_OUTCOMES = ['1B', '2B', '3B', 'HR', 'BB', 'HBP', 'K', 'GO', 'FO', 'LO', 'PO', 'FC', 'SAC'];
+const OFFICIAL_AB = ['1B', '2B', '3B', 'HR', 'K', 'GO', 'FO', 'LO', 'PO', 'FC'];
+
+function PracticeStatsTab({ playerId, canEdit }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({
+    ab_date: fmtLocalDate(new Date()),
+    context: 'practice',
+    pitcher_name: '',
+    pitch_type: '',
+    result: '1B',
+    exit_velocity: '',
+    launch_angle: '',
+    distance: '',
+    notes: '',
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('practice_at_bats')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('ab_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    setRows(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [playerId]);
+
+  const totals = useMemo(() => {
+    const ab = rows.filter(r => OFFICIAL_AB.includes(r.result)).length;
+    const hits = rows.filter(r => HIT_RESULTS.includes(r.result)).length;
+    const tb = rows.reduce((sum, r) => {
+      if (r.result === '1B') return sum + 1;
+      if (r.result === '2B') return sum + 2;
+      if (r.result === '3B') return sum + 3;
+      if (r.result === 'HR') return sum + 4;
+      return sum;
+    }, 0);
+    const bb = rows.filter(r => r.result === 'BB').length;
+    const hbp = rows.filter(r => r.result === 'HBP').length;
+    const onBaseAttempts = ab + bb + hbp;
+    const onBaseSuccess = hits + bb + hbp;
+    return {
+      total: rows.length,
+      ab,
+      hits,
+      avg: ab ? (hits / ab).toFixed(3) : '—',
+      slg: ab ? (tb / ab).toFixed(3) : '—',
+      obp: onBaseAttempts ? (onBaseSuccess / onBaseAttempts).toFixed(3) : '—',
+      bb,
+      k: rows.filter(r => r.result === 'K').length,
+    };
+  }, [rows]);
+
+  const save = async () => {
+    if (!draft.ab_date || !draft.result) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('practice_at_bats').insert({
+      player_id: playerId,
+      ab_date: draft.ab_date,
+      context: draft.context,
+      pitcher_name: draft.pitcher_name || null,
+      pitch_type: draft.pitch_type || null,
+      result: draft.result,
+      exit_velocity: draft.exit_velocity ? Number(draft.exit_velocity) : null,
+      launch_angle: draft.launch_angle ? Number(draft.launch_angle) : null,
+      distance: draft.distance ? Number(draft.distance) : null,
+      notes: draft.notes || null,
+      logged_by: user?.id || null,
+    });
+    if (error) { alert('Save failed: ' + error.message); return; }
+    setAdding(false);
+    setDraft({ ab_date: fmtLocalDate(new Date()), context: 'practice', pitcher_name: '', pitch_type: '', result: '1B', exit_velocity: '', launch_angle: '', distance: '', notes: '' });
+    load();
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Delete this at-bat?')) return;
+    await supabase.from('practice_at_bats').delete().eq('id', id);
+    load();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">Practice Stats</h3>
+        {canEdit && !adding && (
+          <button onClick={() => setAdding(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
+            <Plus size={16} />
+            <span>Log At-Bat</span>
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-2 text-center">
+        {[
+          { label: 'AB', val: totals.ab },
+          { label: 'H', val: totals.hits },
+          { label: 'AVG', val: totals.avg },
+          { label: 'OBP', val: totals.obp },
+          { label: 'SLG', val: totals.slg },
+          { label: 'BB', val: totals.bb },
+          { label: 'K', val: totals.k },
+        ].map(s => (
+          <div key={s.label} className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+            <div className="text-xs text-gray-500 uppercase tracking-wide">{s.label}</div>
+            <div className="text-lg font-bold text-gray-900 tabular-nums">{s.val}</div>
+          </div>
+        ))}
+      </div>
+
+      {adding && (
+        <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Date</label>
+              <input type="date" value={draft.ab_date} onChange={e => setDraft({ ...draft, ab_date: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Context</label>
+              <select value={draft.context} onChange={e => setDraft({ ...draft, context: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                {AB_CONTEXTS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Result</label>
+              <select value={draft.result} onChange={e => setDraft({ ...draft, result: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                {AB_OUTCOMES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Pitch Type</label>
+              <input type="text" value={draft.pitch_type} onChange={e => setDraft({ ...draft, pitch_type: e.target.value })} placeholder="FB / CB / SL" className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Pitcher</label>
+              <input type="text" value={draft.pitcher_name} onChange={e => setDraft({ ...draft, pitcher_name: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Exit Velo</label>
+              <input type="number" step="0.1" value={draft.exit_velocity} onChange={e => setDraft({ ...draft, exit_velocity: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Launch Angle</label>
+              <input type="number" step="0.1" value={draft.launch_angle} onChange={e => setDraft({ ...draft, launch_angle: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Distance</label>
+              <input type="number" step="0.1" value={draft.distance} onChange={e => setDraft({ ...draft, distance: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+            <textarea value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} rows={2} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdding(false)} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm">Cancel</button>
+            <button onClick={save} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-gray-500 text-center py-6">Loading at-bats...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-6">No at-bats logged yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+            <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <tr>
+                <th className="px-3 py-2 text-left">Date</th>
+                <th className="px-3 py-2 text-left">Context</th>
+                <th className="px-3 py-2 text-left">Pitcher</th>
+                <th className="px-3 py-2 text-left">Pitch</th>
+                <th className="px-3 py-2 text-center">Result</th>
+                <th className="px-3 py-2 text-center">EV</th>
+                <th className="px-3 py-2 text-center">LA</th>
+                <th className="px-3 py-2 text-center">Dist</th>
+                <th className="px-3 py-2 text-left">Notes</th>
+                {canEdit && <th className="px-3 py-2 w-10"></th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{r.ab_date}</td>
+                  <td className="px-3 py-2 text-gray-700 capitalize">{(AB_CONTEXTS.find(c => c.value === r.context)?.label) || r.context}</td>
+                  <td className="px-3 py-2 text-gray-700">{r.pitcher_name || '—'}</td>
+                  <td className="px-3 py-2 text-gray-700">{r.pitch_type || '—'}</td>
+                  <td className="px-3 py-2 text-center font-semibold">
+                    <span className={`px-2 py-0.5 rounded text-xs ${HIT_RESULTS.includes(r.result) ? 'bg-green-100 text-green-700' : r.result === 'K' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>{r.result}</span>
+                  </td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.exit_velocity ?? '—'}</td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.launch_angle ?? '—'}</td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.distance ?? '—'}</td>
+                  <td className="px-3 py-2 text-gray-500 text-xs">{r.notes || ''}</td>
+                  {canEdit && (
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => remove(r.id)} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

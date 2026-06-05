@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search } from 'lucide-react';
+import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -279,7 +279,8 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
               { key: 'coaches', label: 'Coaches', icon: User },
               { key: 'schedule', label: 'Schedule', icon: Calendar },
               { key: 'announcements', label: 'Announcements', icon: MessageSquare },
-              { key: 'prospects', label: 'Prospects', icon: Star }
+              { key: 'prospects', label: 'Prospects', icon: Star },
+              { key: 'game_changer', label: 'Game Changer', icon: Radio },
             ].map(tab => (
               <button
                 key={tab.key}
@@ -304,6 +305,9 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
           {activeTab === 'prospects' && (
             <ProspectsTab teamId={teamData.id} userId={userId} userRole={userRole} roster={roster} prospects={prospects} onProspectsChange={() => fetchProspects(selectedTeamId)} />
+          )}
+          {activeTab === 'game_changer' && (
+            <GameChangerTab teamId={teamData.id} userRole={userRole} />
           )}
         </div>
       </div>
@@ -1463,6 +1467,176 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// GAME CHANGER TAB (#187)
+// Per-team contact directory for parents/coaches who run the
+// Game Changer scoring app during games.
+// ============================================
+const GC_ROLES = ['Parent', 'Coach', 'Manager', 'Other'];
+
+function GameChangerTab({ teamId, userRole }) {
+  const canManage = userRole === 'admin' || userRole === 'coach';
+  const [contacts, setContacts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [draft, setDraft] = useState({ name: '', role: 'Parent', email: '', phone: '', notes: '' });
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('team_game_changer_contacts')
+      .select('*')
+      .eq('team_id', teamId)
+      .order('role')
+      .order('name');
+    setContacts(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [teamId]);
+
+  const startAdd = () => {
+    setEditing(null);
+    setDraft({ name: '', role: 'Parent', email: '', phone: '', notes: '' });
+    setAdding(true);
+  };
+
+  const startEdit = (c) => {
+    setAdding(false);
+    setEditing(c.id);
+    setDraft({ name: c.name || '', role: c.role || 'Parent', email: c.email || '', phone: c.phone || '', notes: c.notes || '' });
+  };
+
+  const save = async () => {
+    if (!draft.name.trim()) { alert('Name is required.'); return; }
+    const payload = {
+      team_id: teamId,
+      name: draft.name.trim(),
+      role: draft.role,
+      email: draft.email.trim() || null,
+      phone: draft.phone.trim() || null,
+      notes: draft.notes.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    let error;
+    if (editing) {
+      ({ error } = await supabase.from('team_game_changer_contacts').update(payload).eq('id', editing));
+    } else {
+      ({ error } = await supabase.from('team_game_changer_contacts').insert(payload));
+    }
+    if (error) { alert('Save failed: ' + error.message); return; }
+    setAdding(false);
+    setEditing(null);
+    load();
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Remove this contact?')) return;
+    await supabase.from('team_game_changer_contacts').delete().eq('id', id);
+    load();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">Game Changer Contacts</h3>
+          <p className="text-sm text-gray-500">Parents and coaches who can run Game Changer for this team.</p>
+        </div>
+        {canManage && !adding && !editing && (
+          <button onClick={startAdd} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
+            <Plus size={16} />
+            <span>Add Contact</span>
+          </button>
+        )}
+      </div>
+
+      {(adding || editing) && (
+        <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Name *</label>
+              <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+              <select value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                {GC_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
+              <input type="email" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Phone</label>
+              <input type="tel" value={draft.phone} onChange={e => setDraft({ ...draft, phone: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+            <textarea value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} rows={2} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => { setAdding(false); setEditing(null); }} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm">Cancel</button>
+            <button onClick={save} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center gap-1">
+              <Save size={14} />
+              <span>{editing ? 'Update' : 'Save'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-gray-500 text-center py-6">Loading contacts...</p>
+      ) : contacts.length === 0 ? (
+        <div className="text-center py-10 text-gray-400">
+          <Radio size={40} className="mx-auto mb-3 text-gray-300" />
+          <p className="text-sm">No Game Changer contacts yet.</p>
+          {canManage && <p className="text-xs mt-1">Click "Add Contact" to start the directory.</p>}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {contacts.map(c => (
+            <div key={c.id} className="border border-gray-200 rounded-lg p-4 bg-white">
+              <div className="flex items-start justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-semibold text-gray-900">{c.name}</h4>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">{c.role}</span>
+                  </div>
+                  <div className="mt-2 space-y-1 text-sm">
+                    {c.email && (
+                      <a href={`mailto:${c.email}`} className="flex items-center gap-2 text-gray-700 hover:text-blue-600">
+                        <Mail size={14} className="text-gray-400" />
+                        <span className="truncate">{c.email}</span>
+                      </a>
+                    )}
+                    {c.phone && (
+                      <a href={`tel:${c.phone}`} className="flex items-center gap-2 text-gray-700 hover:text-blue-600">
+                        <Phone size={14} className="text-gray-400" />
+                        <span>{c.phone}</span>
+                      </a>
+                    )}
+                  </div>
+                  {c.notes && <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{c.notes}</p>}
+                </div>
+                {canManage && (
+                  <div className="flex items-center gap-2 ml-3">
+                    <button onClick={() => startEdit(c)} className="text-gray-400 hover:text-blue-600" title="Edit"><Edit2 size={14} /></button>
+                    <button onClick={() => remove(c.id)} className="text-gray-400 hover:text-red-600" title="Remove"><Trash2 size={14} /></button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
