@@ -5,6 +5,29 @@ import EmailComposeModal from './EmailComposeModal';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
+const mergeUniqueById = (rows = []) => Array.from(new Map(rows.map(row => [row.id, row])).values());
+
+async function searchUsersByNameOrEmail(selectClause, rawTerm, limit = 20) {
+  const term = rawTerm.trim();
+  const [nameResult, emailResult] = await Promise.all([
+    supabase
+      .from('users')
+      .select(selectClause)
+      .ilike('full_name', `%${term}%`)
+      .limit(limit),
+    supabase
+      .from('users')
+      .select(selectClause)
+      .ilike('email', `%${term}%`)
+      .limit(limit),
+  ]);
+
+  if (nameResult.error) throw nameResult.error;
+  if (emailResult.error) throw emailResult.error;
+
+  return mergeUniqueById([...(nameResult.data || []), ...(emailResult.data || [])]).slice(0, limit);
+}
+
 export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToProfile }) {
   const [loading, setLoading] = useState(true);
   const [teamData, setTeamData] = useState(null);
@@ -344,12 +367,8 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
     searchTimerRef.current = setTimeout(async () => {
       try {
         const existingIds = roster.map(p => p.id);
-        const { data } = await supabase
-          .from('users')
-          .select('id, full_name, email, role')
-          .or(`full_name.ilike.%${memberSearch.trim()}%,email.ilike.%${memberSearch.trim()}%`)
-          .limit(20);
-        setMemberResults((data || []).filter(u => !existingIds.includes(u.id)));
+        const data = await searchUsersByNameOrEmail('id, full_name, email, role', memberSearch, 20);
+        setMemberResults(data.filter(u => !existingIds.includes(u.id)));
       } catch (err) {
         console.error('Search error:', err);
       } finally {
@@ -845,11 +864,11 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
     searchTimerRef.current = setTimeout(async () => {
       try {
         const existingPlayerIds = prospects.filter(p => p.player_id).map(p => p.player_id);
-        const { data } = await supabase
-          .from('users')
-          .select('id, full_name, email, role, player_profiles!player_profiles_user_id_fkey(position)')
-          .or(`full_name.ilike.%${memberSearch.trim()}%,email.ilike.%${memberSearch.trim()}%`)
-          .limit(20);
+        const data = await searchUsersByNameOrEmail(
+          'id, full_name, email, role, player_profiles!player_profiles_user_id_fkey(position)',
+          memberSearch,
+          20
+        );
         const filtered = (data || []).filter(u => !existingPlayerIds.includes(u.id));
         setMemberResults(filtered);
       } catch (err) {

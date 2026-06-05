@@ -24,6 +24,25 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+async function fetchDmThreadsForUser(userId) {
+  const [asUserA, asUserB] = await Promise.all([
+    supabase
+      .from('work_dm_threads')
+      .select('id, user_a_id, user_b_id, last_message_at')
+      .eq('user_a_id', userId),
+    supabase
+      .from('work_dm_threads')
+      .select('id, user_a_id, user_b_id, last_message_at')
+      .eq('user_b_id', userId),
+  ]);
+
+  if (asUserA.error) throw asUserA.error;
+  if (asUserB.error) throw asUserB.error;
+
+  return Array.from(new Map([...(asUserA.data || []), ...(asUserB.data || [])].map(thread => [thread.id, thread])).values())
+    .sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0));
+}
+
 export default function WorkMessages({ userId, userRole }) {
   const [channels, setChannels] = useState([]);
   const [dms, setDms] = useState([]);
@@ -36,22 +55,26 @@ export default function WorkMessages({ userId, userRole }) {
 
   // Load channels, DMs, staff
   const loadSidebar = useCallback(async () => {
-    const [chRes, dmRes, staffRes, readsRes] = await Promise.all([
-      supabase.from('work_channels').select('id, name, description, audience').order('name'),
-      supabase.from('work_dm_threads').select('id, user_a_id, user_b_id, last_message_at').or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`).order('last_message_at', { ascending: false, nullsFirst: false }),
-      supabase.from('users').select('id, full_name, avatar_url, role').in('role', ['admin', 'coach']).neq('id', userId).order('full_name'),
-      supabase.from('work_message_reads').select('channel_id, dm_thread_id, last_read_at').eq('user_id', userId),
-    ]);
-    if (chRes.data) setChannels(chRes.data);
-    if (dmRes.data) setDms(dmRes.data);
-    if (staffRes.data) setStaff(staffRes.data);
-    if (readsRes.data) {
-      const map = { channel: {}, dm: {} };
-      readsRes.data.forEach(r => {
-        if (r.channel_id) map.channel[r.channel_id] = r.last_read_at;
-        else if (r.dm_thread_id) map.dm[r.dm_thread_id] = r.last_read_at;
-      });
-      setReads(map);
+    try {
+      const [chRes, dmThreads, staffRes, readsRes] = await Promise.all([
+        supabase.from('work_channels').select('id, name, description, audience').order('name'),
+        fetchDmThreadsForUser(userId),
+        supabase.from('users').select('id, full_name, avatar_url, role').in('role', ['admin', 'coach']).neq('id', userId).order('full_name'),
+        supabase.from('work_message_reads').select('channel_id, dm_thread_id, last_read_at').eq('user_id', userId),
+      ]);
+      if (chRes.data) setChannels(chRes.data);
+      setDms(dmThreads || []);
+      if (staffRes.data) setStaff(staffRes.data);
+      if (readsRes.data) {
+        const map = { channel: {}, dm: {} };
+        readsRes.data.forEach(r => {
+          if (r.channel_id) map.channel[r.channel_id] = r.last_read_at;
+          else if (r.dm_thread_id) map.dm[r.dm_thread_id] = r.last_read_at;
+        });
+        setReads(map);
+      }
+    } catch (error) {
+      console.error('Error loading work message sidebar:', error);
     }
   }, [userId]);
 

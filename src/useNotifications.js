@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+async function fetchWorkDmThreadIdsForUser(userId) {
+  const [asUserA, asUserB] = await Promise.all([
+    supabase.from('work_dm_threads').select('id').eq('user_a_id', userId),
+    supabase.from('work_dm_threads').select('id').eq('user_b_id', userId),
+  ]);
+  if (asUserA.error) throw asUserA.error;
+  if (asUserB.error) throw asUserB.error;
+  return Array.from(new Set([...(asUserA.data || []).map(row => row.id), ...(asUserB.data || []).map(row => row.id)]));
+}
 
 // Counts and details for the Main Portal: unread chat messages + (coach/admin) pending slot reservations.
 export function useMainPortalCounts(userId, userRole) {
@@ -69,13 +78,12 @@ export function useWorkPortalCounts(userId, userRole) {
 
     // Unread work messages
     try {
-      const [chRes, dmRes, readsRes] = await Promise.all([
+      const [chRes, dmIds, readsRes] = await Promise.all([
         supabase.from('work_channels').select('id'),
-        supabase.from('work_dm_threads').select('id').or(`user_a_id.eq.${userId},user_b_id.eq.${userId}`),
+        fetchWorkDmThreadIdsForUser(userId),
         supabase.from('work_message_reads').select('channel_id, dm_thread_id, last_read_at').eq('user_id', userId),
       ]);
       const channelIds = (chRes.data || []).map(c => c.id);
-      const dmIds = (dmRes.data || []).map(d => d.id);
       const readsByChannel = {}, readsByDm = {};
       (readsRes.data || []).forEach(r => {
         if (r.channel_id) readsByChannel[r.channel_id] = r.last_read_at;

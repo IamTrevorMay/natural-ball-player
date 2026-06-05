@@ -7,6 +7,7 @@ import EmailComposeModal from './EmailComposeModal';
 import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
 import { fmtLocalDate } from './scheduleUtils';
+import SignedSignatureImage from './SignedSignatureImage';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -2844,7 +2845,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                           </div>
                           <div>
                             <p className="text-sm text-gray-600 mb-1">Participant Signature</p>
-                            <img src={waiverData.participant_signature_url} alt="Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                            <SignedSignatureImage
+                              signatureValue={waiverData.participant_signature_url}
+                              alt="Signature"
+                              className="border border-gray-200 rounded bg-white max-h-20"
+                            />
                           </div>
                         </div>
                         {waiverData.is_minor && (
@@ -2868,7 +2873,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                             </div>
                             <div className="mt-3">
                               <p className="text-sm text-gray-600 mb-1">Guardian Signature</p>
-                              <img src={waiverData.guardian_signature_url} alt="Guardian Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                              <SignedSignatureImage
+                                signatureValue={waiverData.guardian_signature_url}
+                                alt="Guardian Signature"
+                                className="border border-gray-200 rounded bg-white max-h-20"
+                              />
                             </div>
                           </div>
                         )}
@@ -2934,11 +2943,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <p className="text-sm text-gray-600 mb-1">Player Signature</p>
-                            <img src={contractData.player_signature_url} alt="Player Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                            <SignedSignatureImage
+                              signatureValue={contractData.player_signature_url}
+                              alt="Player Signature"
+                              className="border border-gray-200 rounded bg-white max-h-20"
+                            />
                           </div>
                           <div>
                             <p className="text-sm text-gray-600 mb-1">Parent Signature</p>
-                            <img src={contractData.parent_signature_url} alt="Parent Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                            <SignedSignatureImage
+                              signatureValue={contractData.parent_signature_url}
+                              alt="Parent Signature"
+                              className="border border-gray-200 rounded bg-white max-h-20"
+                            />
                           </div>
                         </div>
                       </div>
@@ -3003,11 +3020,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <p className="text-sm text-gray-600 mb-1">Player Signature</p>
-                            <img src={loiData.player_signature_url} alt="Player Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                            <SignedSignatureImage
+                              signatureValue={loiData.player_signature_url}
+                              alt="Player Signature"
+                              className="border border-gray-200 rounded bg-white max-h-20"
+                            />
                           </div>
                           <div>
                             <p className="text-sm text-gray-600 mb-1">Parent Signature</p>
-                            <img src={loiData.parent_signature_url} alt="Parent Signature" className="border border-gray-200 rounded bg-white max-h-20" />
+                            <SignedSignatureImage
+                              signatureValue={loiData.parent_signature_url}
+                              alt="Parent Signature"
+                              className="border border-gray-200 rounded bg-white max-h-20"
+                            />
                           </div>
                         </div>
                       </div>

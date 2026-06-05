@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
+import SignedSignatureImage from './SignedSignatureImage';
 
 const COMMITMENT_ITEMS = [
   'I commit to participate in the Naturals Select program for the 2026-2027 season.',
@@ -144,9 +145,6 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(playerPath, playerBlob, { contentType: 'image/png', upsert: true });
       if (pErr) throw pErr;
-      const { data: { publicUrl: playerSigUrl } } = supabase.storage
-        .from('signatures')
-        .getPublicUrl(playerPath);
 
       const parentBlob = await canvasToBlob(parentCanvasRef);
       const parentPath = `${userId}/loi-parent-${timestamp}.png`;
@@ -154,9 +152,6 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(parentPath, parentBlob, { contentType: 'image/png', upsert: true });
       if (gErr) throw gErr;
-      const { data: { publicUrl: parentSigUrl } } = supabase.storage
-        .from('signatures')
-        .getPublicUrl(parentPath);
 
       const { error: insertErr } = await supabase
         .from('player_letters_of_intent')
@@ -175,8 +170,8 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
           player_sig_last: playerSigLast.trim(),
           parent_sig_first: parentSigFirst.trim(),
           parent_sig_last: parentSigLast.trim(),
-          player_signature_url: playerSigUrl,
-          parent_signature_url: parentSigUrl,
+          player_signature_url: playerPath,
+          parent_signature_url: parentPath,
         });
 
       if (insertErr) throw insertErr;
@@ -289,11 +284,19 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <p className="text-sm text-gray-600 mb-1">Player Signature</p>
-                <img src={existing.player_signature_url} alt="Player Signature" className="border border-gray-200 rounded bg-white max-h-24" />
+                <SignedSignatureImage
+                  signatureValue={existing.player_signature_url}
+                  alt="Player Signature"
+                  className="border border-gray-200 rounded bg-white max-h-24"
+                />
               </div>
               <div>
                 <p className="text-sm text-gray-600 mb-1">Parent/Guardian Signature</p>
-                <img src={existing.parent_signature_url} alt="Parent Signature" className="border border-gray-200 rounded bg-white max-h-24" />
+                <SignedSignatureImage
+                  signatureValue={existing.parent_signature_url}
+                  alt="Parent Signature"
+                  className="border border-gray-200 rounded bg-white max-h-24"
+                />
               </div>
             </div>
           </div>

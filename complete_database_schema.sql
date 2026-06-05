@@ -292,9 +292,27 @@ ALTER TABLE performance_stats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE equipment_sizes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prospects ENABLE ROW LEVEL SECURITY;
+-- Helper to avoid recursive users-table checks inside users SELECT policies.
+CREATE OR REPLACE FUNCTION public.is_staff_user(p_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users u
+    WHERE u.id = p_user_id
+      AND u.role IN ('admin', 'coach')
+  );
+$$;
+GRANT EXECUTE ON FUNCTION public.is_staff_user(UUID) TO authenticated;
 
--- RLS Policies: Users can read all, but only update their own
-CREATE POLICY "Users can view all users" ON users FOR SELECT USING (true);
+-- RLS Policies: users can view self; staff can view all users
+CREATE POLICY "Users can view own profile or staff can view all users" ON users FOR SELECT USING (
+  auth.uid() = id
+  OR public.is_staff_user(auth.uid())
+);
 CREATE POLICY "Users can update own profile" ON users FOR UPDATE USING (auth.uid() = id);
 
 -- RLS Policies: Teams - all can read, admins/coaches can modify

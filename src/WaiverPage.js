@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
+import SignedSignatureImage from './SignedSignatureImage';
 
 const WAIVER_TEXT = `NATURAL BALL PLAYER, LLC
 LIABILITY WAIVER AND RELEASE OF CLAIMS
@@ -199,11 +200,8 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(participantPath, participantBlob, { contentType: 'image/png', upsert: true });
       if (pUploadErr) throw pUploadErr;
-      const { data: { publicUrl: participantUrl } } = supabase.storage
-        .from('signatures')
-        .getPublicUrl(participantPath);
 
-      let guardianUrl = null;
+      let guardianPathValue = null;
       if (isMinor) {
         const guardianBlob = await canvasToBlob(guardianCanvasRef);
         const guardianPath = `${userId}/guardian-${timestamp}.png`;
@@ -211,10 +209,7 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
           .from('signatures')
           .upload(guardianPath, guardianBlob, { contentType: 'image/png', upsert: true });
         if (gUploadErr) throw gUploadErr;
-        const { data: { publicUrl: gUrl } } = supabase.storage
-          .from('signatures')
-          .getPublicUrl(guardianPath);
-        guardianUrl = gUrl;
+        guardianPathValue = guardianPath;
       }
 
       const { error: insertErr } = await supabase
@@ -222,10 +217,10 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
         .insert({
           user_id: userId,
           participant_name: participantName.trim(),
-          participant_signature_url: participantUrl,
+          participant_signature_url: participantPath,
           is_minor: isMinor,
           guardian_name: isMinor ? guardianName.trim() : null,
-          guardian_signature_url: guardianUrl,
+          guardian_signature_url: guardianPathValue,
           guardian_relationship: isMinor ? guardianRelationship : null,
           emergency_phone: isMinor ? emergencyPhone.trim() || null : null,
         });
@@ -283,8 +278,8 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
               </div>
               <div>
                 <p className="text-sm text-gray-600 mb-1">Participant Signature</p>
-                <img
-                  src={existingWaiver.participant_signature_url}
+                <SignedSignatureImage
+                  signatureValue={existingWaiver.participant_signature_url}
                   alt="Participant Signature"
                   className="border border-gray-200 rounded bg-white max-h-24"
                 />
@@ -312,8 +307,8 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
                     </div>
                     <div>
                       <p className="text-sm text-gray-600 mb-1">Guardian Signature</p>
-                      <img
-                        src={existingWaiver.guardian_signature_url}
+                      <SignedSignatureImage
+                        signatureValue={existingWaiver.guardian_signature_url}
                         alt="Guardian Signature"
                         className="border border-gray-200 rounded bg-white max-h-24"
                       />
