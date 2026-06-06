@@ -44,6 +44,7 @@ const PROFILE_TABS = [
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
   { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
   { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
+  { key: 'marek', label: 'Marek', roles: ['admin', 'coach'] },
 ];
 
 const PT_STATUS_OPTIONS = ['Active', 'Pending Eval', 'In Treatment', 'Maintenance', 'Discharged'];
@@ -3468,6 +3469,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <PracticeStatsTab playerId={userId} canEdit={canEditProfile} />
           )}
 
+          {activeProfileTab === 'marek' && (
+            <MarekTab playerId={userId} canEdit={canEditProfile} />
+          )}
+
           {activeProfileTab === 'general' && (
           <>
           {/* Contact Information */}
@@ -4494,6 +4499,33 @@ const AB_OUTCOMES = ['1B', '2B', '3B', 'HR', 'BB', 'HBP', 'K', 'GO', 'FO', 'LO',
 const OFFICIAL_AB = ['1B', '2B', '3B', 'HR', 'K', 'GO', 'FO', 'LO', 'PO', 'FC'];
 
 function PracticeStatsTab({ playerId, canEdit }) {
+  // #192: mode toggle between hitting / pitching / catching.
+  const [mode, setMode] = useState('hitting');
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+        {[
+          { key: 'hitting', label: 'Hitting' },
+          { key: 'pitching', label: 'Pitching' },
+          { key: 'catching', label: 'Catching' },
+        ].map(t => (
+          <button
+            key={t.key}
+            onClick={() => setMode(t.key)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${mode === t.key ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {mode === 'hitting' && <HittingStatsView playerId={playerId} canEdit={canEdit} />}
+      {mode === 'pitching' && <PitchingStatsView playerId={playerId} canEdit={canEdit} />}
+      {mode === 'catching' && <CatchingStatsView playerId={playerId} canEdit={canEdit} />}
+    </div>
+  );
+}
+
+function HittingStatsView({ playerId, canEdit }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -4701,6 +4733,499 @@ function PracticeStatsTab({ playerId, canEdit }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// PITCHING STATS VIEW (#192)
+// ============================================
+const PITCH_CONTEXTS = [
+  { value: 'bullpen', label: 'Bullpen' },
+  { value: 'lives', label: 'Lives' },
+  { value: 'scrimmage', label: 'Scrimmage' },
+  { value: 'practice', label: 'Practice' },
+  { value: 'cage', label: 'Cage' },
+  { value: 'long_toss', label: 'Long Toss' },
+  { value: 'other', label: 'Other' },
+];
+const PITCH_RESULTS = ['strike', 'ball', 'foul', 'swing_miss', 'in_play', 'k', 'bb', 'hbp', 'hit', 'out'];
+
+function PitchingStatsView({ playerId, canEdit }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({
+    log_date: fmtLocalDate(new Date()),
+    context: 'bullpen',
+    pitch_type: '',
+    velocity: '',
+    spin_rate: '',
+    location: '',
+    result: 'strike',
+    pitch_count: '',
+    notes: '',
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('practice_pitches')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('log_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    setRows(data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [playerId]);
+
+  const totals = useMemo(() => {
+    const total = rows.length;
+    const strikes = rows.filter(r => ['strike', 'foul', 'swing_miss', 'in_play', 'k'].includes(r.result)).length;
+    const swingMiss = rows.filter(r => r.result === 'swing_miss').length;
+    const velos = rows.map(r => r.velocity).filter(v => v != null);
+    const maxVelo = velos.length ? Math.max(...velos) : '—';
+    const avgVelo = velos.length ? (velos.reduce((a, b) => a + b, 0) / velos.length).toFixed(1) : '—';
+    return {
+      total,
+      strikes,
+      strikePct: total ? `${Math.round(strikes / total * 100)}%` : '—',
+      swingMiss,
+      maxVelo,
+      avgVelo,
+    };
+  }, [rows]);
+
+  const save = async () => {
+    if (!draft.log_date) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('practice_pitches').insert({
+      player_id: playerId,
+      log_date: draft.log_date,
+      context: draft.context,
+      pitch_type: draft.pitch_type || null,
+      velocity: draft.velocity ? Number(draft.velocity) : null,
+      spin_rate: draft.spin_rate ? Number(draft.spin_rate) : null,
+      location: draft.location || null,
+      result: draft.result || null,
+      pitch_count: draft.pitch_count ? Number(draft.pitch_count) : null,
+      notes: draft.notes || null,
+      logged_by: user?.id || null,
+    });
+    if (error) { alert('Save failed: ' + error.message); return; }
+    setAdding(false);
+    setDraft({ log_date: fmtLocalDate(new Date()), context: 'bullpen', pitch_type: '', velocity: '', spin_rate: '', location: '', result: 'strike', pitch_count: '', notes: '' });
+    load();
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Delete this pitch?')) return;
+    await supabase.from('practice_pitches').delete().eq('id', id);
+    load();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">Pitching Stats</h3>
+        {canEdit && !adding && (
+          <button onClick={() => setAdding(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
+            <Plus size={16} />
+            <span>Log Pitch</span>
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-center">
+        {[
+          { label: 'Pitches', val: totals.total },
+          { label: 'Strikes', val: totals.strikes },
+          { label: 'Strike %', val: totals.strikePct },
+          { label: 'Swing/Miss', val: totals.swingMiss },
+          { label: 'Max Velo', val: totals.maxVelo },
+          { label: 'Avg Velo', val: totals.avgVelo },
+        ].map(s => (
+          <div key={s.label} className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+            <div className="text-xs text-gray-500 uppercase tracking-wide">{s.label}</div>
+            <div className="text-lg font-bold text-gray-900 tabular-nums">{s.val}</div>
+          </div>
+        ))}
+      </div>
+      {adding && (
+        <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Date</label><input type="date" value={draft.log_date} onChange={e => setDraft({ ...draft, log_date: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Context</label><select value={draft.context} onChange={e => setDraft({ ...draft, context: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">{PITCH_CONTEXTS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Pitch Type</label><input value={draft.pitch_type} onChange={e => setDraft({ ...draft, pitch_type: e.target.value })} placeholder="FB/CB/SL/CH" className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Result</label><select value={draft.result} onChange={e => setDraft({ ...draft, result: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">{PITCH_RESULTS.map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Velo (mph)</label><input type="number" step="0.1" value={draft.velocity} onChange={e => setDraft({ ...draft, velocity: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Spin (rpm)</label><input type="number" value={draft.spin_rate} onChange={e => setDraft({ ...draft, spin_rate: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Location</label><input value={draft.location} onChange={e => setDraft({ ...draft, location: e.target.value })} placeholder="e.g., low and away" className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Pitch #</label><input type="number" value={draft.pitch_count} onChange={e => setDraft({ ...draft, pitch_count: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+          </div>
+          <div><label className="block text-xs font-medium text-gray-700 mb-1">Notes</label><textarea value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} rows={2} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdding(false)} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm">Cancel</button>
+            <button onClick={save} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save</button>
+          </div>
+        </div>
+      )}
+      {loading ? (
+        <p className="text-sm text-gray-500 text-center py-6">Loading pitches...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-6">No pitches logged yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+            <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <tr>
+                <th className="px-3 py-2 text-left">Date</th>
+                <th className="px-3 py-2 text-left">Context</th>
+                <th className="px-3 py-2 text-left">Pitch</th>
+                <th className="px-3 py-2 text-center">Velo</th>
+                <th className="px-3 py-2 text-center">Spin</th>
+                <th className="px-3 py-2 text-left">Location</th>
+                <th className="px-3 py-2 text-center">Result</th>
+                <th className="px-3 py-2 text-left">Notes</th>
+                {canEdit && <th className="px-3 py-2 w-10"></th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{r.log_date}</td>
+                  <td className="px-3 py-2 text-gray-700 capitalize">{(PITCH_CONTEXTS.find(c => c.value === r.context)?.label) || r.context}</td>
+                  <td className="px-3 py-2 text-gray-700">{r.pitch_type || '—'}</td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.velocity ?? '—'}</td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.spin_rate ?? '—'}</td>
+                  <td className="px-3 py-2 text-gray-700">{r.location || '—'}</td>
+                  <td className="px-3 py-2 text-center capitalize">{r.result || '—'}</td>
+                  <td className="px-3 py-2 text-gray-500 text-xs">{r.notes || ''}</td>
+                  {canEdit && <td className="px-3 py-2 text-right"><button onClick={() => remove(r.id)} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// CATCHING STATS VIEW (#192)
+// ============================================
+const CATCH_DRILLS = [
+  { value: 'pop_time', label: 'Pop Time' },
+  { value: 'framing', label: 'Framing' },
+  { value: 'blocking', label: 'Blocking' },
+  { value: 'throwdown', label: 'Throwdown' },
+  { value: 'receiving', label: 'Receiving' },
+  { value: 'other', label: 'Other' },
+];
+const CATCH_CONTEXTS = [
+  { value: 'practice', label: 'Practice' },
+  { value: 'lives', label: 'Lives' },
+  { value: 'scrimmage', label: 'Scrimmage' },
+  { value: 'bullpen', label: 'Bullpen' },
+  { value: 'cage', label: 'Cage' },
+  { value: 'other', label: 'Other' },
+];
+
+function CatchingStatsView({ playerId, canEdit }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({
+    log_date: fmtLocalDate(new Date()),
+    context: 'practice',
+    drill_type: 'pop_time',
+    pop_time_sec: '',
+    throwdown_accuracy: '',
+    block_attempts: '',
+    block_clean: '',
+    framing_grade: '',
+    notes: '',
+  });
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('practice_catching')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('log_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    setRows(data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [playerId]);
+
+  const totals = useMemo(() => {
+    const popTimes = rows.filter(r => r.drill_type === 'pop_time' && r.pop_time_sec != null).map(r => Number(r.pop_time_sec));
+    const blockAttempts = rows.reduce((s, r) => s + (Number(r.block_attempts) || 0), 0);
+    const blockClean = rows.reduce((s, r) => s + (Number(r.block_clean) || 0), 0);
+    return {
+      total: rows.length,
+      bestPop: popTimes.length ? Math.min(...popTimes).toFixed(2) : '—',
+      avgPop: popTimes.length ? (popTimes.reduce((a, b) => a + b, 0) / popTimes.length).toFixed(2) : '—',
+      blockPct: blockAttempts ? `${Math.round(blockClean / blockAttempts * 100)}%` : '—',
+    };
+  }, [rows]);
+
+  const save = async () => {
+    if (!draft.log_date || !draft.drill_type) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('practice_catching').insert({
+      player_id: playerId,
+      log_date: draft.log_date,
+      context: draft.context,
+      drill_type: draft.drill_type,
+      pop_time_sec: draft.pop_time_sec ? Number(draft.pop_time_sec) : null,
+      throwdown_accuracy: draft.throwdown_accuracy || null,
+      block_attempts: draft.block_attempts ? Number(draft.block_attempts) : null,
+      block_clean: draft.block_clean ? Number(draft.block_clean) : null,
+      framing_grade: draft.framing_grade || null,
+      notes: draft.notes || null,
+      logged_by: user?.id || null,
+    });
+    if (error) { alert('Save failed: ' + error.message); return; }
+    setAdding(false);
+    setDraft({ log_date: fmtLocalDate(new Date()), context: 'practice', drill_type: 'pop_time', pop_time_sec: '', throwdown_accuracy: '', block_attempts: '', block_clean: '', framing_grade: '', notes: '' });
+    load();
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Delete this entry?')) return;
+    await supabase.from('practice_catching').delete().eq('id', id);
+    load();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">Catching Stats</h3>
+        {canEdit && !adding && (
+          <button onClick={() => setAdding(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
+            <Plus size={16} />
+            <span>Log Entry</span>
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+        {[
+          { label: 'Entries', val: totals.total },
+          { label: 'Best Pop', val: totals.bestPop },
+          { label: 'Avg Pop', val: totals.avgPop },
+          { label: 'Block %', val: totals.blockPct },
+        ].map(s => (
+          <div key={s.label} className="bg-gray-50 rounded-lg p-2 border border-gray-200">
+            <div className="text-xs text-gray-500 uppercase tracking-wide">{s.label}</div>
+            <div className="text-lg font-bold text-gray-900 tabular-nums">{s.val}</div>
+          </div>
+        ))}
+      </div>
+      {adding && (
+        <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Date</label><input type="date" value={draft.log_date} onChange={e => setDraft({ ...draft, log_date: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Context</label><select value={draft.context} onChange={e => setDraft({ ...draft, context: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">{CATCH_CONTEXTS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Drill</label><select value={draft.drill_type} onChange={e => setDraft({ ...draft, drill_type: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">{CATCH_DRILLS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}</select></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Pop Time (sec)</label><input type="number" step="0.01" value={draft.pop_time_sec} onChange={e => setDraft({ ...draft, pop_time_sec: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Throwdown</label><input value={draft.throwdown_accuracy} onChange={e => setDraft({ ...draft, throwdown_accuracy: e.target.value })} placeholder="e.g., on-bag" className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Block Att.</label><input type="number" value={draft.block_attempts} onChange={e => setDraft({ ...draft, block_attempts: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Block Clean</label><input type="number" value={draft.block_clean} onChange={e => setDraft({ ...draft, block_clean: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Framing</label><select value={draft.framing_grade} onChange={e => setDraft({ ...draft, framing_grade: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"><option value="">—</option>{['A','B','C','D','F'].map(g => <option key={g} value={g}>{g}</option>)}</select></div>
+          </div>
+          <div><label className="block text-xs font-medium text-gray-700 mb-1">Notes</label><textarea value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} rows={2} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdding(false)} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm">Cancel</button>
+            <button onClick={save} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save</button>
+          </div>
+        </div>
+      )}
+      {loading ? (
+        <p className="text-sm text-gray-500 text-center py-6">Loading entries...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-6">No catching entries logged yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+            <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <tr>
+                <th className="px-3 py-2 text-left">Date</th>
+                <th className="px-3 py-2 text-left">Context</th>
+                <th className="px-3 py-2 text-left">Drill</th>
+                <th className="px-3 py-2 text-center">Pop</th>
+                <th className="px-3 py-2 text-left">Throwdown</th>
+                <th className="px-3 py-2 text-center">Block</th>
+                <th className="px-3 py-2 text-center">Framing</th>
+                <th className="px-3 py-2 text-left">Notes</th>
+                {canEdit && <th className="px-3 py-2 w-10"></th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{r.log_date}</td>
+                  <td className="px-3 py-2 text-gray-700 capitalize">{(CATCH_CONTEXTS.find(c => c.value === r.context)?.label) || r.context}</td>
+                  <td className="px-3 py-2 text-gray-700">{(CATCH_DRILLS.find(d => d.value === r.drill_type)?.label) || r.drill_type}</td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.pop_time_sec ?? '—'}</td>
+                  <td className="px-3 py-2 text-gray-700">{r.throwdown_accuracy || '—'}</td>
+                  <td className="px-3 py-2 text-center text-gray-700 tabular-nums">{r.block_attempts ? `${r.block_clean ?? 0}/${r.block_attempts}` : '—'}</td>
+                  <td className="px-3 py-2 text-center text-gray-700">{r.framing_grade || '—'}</td>
+                  <td className="px-3 py-2 text-gray-500 text-xs">{r.notes || ''}</td>
+                  {canEdit && <td className="px-3 py-2 text-right"><button onClick={() => remove(r.id)} className="text-gray-400 hover:text-red-600"><Trash2 size={14} /></button></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================
+// MAREK TAB (#193)
+// Bloodwork panels uploaded per-player. Files live in 'bloodwork' bucket.
+// ============================================
+function MarekTab({ playerId, canEdit }) {
+  const [panels, setPanels] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({
+    panel_date: fmtLocalDate(new Date()),
+    panel_type: '',
+    summary: '',
+    follow_up_at: '',
+    file: null,
+  });
+  const [uploading, setUploading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('marek_panels')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('panel_date', { ascending: false });
+    setPanels(data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [playerId]);
+
+  const save = async () => {
+    if (!draft.panel_date) { alert('Panel date is required.'); return; }
+    setUploading(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    let file_url = null, file_name = null;
+    if (draft.file) {
+      const path = `${playerId}/${Date.now()}-${draft.file.name}`;
+      const { error: upErr } = await supabase.storage.from('bloodwork').upload(path, draft.file, { upsert: false });
+      if (upErr) { setUploading(false); alert('Upload failed: ' + upErr.message); return; }
+      file_url = path;
+      file_name = draft.file.name;
+    }
+    const { error } = await supabase.from('marek_panels').insert({
+      player_id: playerId,
+      panel_date: draft.panel_date,
+      panel_type: draft.panel_type || null,
+      summary: draft.summary || null,
+      follow_up_at: draft.follow_up_at || null,
+      file_url,
+      file_name,
+      uploaded_by: user?.id || null,
+    });
+    setUploading(false);
+    if (error) { alert('Save failed: ' + error.message); return; }
+    setAdding(false);
+    setDraft({ panel_date: fmtLocalDate(new Date()), panel_type: '', summary: '', follow_up_at: '', file: null });
+    load();
+  };
+
+  const remove = async (panel) => {
+    if (!window.confirm('Delete this panel and its file?')) return;
+    if (panel.file_url) await supabase.storage.from('bloodwork').remove([panel.file_url]);
+    await supabase.from('marek_panels').delete().eq('id', panel.id);
+    load();
+  };
+
+  const downloadFile = async (panel) => {
+    if (!panel.file_url) return;
+    const { data, error } = await supabase.storage.from('bloodwork').createSignedUrl(panel.file_url, 600);
+    if (error || !data) { alert('Could not generate file link.'); return; }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">Marek Bloodwork Panels</h3>
+          <p className="text-sm text-gray-500">Upload lab results from the Marek partnership. Used to inform programming for 18+ athletes.</p>
+        </div>
+        {canEdit && !adding && (
+          <button onClick={() => setAdding(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
+            <Plus size={16} />
+            <span>Add Panel</span>
+          </button>
+        )}
+      </div>
+      {adding && (
+        <div className="border border-blue-200 bg-blue-50 rounded-lg p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Panel Date *</label><input type="date" value={draft.panel_date} onChange={e => setDraft({ ...draft, panel_date: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Panel Type</label><input value={draft.panel_type} onChange={e => setDraft({ ...draft, panel_type: e.target.value })} placeholder="e.g., Hormone, Comprehensive" className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+            <div><label className="block text-xs font-medium text-gray-700 mb-1">Follow-up Date</label><input type="date" value={draft.follow_up_at} onChange={e => setDraft({ ...draft, follow_up_at: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+          </div>
+          <div><label className="block text-xs font-medium text-gray-700 mb-1">Summary / Key Findings</label><textarea value={draft.summary} onChange={e => setDraft({ ...draft, summary: e.target.value })} rows={3} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" /></div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">PDF Report (optional)</label>
+            <input type="file" accept="application/pdf,image/*" onChange={e => setDraft({ ...draft, file: e.target.files?.[0] || null })} className="w-full text-sm" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setAdding(false)} disabled={uploading} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm">Cancel</button>
+            <button onClick={save} disabled={uploading} className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">{uploading ? 'Uploading...' : 'Save'}</button>
+          </div>
+        </div>
+      )}
+      {loading ? (
+        <p className="text-sm text-gray-500 text-center py-6">Loading panels...</p>
+      ) : panels.length === 0 ? (
+        <div className="text-center py-10 text-gray-400">
+          <FileText size={40} className="mx-auto mb-3 text-gray-300" />
+          <p className="text-sm">No Marek panels uploaded yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {panels.map(p => (
+            <div key={p.id} className="border border-gray-200 rounded-lg p-4 bg-white">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-semibold text-gray-900">{p.panel_type || 'Panel'}</h4>
+                    <span className="text-sm text-gray-500">{p.panel_date}</span>
+                    {p.follow_up_at && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Follow-up {p.follow_up_at}</span>
+                    )}
+                  </div>
+                  {p.summary && <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{p.summary}</p>}
+                  {p.file_url && (
+                    <button onClick={() => downloadFile(p)} className="mt-2 text-sm text-blue-600 hover:text-blue-800 inline-flex items-center gap-1">
+                      <Paperclip size={14} />
+                      <span>{p.file_name || 'View report'}</span>
+                    </button>
+                  )}
+                </div>
+                {canEdit && (
+                  <button onClick={() => remove(p)} className="text-gray-400 hover:text-red-600 flex-shrink-0"><Trash2 size={14} /></button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

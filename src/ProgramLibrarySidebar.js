@@ -133,7 +133,8 @@ export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
   const toggleFolder = (key) => setOpenFolders((s) => ({ ...s, [key]: !s[key] }));
 
   const startDrag = (e, kind, item) => {
-    const payload = { kind, id: item.id, name: item.name };
+    // Include folder so the drop handler can resolve the category color (#191).
+    const payload = { kind, id: item.id, name: item.name, folder: item.folder || null };
     e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
     e.dataTransfer.setData('text/plain', item.name);
     e.dataTransfer.effectAllowed = 'copy';

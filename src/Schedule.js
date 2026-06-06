@@ -41,6 +41,22 @@ function getWorkoutCategory(title) {
   return 'general';
 }
 
+// Map a ProgramLibrarySidebar folder name to the canonical category we store on
+// schedule_events.category so calendar tiles inherit the source-library color.
+// Keep in sync with FOLDER_COLORS in ProgramLibrarySidebar.js (#191).
+export function folderToCategory(folder) {
+  if (!folder) return null;
+  const f = String(folder).toLowerCase();
+  if (f === 'hitting') return 'hitting';
+  if (f === 'pitching') return 'pitching';
+  if (['catching', 'infield', 'outfield', 'submarine', 'football'].includes(f)) return 'fielding';
+  if (['strength', 'body builder', 'college', 'high school', 'pro', 'youth', 'youth weighted'].includes(f)) return 'strength';
+  if (['recovery', 'rehab', 'meals'].includes(f)) return 'recovery';
+  if (f === 'warmup') return 'warmup';
+  if (f === 'cardio') return 'conditioning';
+  return null;
+}
+
 function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
   const events = [];
   for (const a of assignments) {
@@ -785,7 +801,8 @@ export default function Schedule({ userId, userRole }) {
           [ex.name, ex.sets && ex.reps ? `${ex.sets}x${ex.reps}` : (ex.sets || ''), ex.rest || '', ex.load || '', ex.link || ''].join(' | ')
         ).join('\n') : ''
       ].filter(Boolean).join('\n');
-      const ok = await insertSchedule([{ event_type: 'workout', title: tpl?.name || payload.name, notes: notesWithExercises || null, event_date: dateStr }]);
+      const category = folderToCategory(tpl?.folder) || folderToCategory(payload.folder) || getWorkoutCategory(tpl?.name || payload.name);
+      const ok = await insertSchedule([{ event_type: 'workout', title: tpl?.name || payload.name, notes: notesWithExercises || null, event_date: dateStr, category }]);
       if (ok) { if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents(); }
       return;
     }
@@ -1569,12 +1586,19 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
   const getEventColor = (event) => {
     const eventType = typeof event === 'string' ? event : event?.event_type;
     if (eventType === 'workout') {
-      const cat = getWorkoutCategory(typeof event === 'string' ? '' : event?.title);
+      // Prefer the explicit category column set at drag/drop time (#191); fall
+      // back to title heuristic for legacy rows that don't have it yet.
+      const cat = (typeof event === 'object' && event?.category) || getWorkoutCategory(typeof event === 'string' ? '' : event?.title);
       switch(cat) {
-        case 'pitching': return 'bg-green-500 text-white border-green-600';
         case 'hitting': return 'bg-blue-500 text-white border-blue-600';
+        case 'pitching': return 'bg-green-500 text-white border-green-600';
+        case 'fielding': return 'bg-green-500 text-white border-green-600';
+        case 'strength': return 'bg-orange-500 text-white border-orange-600';
+        case 'recovery': return 'bg-purple-500 text-white border-purple-600';
         case 'warmup': return 'bg-purple-500 text-white border-purple-600';
-        default: return 'bg-orange-500 text-white border-orange-600';
+        case 'mobility': return 'bg-purple-500 text-white border-purple-600';
+        case 'conditioning': return 'bg-yellow-500 text-white border-yellow-600';
+        default: return 'bg-gray-500 text-white border-gray-600';
       }
     }
     switch(eventType) {
@@ -1815,12 +1839,18 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
   const getEventColor = (ev) => {
     const eventType = typeof ev === 'string' ? ev : ev?.event_type;
     if (eventType === 'workout') {
-      const cat = getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
+      // Match MonthView palette: read explicit category first (#191).
+      const cat = (typeof ev === 'object' && ev?.category) || getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
       switch(cat) {
-        case 'pitching': return 'border-l-4 border-green-600 bg-green-100';
         case 'hitting': return 'border-l-4 border-blue-600 bg-blue-100';
+        case 'pitching': return 'border-l-4 border-green-600 bg-green-100';
+        case 'fielding': return 'border-l-4 border-green-600 bg-green-100';
+        case 'strength': return 'border-l-4 border-orange-600 bg-orange-100';
+        case 'recovery': return 'border-l-4 border-purple-600 bg-purple-100';
         case 'warmup': return 'border-l-4 border-purple-600 bg-purple-100';
-        default: return 'border-l-4 border-orange-600 bg-orange-100';
+        case 'mobility': return 'border-l-4 border-purple-600 bg-purple-100';
+        case 'conditioning': return 'border-l-4 border-yellow-600 bg-yellow-100';
+        default: return 'border-l-4 border-gray-600 bg-gray-100';
       }
     }
     switch(eventType) {
@@ -3887,12 +3917,17 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole }) {
   const getEventColor = (ev) => {
     const eventType = typeof ev === 'string' ? ev : ev?.event_type;
     if (eventType === 'workout') {
-      const cat = getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
+      const cat = (typeof ev === 'object' && ev?.category) || getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
       switch(cat) {
-        case 'pitching': return 'from-green-50 to-green-100 border-green-200';
         case 'hitting': return 'from-blue-50 to-blue-100 border-blue-200';
+        case 'pitching': return 'from-green-50 to-green-100 border-green-200';
+        case 'fielding': return 'from-green-50 to-green-100 border-green-200';
+        case 'strength': return 'from-orange-50 to-orange-100 border-orange-200';
+        case 'recovery': return 'from-purple-50 to-purple-100 border-purple-200';
         case 'warmup': return 'from-purple-50 to-purple-100 border-purple-200';
-        default: return 'from-orange-50 to-orange-100 border-orange-200';
+        case 'mobility': return 'from-purple-50 to-purple-100 border-purple-200';
+        case 'conditioning': return 'from-yellow-50 to-yellow-100 border-yellow-200';
+        default: return 'from-gray-50 to-gray-100 border-gray-200';
       }
     }
     switch(eventType) {
@@ -5094,18 +5129,45 @@ function PlayerAddGameModal({ userId, onClose, onSuccess }) {
     notes: '',
   });
   const [timeTBD, setTimeTBD] = useState(false);
+  // #190: repeat options. 'none' (default), 'weekly', 'biweekly', 'monthly'.
+  const [repeat, setRepeat] = useState('none');
+  const [repeatEnd, setRepeatEnd] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const buildOccurrenceDates = (startDateStr, freq, endDateStr) => {
+    if (freq === 'none' || !endDateStr) return [startDateStr];
+    const start = new Date(startDateStr + 'T00:00:00');
+    const end = new Date(endDateStr + 'T00:00:00');
+    if (end < start) return [startDateStr];
+    const stepDays = freq === 'weekly' ? 7 : freq === 'biweekly' ? 14 : 0;
+    const stepMonths = freq === 'monthly' ? 1 : 0;
+    const out = [];
+    const cap = 104; // hard cap so a wrong end date can't insert thousands
+    let d = new Date(start);
+    while (d <= end && out.length < cap) {
+      out.push(fmtLocalDate(d));
+      if (stepDays) d.setDate(d.getDate() + stepDays);
+      else if (stepMonths) d.setMonth(d.getMonth() + stepMonths);
+      else break;
+    }
+    return out;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    const { error: insertError } = await supabase.from('schedule_events').insert({
+    if (repeat !== 'none' && !repeatEnd) {
+      setError('Pick a "Repeat until" date to use a repeating game.');
+      setLoading(false);
+      return;
+    }
+    const dates = buildOccurrenceDates(formData.event_date, repeat, repeatEnd);
+    const baseRow = {
       title: formData.title,
       opponent: formData.title,
       event_type: 'game',
-      event_date: formData.event_date,
       event_time: timeTBD ? null : (formData.event_time || null),
       event_end_time: timeTBD ? null : (formData.event_end_time || null),
       location: formData.location || null,
@@ -5115,7 +5177,9 @@ function PlayerAddGameModal({ userId, onClose, onSuccess }) {
       team_id: null,
       training_program_id: null,
       meal_plan_id: null,
-    });
+    };
+    const rows = dates.map(d => ({ ...baseRow, event_date: d }));
+    const { error: insertError } = await supabase.from('schedule_events').insert(rows);
     if (insertError) { setError(insertError.message); setLoading(false); return; }
     setLoading(false);
     onSuccess();
@@ -5214,6 +5278,40 @@ function PlayerAddGameModal({ userId, onClose, onSuccess }) {
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+          <div className="border-t border-gray-200 pt-3">
+            <div className="flex items-center gap-2 mb-2 text-sm font-medium text-gray-700">
+              <Repeat size={16} className="text-gray-400" />
+              <span>Repeat</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <select
+                  value={repeat}
+                  onChange={(e) => setRepeat(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="none">Does not repeat</option>
+                  <option value="weekly">Every week</option>
+                  <option value="biweekly">Every 2 weeks</option>
+                  <option value="monthly">Every month</option>
+                </select>
+              </div>
+              <div>
+                <input
+                  type="date"
+                  value={repeatEnd}
+                  onChange={(e) => setRepeatEnd(e.target.value)}
+                  disabled={repeat === 'none'}
+                  min={formData.event_date}
+                  placeholder="Repeat until"
+                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${repeat === 'none' ? 'bg-gray-100 text-gray-400' : ''}`}
+                />
+              </div>
+            </div>
+            {repeat !== 'none' && (
+              <p className="text-xs text-gray-500 mt-1">Creates one game per occurrence between the start date and "Repeat until" (max 104 occurrences).</p>
+            )}
           </div>
           <div className="flex space-x-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
