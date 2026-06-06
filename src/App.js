@@ -13,6 +13,7 @@ import ManageAthletes from './ManageAthletes';
 import ManageCoaches from './ManageCoaches';
 import WaiverPage from './WaiverPage';
 import ContractPage from './ContractPage';
+import FacilityFinePage from './FacilityFinePage';
 import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
@@ -33,6 +34,7 @@ export default function App() {
   const [waiverSigned, setWaiverSigned] = useState(null);
   const [contractSigned, setContractSigned] = useState(null);
   const [loiSigned, setLoiSigned] = useState(null);
+  const [facilityFineSigned, setFacilityFineSigned] = useState(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [currentPortal, setCurrentPortal] = useState(() => {
     try {
@@ -81,6 +83,28 @@ export default function App() {
     setLoiSigned(!!data);
   };
 
+  const checkFacilityFineStatus = async (uid) => {
+    // Find the most recent uploaded "Facility Fine" document. If none exists,
+    // mark as signed (nothing to nag about). If it exists, check whether this
+    // user has signed THIS document — re-uploading a new version of the doc
+    // resets the prompt for everyone.
+    const { data: docRows } = await supabase
+      .from('staff_documents')
+      .select('id')
+      .ilike('title', 'Facility Fine%')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const doc = docRows && docRows[0];
+    if (!doc) { setFacilityFineSigned(true); return; }
+    const { data } = await supabase
+      .from('facility_fine_signatures')
+      .select('id')
+      .eq('user_id', uid)
+      .eq('document_id', doc.id)
+      .maybeSingle();
+    setFacilityFineSigned(!!data);
+  };
+
   useEffect(() => {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
@@ -102,11 +126,14 @@ export default function App() {
         checkWaiverStatus(session.user.id);
         checkContractStatus(session.user.id);
         checkLoiStatus(session.user.id);
+        checkFacilityFineStatus(session.user.id);
       } else {
         setUserRole(null);
         setUserId(null);
         setWaiverSigned(null);
         setContractSigned(null);
+        setLoiSigned(null);
+        setFacilityFineSigned(null);
       }
       setLoading(false);
     });
@@ -161,8 +188,8 @@ export default function App() {
     if (error) {
       console.error('Error fetching user role:', error);
       // Session may be stale — try refreshing and retrying once
-      const { data: refreshData } = await supabase.auth.refreshSession();
-      if (refreshData?.session) {
+      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+      if (!refreshError && refreshData?.session) {
         const { data: retryData, error: retryError } = await supabase
           .from('users')
           .select('role, secondary_role, full_name, email, avatar_url')
@@ -172,10 +199,18 @@ export default function App() {
           applyUserRow(retryData);
           return;
         }
+      } else if (refreshError) {
+        // Refresh token is dead (Dom Giustino's case in #180 — a stale session
+        // from weeks ago kept "User" in the sidebar for 3s before the SDK gave
+        // up). Force a clean sign-out so the next mount shows the login screen
+        // instead of a half-loaded shell. The refresh-token failure is the
+        // signal that this is NOT a transient fetch error.
+        console.warn('Auth refresh failed; signing out stale session.');
+        await supabase.auth.signOut();
       }
-      // Don't auto sign-out on a transient fetch failure — that would log the
-      // user out mid-session and is the root of issue #164's "logs in then
-      // says User" flicker. Keep prior state; user can manually retry.
+      // Don't auto sign-out on a transient fetch failure with a still-valid
+      // refresh token — that would log the user out mid-session and is the
+      // root of issue #164's "logs in then says User" flicker.
     } else {
       applyUserRow(data);
     }
@@ -235,6 +270,8 @@ export default function App() {
         setContractSigned={setContractSigned}
         loiSigned={loiSigned}
         setLoiSigned={setLoiSigned}
+        facilityFineSigned={facilityFineSigned}
+        setFacilityFineSigned={setFacilityFineSigned}
         currentPortal={currentPortal}
         setCurrentPortal={setCurrentPortal}
       />
@@ -558,7 +595,7 @@ function ResetPasswordPage({ onComplete }) {
   );
 }
 
-function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, loiSigned, setLoiSigned, currentPortal, setCurrentPortal }) {
+function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, loiSigned, setLoiSigned, facilityFineSigned, setFacilityFineSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
   const [navigateTeamId, setNavigateTeamId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -618,6 +655,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
         waiverSigned={waiverSigned}
         contractSigned={contractSigned}
         loiSigned={loiSigned}
+        facilityFineSigned={facilityFineSigned}
         onSwitchPortal={() => { setCurrentPortal('work'); setSidebarOpen(false); }}
         canSwitchRole={hasSecondary}
         otherRole={hasSecondary ? (viewMode === userRole ? secondaryRole : userRole) : null}
@@ -662,6 +700,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
             {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
+            {currentView === 'facility-fine' && <FacilityFinePage userId={userId} onSigned={() => setFacilityFineSigned(true)} />}
             {currentView === 'settings' && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
           </div>
         </div>
@@ -670,9 +709,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, loiSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, loiSigned, facilityFineSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
   const [documentsExpanded, setDocumentsExpanded] = useState(true);
-  const anyDocUnsigned = waiverSigned === false || contractSigned === false || loiSigned === false;
+  const anyDocUnsigned = waiverSigned === false || contractSigned === false || loiSigned === false || facilityFineSigned === false;
   return (
     <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col z-50 transition-transform duration-200 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
       <div className="mb-4">
@@ -767,6 +806,18 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
                 <FileText size={16} />
                 <span className="flex-1 text-left">Letter of Intent</span>
                 {loiSigned === false && (
+                  <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0"></span>
+                )}
+              </button>
+              <button
+                onClick={() => setCurrentView('facility-fine')}
+                className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
+                  currentView === 'facility-fine' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                }`}
+              >
+                <FileText size={16} />
+                <span className="flex-1 text-left">Facility Fine</span>
+                {facilityFineSigned === false && (
                   <span className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0"></span>
                 )}
               </button>
