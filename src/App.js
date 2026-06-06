@@ -243,8 +243,14 @@ export default function App() {
     );
   }
 
-  if (passwordRecovery && session) {
-    return <ResetPasswordPage onComplete={() => setPasswordRecovery(false)} />;
+  // #194: render the reset form whenever passwordRecovery is true, even if
+  // the session hasn't been established yet. The previous `&& session` gate
+  // meant a recovery URL with a still-pending token exchange would fall
+  // through to LoginPage, which looked like the link was broken. The reset
+  // page now shows a "Verifying..." state until the session lands, then
+  // unlocks the form.
+  if (passwordRecovery) {
+    return <ResetPasswordPage session={session} onComplete={() => setPasswordRecovery(false)} />;
   }
 
   if (!session) {
@@ -525,13 +531,24 @@ function LoginPage({ onLogin }) {
   );
 }
 
-function ResetPasswordPage({ onComplete }) {
+function ResetPasswordPage({ session, onComplete }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saving, setSaving] = useState(false);
+  // #194: wait briefly for Supabase to finish exchanging the recovery code
+  // for a session. If still no session after 8 seconds, the link is bad
+  // (expired, redirect URL not whitelisted, or token revoked) — surface
+  // that to the user instead of leaving them staring at a disabled form.
+  const [verifyTimedOut, setVerifyTimedOut] = useState(false);
+  useEffect(() => {
+    if (session) return;
+    const t = setTimeout(() => setVerifyTimedOut(true), 8000);
+    return () => clearTimeout(t);
+  }, [session]);
 
   const handleReset = async (e) => {
     e.preventDefault();
+    if (!session) return;
     if (newPassword.length < 12) {
       alert('Password must be at least 12 characters.');
       return;
@@ -551,6 +568,8 @@ function ResetPasswordPage({ onComplete }) {
     }
   };
 
+  const sessionPending = !session && !verifyTimedOut;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
@@ -559,6 +578,23 @@ function ResetPasswordPage({ onComplete }) {
           <h1 className="text-2xl font-bold text-gray-900">Set New Password</h1>
           <p className="text-gray-600 mt-2 text-sm">Enter your new password below.</p>
         </div>
+        {sessionPending && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-2 rounded text-sm text-center">
+            Verifying reset link...
+          </div>
+        )}
+        {verifyTimedOut && !session && (
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
+            <p className="font-medium">Reset link expired or invalid.</p>
+            <p className="mt-1">Go back to the login screen and request a new reset email.</p>
+            <button
+              onClick={onComplete}
+              className="mt-3 w-full bg-red-600 text-white py-2 rounded hover:bg-red-700 transition"
+            >
+              Back to login
+            </button>
+          </div>
+        )}
         <form onSubmit={handleReset} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">New Password</label>
@@ -566,8 +602,9 @@ function ResetPasswordPage({ onComplete }) {
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
               required
+              disabled={!session}
               minLength={12}
             />
           </div>
@@ -577,17 +614,18 @@ function ResetPasswordPage({ onComplete }) {
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
               required
+              disabled={!session}
               minLength={12}
             />
           </div>
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || !session}
             className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
           >
-            {saving ? 'Updating...' : 'Update Password'}
+            {saving ? 'Updating...' : (!session ? 'Waiting for verification...' : 'Update Password')}
           </button>
         </form>
       </div>
