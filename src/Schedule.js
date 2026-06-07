@@ -3480,6 +3480,13 @@ const CATEGORY_BAR = {
   general: 'bg-gray-500',
 };
 
+const WORKOUT_HEADER_COLOR = {
+  hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
+  pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
+  warmup:   { bg: 'bg-purple-100', text: 'text-purple-600' },
+  general:  { bg: 'bg-orange-100', text: 'text-orange-600' },
+};
+
 function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
   const [exercises, setExercises] = useState([]);
   const [trainingDay, setTrainingDay] = useState(null);
@@ -3558,9 +3565,11 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
         <div className="border-b border-gray-200 p-5 flex items-start justify-between flex-shrink-0">
           <div className="flex items-start space-x-3 min-w-0">
-            <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
-              <Dumbbell size={22} className="text-orange-600" />
-            </div>
+            {(() => { const hc = WORKOUT_HEADER_COLOR[getWorkoutCategory(event.title)] || WORKOUT_HEADER_COLOR.general; return (
+              <div className={`p-2 ${hc.bg} rounded-lg flex-shrink-0`}>
+                <Dumbbell size={22} className={hc.text} />
+              </div>
+            ); })()}
             <div className="min-w-0">
               <h2 className="text-xl font-bold text-gray-900 truncate">{event.title || 'Workout'}</h2>
               <div className="text-sm text-gray-600 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">

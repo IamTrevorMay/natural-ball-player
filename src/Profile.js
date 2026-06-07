@@ -58,6 +58,20 @@ const PT_STATUS_COLORS = {
 const PT_VISIT_TYPES = ['Evaluation', 'Treatment', 'Follow-up', 'Re-evaluation', 'Discharge'];
 const PT_BODY_AREAS = ['Shoulder', 'Elbow', 'Forearm/Wrist', 'Lower back', 'Hip', 'Knee', 'Ankle/Foot', 'Core', 'Other'];
 
+const PROGRAM_HEADER_COLOR = {
+  hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
+  pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
+  warmup:   { bg: 'bg-purple-100', text: 'text-purple-600' },
+  general:  { bg: 'bg-orange-100', text: 'text-orange-600' },
+};
+function getProgramCategory(title) {
+  const t = (title || '').toLowerCase();
+  if (t.includes('pitch') || t.includes('throw') || t.includes('mound') || t.includes('bullpen') || t.includes('long toss') || t.includes('velo') || t.includes('pen ') || t.includes(' pen')) return 'pitching';
+  if (t.includes('hit') || t.includes('tee') || t.includes('bp ') || t.includes('batting') || t.includes('swing') || t.includes(' bp')) return 'hitting';
+  if (t.includes('warm') || t.includes('mobil') || t.includes('stretch') || t.includes('cars') || t.includes('foam') || t.includes('band') || t.includes('recovery') || t.includes('yoga') || t.includes('cool')) return 'warmup';
+  return 'general';
+}
+
 const RECRUITMENT_LEVEL_OPTIONS = ['D1', 'D2', 'D3', 'NAIA', 'JUCO', 'Independent', 'Affiliate'];
 const RECRUITMENT_STATUS_OPTIONS = ['Interested', 'Talking To', 'Offered', 'Committed'];
 
@@ -276,6 +290,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       // Normalize: player_profiles may be object (unique FK) or array
       const pp = data.player_profiles;
       data._profile = Array.isArray(pp) ? pp[0] : pp;
+
+      // Auto-create player_profiles row if missing (fixes #180 — Dom's profile)
+      if (!data._profile && data.role === 'player') {
+        const { data: newProfile } = await supabase
+          .from('player_profiles')
+          .insert({ user_id: userId })
+          .select()
+          .single();
+        if (newProfile) data._profile = newProfile;
+      }
 
       setUserData(data);
 
@@ -3729,7 +3753,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Bats / Throws</p>
-                  <p className="text-gray-900 font-medium">{profile.bats} / {profile.throws}</p>
+                  <p className="text-gray-900 font-medium">{profile.bats || 'Not set'} / {profile.throws || 'Not set'}</p>
                 </div>
               </div>
             </div>
@@ -3876,9 +3900,11 @@ function ProgramViewerModal({ programId, programName, onClose }) {
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
         <div className="border-b border-gray-200 p-5 flex items-start justify-between flex-shrink-0">
           <div className="flex items-center space-x-3 min-w-0">
-            <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
-              <ClipboardList size={22} className="text-orange-600" />
-            </div>
+            {(() => { const hc = PROGRAM_HEADER_COLOR[getProgramCategory(programName)] || PROGRAM_HEADER_COLOR.general; return (
+              <div className={`p-2 ${hc.bg} rounded-lg flex-shrink-0`}>
+                <ClipboardList size={22} className={hc.text} />
+              </div>
+            ); })()}
             <div className="min-w-0">
               <h2 className="text-xl font-bold text-gray-900 truncate">{programName || 'Program'}</h2>
               <div className="text-xs text-gray-500 mt-0.5">View only</div>
