@@ -1437,6 +1437,7 @@ export default function Schedule({ userId, userRole }) {
           <EventDetailModal
             event={selectedEvent}
             userRole={userRole}
+            userId={userId}
             onClose={() => {
               setShowEventDetail(false);
               setSelectedEvent(null);
@@ -3733,10 +3734,11 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
 // EVENT DETAIL/EDIT/DELETE MODAL - COMPLETE VERSION
 // ============================================
 
-function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole }) {
+function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId }) {
   console.log('🔵 EventDetailModal rendered with event:', event);
 
-  const canManage = userRole === 'admin' || userRole === 'coach';
+  const isOwnGame = event.player_id === userId && event.event_type === 'game';
+  const canManage = userRole === 'admin' || userRole === 'coach' || isOwnGame;
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -3819,7 +3821,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole }) {
         throw new Error('Could not verify user permissions.');
       }
 
-      if (!['admin', 'coach'].includes(userData.role)) {
+      if (!['admin', 'coach'].includes(userData.role) && !isOwnGame) {
         throw new Error('You do not have permission to delete events.');
       }
 

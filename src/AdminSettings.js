@@ -1286,6 +1286,7 @@ function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
     full_name: '',
     role: 'player',
     phone: '',
+    date_of_birth: '',
     height: '',
     weight: '',
     team_id: '',
@@ -1344,6 +1345,7 @@ function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
           role: dbRole,
           is_intern: isIntern,
           phone: formData.phone || null,
+          date_of_birth: formData.date_of_birth || null,
           height: formData.height || null,
           weight: formData.weight || null
         });
@@ -1482,6 +1484,18 @@ function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
                 type="tel"
                 value={formData.phone}
                 onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Date of Birth
+              </label>
+              <input
+                type="date"
+                value={formData.date_of_birth}
+                onChange={(e) => setFormData({...formData, date_of_birth: e.target.value})}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>

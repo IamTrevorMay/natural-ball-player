@@ -135,8 +135,8 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
       const team = availableTeams.find(t => t.id === teamId);
       if (team) setTeamData(team);
 
-      // Get roster (all players on team)
-      const { data: players } = await supabase
+      // Get all team members in one query, then split by users.role
+      const { data: allMembers } = await supabase
         .from('team_members')
         .select(`
           user_id,
@@ -146,6 +146,7 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
             full_name,
             email,
             phone,
+            role,
             player_profiles!player_profiles_user_id_fkey(
               jersey_number,
               position,
@@ -156,39 +157,25 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
           )
         `)
         .eq('team_id', teamId)
-        .eq('role', 'player')
         .order('users(full_name)');
 
-      if (players) {
-        setRoster(players.map(p => ({
-          ...p.users,
-          role: p.role,
-          player_profile: p.users.player_profiles?.[0]
-        })));
-      }
-
-      // Get coaches
-      const { data: coachList } = await supabase
-        .from('team_members')
-        .select(`
-          user_id,
-          role,
-          users(
-            id,
-            full_name,
-            email,
-            phone
-          )
-        `)
-        .eq('team_id', teamId)
-        .in('role', ['coach', 'admin'])
-        .order('users(full_name)');
-
-      if (coachList) {
-        setCoaches(coachList.map(c => ({
-          ...c.users,
-          role: c.role
-        })));
+      if (allMembers) {
+        const coachRows = [];
+        const playerRows = [];
+        for (const m of allMembers) {
+          const userRole = m.users?.role;
+          if (userRole === 'admin' || userRole === 'coach') {
+            coachRows.push({ ...m.users, role: m.role });
+          } else {
+            playerRows.push({
+              ...m.users,
+              role: m.role,
+              player_profile: m.users.player_profiles?.[0]
+            });
+          }
+        }
+        setCoaches(coachRows);
+        setRoster(playerRows);
       }
 
       // Get upcoming events

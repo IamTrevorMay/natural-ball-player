@@ -510,6 +510,12 @@ export default function WhoopTab({ userId, userRole }) {
           <Link2 size={16} />
           Connect WHOOP Account
         </button>
+        <p className="text-sm text-gray-500 mt-4">
+          Don't have a WHOOP?{' '}
+          <a href="https://join.whoop.com/thenatural" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+            Get a free WHOOP + one month free
+          </a>
+        </p>
       </div>
     );
   }
