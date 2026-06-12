@@ -38,6 +38,8 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
   const [activeTab, setActiveTab] = useState('roster');
   const [availableTeams, setAvailableTeams] = useState([]);
   const [selectedTeamId, setSelectedTeamId] = useState(null);
+  const [filterType, setFilterType] = useState('All');
+  const [filterAge, setFilterAge] = useState('All');
   const [prospects, setProspects] = useState([]);
 
   const fetchProspects = async (teamId) => {
@@ -220,6 +222,22 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
     }
   };
 
+  const teamTypes = [...new Set(availableTeams.map(t => t.team_type || 'team').filter(Boolean))].sort();
+  const ageGroups = [...new Set(availableTeams.map(t => t.age_group).filter(Boolean))].sort();
+
+  const filteredTeams = availableTeams.filter(t => {
+    if (filterType !== 'All' && (t.team_type || 'team') !== filterType) return false;
+    if (filterAge !== 'All' && (t.age_group || '') !== filterAge) return false;
+    return true;
+  });
+
+  // Auto-select first filtered team if current selection is filtered out
+  useEffect(() => {
+    if (filteredTeams.length > 0 && !filteredTeams.find(t => t.id === selectedTeamId)) {
+      setSelectedTeamId(filteredTeams[0].id);
+    }
+  }, [filterType, filterAge]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -240,6 +258,48 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
 
   return (
     <div className="space-y-6">
+      {/* Filter Bar */}
+      {availableTeams.length > 1 && (teamTypes.length > 1 || ageGroups.length > 0) && (
+        <div className="bg-white rounded-lg shadow px-4 py-3 flex flex-wrap items-center gap-3">
+          {teamTypes.length > 1 && (
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-semibold text-gray-500 uppercase mr-1">Type:</span>
+              {['All', ...teamTypes].map(t => (
+                <button
+                  key={t}
+                  onClick={() => setFilterType(t)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                    filterType === t
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {t === 'All' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+          {ageGroups.length > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-xs font-semibold text-gray-500 uppercase mr-1">Age:</span>
+              {['All', ...ageGroups].map(a => (
+                <button
+                  key={a}
+                  onClick={() => setFilterAge(a)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                    filterAge === a
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Team Header */}
       <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg shadow-lg p-8 text-white">
         <div className="flex items-center justify-between">
@@ -265,14 +325,14 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
               </div>
             </div>
           </div>
-          {availableTeams.length > 1 && (
+          {filteredTeams.length > 1 && (
             <select
               value={selectedTeamId || ''}
               onChange={(e) => setSelectedTeamId(e.target.value)}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-white/20 text-white border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 appearance-none cursor-pointer"
               style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', paddingRight: '36px' }}
             >
-              {availableTeams.map(t => (
+              {filteredTeams.map(t => (
                 <option key={t.id} value={t.id} className="text-gray-900">{t.name}</option>
               ))}
             </select>

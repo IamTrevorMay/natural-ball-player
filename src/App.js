@@ -18,7 +18,7 @@ import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -649,6 +649,51 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     }
   }, [effectiveRole, currentPortal, setCurrentPortal]);
 
+  const [profileIncomplete, setProfileIncomplete] = useState([]);
+  const [showProfileReminder, setShowProfileReminder] = useState(false);
+
+  useEffect(() => {
+    if (effectiveRole !== 'player' || !userId) return;
+    let cancelled = false;
+    (async () => {
+      const missing = [];
+      // 1. Contact / physical / player info
+      const { data: user } = await supabase
+        .from('users')
+        .select('full_name, email, phone, height, weight, date_of_birth, player_profiles!player_profiles_user_id_fkey(position, grade, bats, throws, jersey_number)')
+        .eq('id', userId)
+        .single();
+      if (cancelled) return;
+      if (user) {
+        if (!user.phone) missing.push('Contact Information (phone)');
+        if (!user.height && !user.weight && !user.date_of_birth) missing.push('Physical Information (height, weight, DOB)');
+        const pp = Array.isArray(user.player_profiles) ? user.player_profiles[0] : user.player_profiles;
+        if (!pp || (!pp.position && !pp.grade && !pp.bats && !pp.throws)) missing.push('Player Information (position, grade, bats/throws)');
+      }
+      // 2. Equipment sizes
+      const { data: equip } = await supabase.from('equipment_sizes').select('id').eq('user_id', userId).limit(1);
+      if (cancelled) return;
+      if (!equip || equip.length === 0) missing.push('Equipment Sizes');
+      // 3. Goals & notes
+      const { data: goals } = await supabase.from('player_notes').select('id').eq('player_id', userId).limit(1);
+      if (cancelled) return;
+      if (!goals || goals.length === 0) missing.push('Goals & Notes');
+      // 4. Documents (waiver)
+      if (!waiverSigned) missing.push('Documents (waiver not signed)');
+
+      if (!cancelled && missing.length > 0) {
+        setProfileIncomplete(missing);
+        // Only show once per session
+        const key = `profile_reminder_${userId}`;
+        if (!sessionStorage.getItem(key)) {
+          setShowProfileReminder(true);
+          sessionStorage.setItem(key, '1');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId, effectiveRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const mainCounts = useMainPortalCounts(userId, effectiveRole);
   const workCounts = useWorkPortalCounts(userId, effectiveRole);
 
@@ -743,6 +788,47 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
           </div>
         </div>
       </div>
+
+      {/* Profile completeness reminder modal */}
+      {showProfileReminder && profileIncomplete.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                  <AlertCircle size={20} className="text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Complete Your Profile</h3>
+                  <p className="text-sm text-gray-500">The following sections still need to be filled out:</p>
+                </div>
+              </div>
+              <ul className="space-y-2 mb-6">
+                {profileIncomplete.map((item, i) => (
+                  <li key={i} className="flex items-center gap-2 text-sm text-gray-700">
+                    <X size={14} className="text-red-400 flex-shrink-0" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setShowProfileReminder(false); setCurrentView('profile'); }}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+                >
+                  Go to Profile
+                </button>
+                <button
+                  onClick={() => setShowProfileReminder(false)}
+                  className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

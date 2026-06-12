@@ -38,6 +38,15 @@ const STATUS_COLORS = {
   'Archived': 'bg-red-500 text-white',
 };
 
+const OFFER_STATUS_OPTIONS = ['Offered', 'Accepted', 'Meeting Set Up', 'Training Only', 'Playing For Other Org'];
+const OFFER_STATUS_COLORS = {
+  'Offered': 'bg-yellow-500 text-white',
+  'Accepted': 'bg-green-600 text-white',
+  'Meeting Set Up': 'bg-blue-500 text-white',
+  'Training Only': 'bg-purple-500 text-white',
+  'Playing For Other Org': 'bg-gray-500 text-white',
+};
+
 export default function ManageAthletes({ userId, userRole, onNavigateToProfile }) {
   const [rosterPlayers, setRosterPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,6 +57,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const [filterLevel, setFilterLevel] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterSubStatus, setFilterSubStatus] = useState('All');
+  const [filterOfferStatus, setFilterOfferStatus] = useState('All');
   const [editingPlayer, setEditingPlayer] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [teamCoachMap, setTeamCoachMap] = useState({});
@@ -67,7 +77,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id), team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id, offer_status), team_members(team_id, teams(name))')
       .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
@@ -295,6 +305,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     if (filterLevel !== 'All' && profile.level !== filterLevel) return false;
     if (filterStatus !== 'All' && profile.status !== filterStatus) return false;
     if (filterSubStatus !== 'All' && (profile.sub_status || '') !== filterSubStatus) return false;
+    if (filterOfferStatus !== 'All' && (profile.offer_status || '') !== filterOfferStatus) return false;
     return true;
   });
 
@@ -401,6 +412,12 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                     {SUB_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </th>
+                <th className="px-2 py-2">
+                  <select value={filterOfferStatus} onChange={(e) => setFilterOfferStatus(e.target.value)} className={filterSelectClass}>
+                    <option value="All">All</option>
+                    {OFFER_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </th>
                 <th className="px-2 py-2"></th>
               </tr>
               <tr className="border-b border-gray-200 bg-white">
@@ -413,6 +430,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Level</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Sub Status</th>
+                <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Offer</th>
                 <th className="py-3 px-2"></th>
               </tr>
             </thead>
@@ -529,6 +547,15 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                         <option value="">—</option>
                         {SUB_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
+                    </td>
+                    <td className={`py-3 px-3 ${pendingEdits[player.id]?.offer_status !== undefined ? 'bg-yellow-50' : ''}`}>
+                      <StatusBadgeSelect
+                        value={stagedField(player.id, 'offer_status', profile.offer_status) || ''}
+                        options={OFFER_STATUS_OPTIONS}
+                        colors={OFFER_STATUS_COLORS}
+                        onChange={(val) => stageEdit(player.id, 'offer_status', val)}
+                        isAdmin={false}
+                      />
                     </td>
                     <td className="py-3 px-2">
                       <div className="flex items-center space-x-1">

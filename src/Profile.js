@@ -2815,13 +2815,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   </tr>
                 </thead>
                 <tbody>
-                  {discountCodes.map(c => (
+                  {discountCodes.filter(c => !c.player_id || c.player_id === userId).map(c => (
                     <tr key={c.id} className="border-b border-gray-100">
                       <td className="py-3 px-4 text-sm text-gray-900">{c.vendor || '—'}</td>
                       <td className="py-3 px-4 text-sm text-gray-900 font-mono">{c.code || '—'}</td>
                     </tr>
                   ))}
-                  {discountCodes.length === 0 && (
+                  {discountCodes.filter(c => !c.player_id || c.player_id === userId).length === 0 && (
                     <tr>
                       <td colSpan={2} className="py-8 text-center text-gray-500">No discount codes available.</td>
                     </tr>
@@ -3494,7 +3494,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'marek' && (
-            <MarekTab playerId={userId} canEdit={canEditProfile} />
+            <MarekTab playerId={userId} canEdit={canEditProfile} dateOfBirth={userData?.date_of_birth} />
           )}
 
           {activeProfileTab === 'general' && (
@@ -5118,7 +5118,7 @@ function CatchingStatsView({ playerId, canEdit }) {
 // MAREK TAB (#193)
 // Bloodwork panels uploaded per-player. Files live in 'bloodwork' bucket.
 // ============================================
-function MarekTab({ playerId, canEdit }) {
+function MarekTab({ playerId, canEdit, dateOfBirth }) {
   const [panels, setPanels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -5130,6 +5130,12 @@ function MarekTab({ playerId, canEdit }) {
     file: null,
   });
   const [uploading, setUploading] = useState(false);
+  const [marekCode, setMarekCode] = useState(null);
+
+  const playerAge = dateOfBirth
+    ? Math.floor((new Date() - new Date(dateOfBirth + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000))
+    : null;
+  const isEligible = playerAge !== null && playerAge >= 18;
 
   const load = async () => {
     setLoading(true);
@@ -5141,7 +5147,19 @@ function MarekTab({ playerId, canEdit }) {
     setPanels(data || []);
     setLoading(false);
   };
-  useEffect(() => { load(); }, [playerId]);
+
+  const loadMarekCode = async () => {
+    const { data } = await supabase
+      .from('discount_codes')
+      .select('code')
+      .eq('player_id', playerId)
+      .ilike('vendor', '%marek%')
+      .limit(1)
+      .maybeSingle();
+    setMarekCode(data?.code || null);
+  };
+
+  useEffect(() => { load(); loadMarekCode(); }, [playerId]);
 
   const save = async () => {
     if (!draft.panel_date) { alert('Panel date is required.'); return; }
@@ -5188,10 +5206,47 @@ function MarekTab({ playerId, canEdit }) {
 
   return (
     <div className="space-y-4">
+      {/* Marek Health Instructions */}
+      <div className="border border-teal-200 bg-teal-50 rounded-lg p-4 space-y-3">
+        <h3 className="text-lg font-semibold text-gray-900">Marek Health Partnership</h3>
+        {!isEligible ? (
+          <p className="text-sm text-gray-600">
+            {playerAge === null
+              ? 'Date of birth is required to determine eligibility. Please update your profile.'
+              : `This service is available for athletes 18 and older. Current age: ${playerAge}.`}
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              Please fill out the link below and use your discount code during setup — it will run on our end so we can confirm you completed the process. Once finished, Marek Health will reach out within 24 hours to schedule your LabCorp appointment for blood work. They will send you instructions to follow before and after your appointment. <span className="font-semibold">Make sure to not go to the bathroom before your appointment as they do urine analysis too.</span>
+            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <a
+                href="https://marekhealth.com/coach"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-teal-700 font-semibold hover:text-teal-900 hover:underline"
+              >
+                <ExternalLink size={14} />
+                MarekHealth.com/coach
+              </a>
+              {marekCode ? (
+                <span className="inline-flex items-center gap-1.5 bg-teal-100 text-teal-800 px-3 py-1 rounded-md text-sm font-mono font-semibold">
+                  Discount Code: {marekCode}
+                </span>
+              ) : (
+                <span className="text-sm text-gray-500 italic">No discount code assigned yet.</span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Bloodwork Panels */}
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-gray-900">Marek Bloodwork Panels</h3>
-          <p className="text-sm text-gray-500">Upload lab results from the Marek partnership. Used to inform programming for 18+ athletes.</p>
+          <h3 className="text-lg font-semibold text-gray-900">Bloodwork Panels</h3>
+          <p className="text-sm text-gray-500">Upload lab results from the Marek partnership.</p>
         </div>
         {canEdit && !adding && (
           <button onClick={() => setAdding(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
