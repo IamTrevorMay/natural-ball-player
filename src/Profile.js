@@ -1674,7 +1674,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center space-x-2"
                 >
                   <ShoppingBag size={18} />
-                  <span>Store</span>
+                  <span>Pay</span>
                 </button>
               )}
               {userData.role === 'player' && attendanceStats && (
