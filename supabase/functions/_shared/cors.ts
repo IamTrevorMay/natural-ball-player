@@ -6,6 +6,7 @@ const ALLOWED_ORIGINS = [
   "https://thenatural-app.com",
   "http://localhost:3000",
   "http://localhost:3001",
+  "http://localhost:3100",
 ];
 
 const BASE_HEADERS = {

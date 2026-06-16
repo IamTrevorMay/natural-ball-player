@@ -9,6 +9,8 @@ import WhoopTab from './WhoopTab';
 import { fmtLocalDate } from './scheduleUtils';
 import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
+import ApplyDiscountModal from './ApplyDiscountModal';
+import { BadgePercent } from 'lucide-react';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -230,6 +232,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [showAddWorkout, setShowAddWorkout] = useState(false);
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [showStore, setShowStore] = useState(false);
+  const [showDiscount, setShowDiscount] = useState(false);
+  const [subscriptionRow, setSubscriptionRow] = useState(null);
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
   const [coachAthletes, setCoachAthletes] = useState([]);
@@ -269,6 +273,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setTrainerName(null);
     }
     setSportInput(userData?._profile?.sport || '');
+    if (userData?.id) {
+      supabase
+        .from('store_purchases')
+        .select('status, paid_at, created_at')
+        .eq('user_id', userData.id)
+        .eq('product_kind', 'package')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => setSubscriptionRow(data || null));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userData]);
 
@@ -1675,6 +1690,35 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 >
                   <ShoppingBag size={18} />
                   <span>Pay</span>
+                </button>
+              )}
+              {(!onBack || userRole === 'admin') && userData.role === 'player' && (() => {
+                const s = subscriptionRow?.status;
+                let label = 'No Subscription Set Up';
+                let cls = 'bg-gray-100 text-gray-600 border-gray-200';
+                if (s === 'active') {
+                  label = 'Next Payment Scheduled';
+                  cls = 'bg-green-50 text-green-700 border-green-200';
+                } else if (s === 'past_due') {
+                  label = 'Payment Needs Updated';
+                  cls = 'bg-orange-50 text-orange-700 border-orange-200';
+                } else if (s === 'pending') {
+                  label = 'Subscription Pending';
+                  cls = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                }
+                return (
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${cls}`}>
+                    {label}
+                  </span>
+                );
+              })()}
+              {onBack && userRole === 'admin' && userData.role === 'player' && (
+                <button
+                  onClick={() => setShowDiscount(true)}
+                  className="bg-white border border-indigo-300 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-50 transition flex items-center space-x-1"
+                >
+                  <BadgePercent size={14} />
+                  <span>Apply Discount</span>
                 </button>
               )}
               {userData.role === 'player' && attendanceStats && (
@@ -3852,6 +3896,25 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       {showStore && (
         <StoreModal userId={userData.id} onClose={() => setShowStore(false)} />
+      )}
+
+      {showDiscount && (
+        <ApplyDiscountModal
+          playerId={userData.id}
+          playerName={userData.full_name}
+          onClose={() => setShowDiscount(false)}
+          onApplied={() => {
+            supabase
+              .from('store_purchases')
+              .select('status, paid_at, created_at')
+              .eq('user_id', userData.id)
+              .eq('product_kind', 'package')
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+              .then(({ data }) => setSubscriptionRow(data || null));
+          }}
+        />
       )}
 
       {assessmentFormTemplate && (

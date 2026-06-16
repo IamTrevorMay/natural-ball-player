@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
 
     const items = await listAllCatalog("ITEM");
     const planVars = await listAllCatalog("SUBSCRIPTION_PLAN_VARIATION");
+    const discounts = await listAllCatalog("DISCOUNT");
 
     // Existing rows keyed by square_variation_id (preferred) and square_catalog_id (fallback)
     const { data: existing } = await service
@@ -182,12 +183,49 @@ Deno.serve(async (req) => {
       );
     }
 
+    let discountInserted = 0;
+    let discountUpdated = 0;
+    for (const d of discounts) {
+      const dd = d.discount_data;
+      if (!dd) continue;
+      const percentage = dd.percentage ? Number(dd.percentage) : null;
+      const amountCents = dd.amount_money?.amount ?? null;
+      const row = {
+        square_catalog_id: d.id,
+        name: dd.name || "Discount",
+        percentage,
+        amount_cents: amountCents,
+        active: !d.is_deleted,
+        synced_at: new Date().toISOString(),
+      };
+      const { data: existingDiscount } = await service
+        .from("store_discounts")
+        .select("id")
+        .eq("square_catalog_id", d.id)
+        .maybeSingle();
+      if (existingDiscount) {
+        const { error } = await service.from("store_discounts").update(row).eq("id", existingDiscount.id);
+        if (error) errors.push(`discount update ${d.id}: ${error.message}`);
+        else discountUpdated++;
+      } else {
+        const { error } = await service.from("store_discounts").insert(row);
+        if (error) errors.push(`discount insert ${d.id}: ${error.message}`);
+        else discountInserted++;
+      }
+    }
+
     return jsonRes(cors, 200, {
       inserted,
       updated,
       skipped,
+      discountInserted,
+      discountUpdated,
       errors,
-      counts: { items: items.length, plan_variations: planVars.length },
+      counts: {
+        items: items.length,
+        plan_variations: planVars.length,
+        discounts: discounts.length,
+      },
     });
   } catch (err) {
     return jsonRes(cors, 500, { error: (err as Error).message });
