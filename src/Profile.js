@@ -8,6 +8,7 @@ import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
 import { fmtLocalDate } from './scheduleUtils';
 import SignedSignatureImage from './SignedSignatureImage';
+import StoreModal from './StoreModal';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -228,6 +229,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [scheduleSelectedDay, setScheduleSelectedDay] = useState(null);
   const [showAddWorkout, setShowAddWorkout] = useState(false);
   const [showEmailCompose, setShowEmailCompose] = useState(false);
+  const [showStore, setShowStore] = useState(false);
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
   const [coachAthletes, setCoachAthletes] = useState([]);
@@ -1584,6 +1586,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             >
               <Mail size={18} />
               <span>Email Player</span>
+            </button>
+          )}
+          {!onBack && (
+            <button
+              onClick={() => setShowStore(true)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center space-x-2"
+            >
+              <ShoppingBag size={18} />
+              <span>Store</span>
             </button>
           )}
           {!editing && (
@@ -3837,6 +3848,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           onClose={() => setShowEmailCompose(false)}
           onSent={() => fetchCommunicationLogs()}
         />
+      )}
+
+      {showStore && (
+        <StoreModal userId={userData.id} onClose={() => setShowStore(false)} />
       )}
 
       {assessmentFormTemplate && (

@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign, Clock, Plane,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
-  Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight
+  Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
+  ShoppingBag
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -18,6 +19,7 @@ import WorkAdminTimeOff from './WorkAdminTimeOff';
 import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
 import WorkInvoices from './WorkInvoices';
+import WorkStore from './WorkStore';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
@@ -38,6 +40,7 @@ const PAGE_META = {
   'work-admin-announcements':   { title: 'Manage Announcements',   description: 'Post and manage announcements for staff.' },
   'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
   'work-admin-invoices':        { title: 'Coach Invoices',         description: 'Review and manage coach-submitted invoices.' },
+  'work-admin-store':           { title: 'Store',                  description: 'Manage Square catalog and view all purchases.' },
 };
 
 function ComingSoon({ viewKey }) {
@@ -102,6 +105,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkInvoices userId={userId} userRole={userRole} />;
       case 'work-admin-invoices':
         return userRole === 'admin' ? <WorkInvoices userId={userId} userRole={userRole} /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-store':
+        return userRole === 'admin' ? <WorkStore /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
@@ -247,6 +252,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-time-off"       icon={CheckSquare} label="Time Off Review" />
                 <SubNavItem id="work-admin-docs"           icon={FolderOpen}  label="Manage Documents" />
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
+                <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
                 <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>
             )}
