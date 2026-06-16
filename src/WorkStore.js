@@ -147,6 +147,37 @@ function CatalogTab() {
     fetchProducts();
   };
 
+  const backfillSubscriptions = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    setError('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${process.env.REACT_APP_SUPABASE_URL || 'https://cjilkqzifyhssbsiqgfu.supabase.co'}/functions/v1/square-subscriptions-backfill`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Backfill failed');
+      setSyncResult({
+        inserted: json.inserted,
+        updated: json.updated,
+        skipped: json.unmatched_user + json.unmatched_product,
+        errors: (json.unmatched_details || []).map(d => `${d.subscription_id}: ${d.reason}${d.email ? ` (${d.email})` : ''}`),
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const renderForm = () => (
     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -275,6 +306,14 @@ function CatalogTab() {
           >
             <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
             <span>{syncing ? 'Syncing…' : 'Sync from Square'}</span>
+          </button>
+          <button
+            onClick={backfillSubscriptions}
+            disabled={syncing}
+            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-60 flex items-center space-x-2"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            <span>{syncing ? 'Working…' : 'Backfill Subscriptions'}</span>
           </button>
           {!creating && editingId === null && (
             <button
