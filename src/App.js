@@ -29,8 +29,12 @@ export default function App() {
   const [userRole, setUserRole] = useState(null);
   const [secondaryRole, setSecondaryRole] = useState(null);
   const [userId, setUserId] = useState(null);
-  const [currentView, setCurrentView] = useState('dashboard');
-  const [workPortalView, setWorkPortalView] = useState('work-home');
+  const [currentView, setCurrentView] = useState(() => {
+    try { return localStorage.getItem('nbp_current_view') || 'dashboard'; } catch { return 'dashboard'; }
+  });
+  const [workPortalView, setWorkPortalView] = useState(() => {
+    try { return localStorage.getItem('nbp_work_view') || 'work-home'; } catch { return 'work-home'; }
+  });
   const [waiverSigned, setWaiverSigned] = useState(null);
   const [contractSigned, setContractSigned] = useState(null);
   const [loiSigned, setLoiSigned] = useState(null);
@@ -49,6 +53,14 @@ export default function App() {
       localStorage.setItem('nbp_current_portal', currentPortal);
     } catch {}
   }, [currentPortal]);
+
+  useEffect(() => {
+    try { localStorage.setItem('nbp_current_view', currentView); } catch {}
+  }, [currentView]);
+
+  useEffect(() => {
+    try { localStorage.setItem('nbp_work_view', workPortalView); } catch {}
+  }, [workPortalView]);
 
   useEffect(() => {
     if (userRole === 'player' && currentPortal === 'work') {
@@ -229,7 +241,12 @@ export default function App() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    try {
+      localStorage.removeItem('nbp_current_view');
+      localStorage.removeItem('nbp_work_view');
+    } catch {}
     setCurrentView('dashboard');
+    setWorkPortalView('work-home');
   };
 
   if (loading) {
