@@ -1588,15 +1588,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               <span>Email Player</span>
             </button>
           )}
-          {!onBack && (
-            <button
-              onClick={() => setShowStore(true)}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center space-x-2"
-            >
-              <ShoppingBag size={18} />
-              <span>Store</span>
-            </button>
-          )}
           {!editing && (
             <button
               onClick={() => setEditing(true)}
@@ -1676,8 +1667,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 {userData.created_at && <span>Member since: <span className="text-gray-700 font-medium">{new Date(userData.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span></span>}
               </div>
             </div>
-            {userData.role === 'player' && attendanceStats && (
-              <div className="ml-auto flex items-center">
+            <div className="ml-auto flex items-center gap-3">
+              {!onBack && (
+                <button
+                  onClick={() => setShowStore(true)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center space-x-2"
+                >
+                  <ShoppingBag size={18} />
+                  <span>Store</span>
+                </button>
+              )}
+              {userData.role === 'player' && attendanceStats && (
                 <AttendanceRings
                   practices={attendanceStats.practice}
                   games={attendanceStats.game}
@@ -1685,8 +1685,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   onToggleLog={() => setActiveProfileTab('attendance')}
                   canEdit={canEditProfile}
                 />
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {profile && (
