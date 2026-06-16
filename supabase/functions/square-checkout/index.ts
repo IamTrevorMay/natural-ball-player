@@ -95,8 +95,12 @@ Deno.serve(async (req) => {
 
     const redirectUrl = return_url || `${req.headers.get("Origin") || "https://nbp-portal.vercel.app"}/store/return`;
 
-    // One-time products: Payment Link via Checkout API
-    if (!product.recurring) {
+    // One-time products: Payment Link via Checkout API. Branch on `kind` so a
+    // misconfigured row with kind='package' AND recurring=false (admin saved
+    // without filling square_variation_id yet) still gets routed to the
+    // subscription path and returns a clear error instead of silently charging
+    // a one-time fee.
+    if (product.kind !== "package") {
       const idempotencyKey = uuid();
       const payload = {
         idempotency_key: idempotencyKey,

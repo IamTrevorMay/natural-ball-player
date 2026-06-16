@@ -37,8 +37,14 @@ Deno.serve(async (req) => {
 
   const rawBody = await req.text();
   const sigHeader = req.headers.get("x-square-hmacsha256-signature");
-  const notificationUrl = Deno.env.get("SQUARE_WEBHOOK_URL")
-    || `${req.headers.get("x-forwarded-proto") || "https"}://${req.headers.get("host")}${new URL(req.url).pathname}`;
+  // Require the explicit env var instead of reconstructing from request
+  // headers. Header-based reconstruction (x-forwarded-proto, host) can pick a
+  // different canonical/alias host than Square used when signing, breaking
+  // signature verification on the first event after a config change.
+  const notificationUrl = Deno.env.get("SQUARE_WEBHOOK_URL");
+  if (!notificationUrl) {
+    return new Response("SQUARE_WEBHOOK_URL not configured", { status: 500 });
+  }
 
   const ok = await verifySignature(rawBody, sigHeader, notificationUrl);
   if (!ok) return new Response("Invalid signature", { status: 401 });
@@ -46,7 +52,10 @@ Deno.serve(async (req) => {
   let event: any;
   try { event = JSON.parse(rawBody); } catch { return new Response("Invalid JSON", { status: 400 }); }
 
-  const eventId = event.event_id || event.id;
+  // Square v2 webhook envelope: `event_id` is the canonical idempotency key.
+  // Do NOT fall back to `event.id` (doesn't exist at top level — any fallback
+  // produced `undefined` and locked into 23505 forever on the first miss).
+  const eventId = event.event_id;
   const eventType = event.type;
   if (!eventId || !eventType) return new Response("Missing event fields", { status: 400 });
 
@@ -84,10 +93,16 @@ Deno.serve(async (req) => {
       };
       if (purchaseStatus === "paid") patch.paid_at = now;
 
-      await service
-        .from("store_purchases")
-        .update(patch)
-        .eq("square_order_id", orderId);
+      // Out-of-order safety: never overwrite a terminal state with a softer
+      // one. If the row is already paid, only allow refunded/failed updates.
+      // If the row is paid_at, never flip it back to pending.
+      let q = service.from("store_purchases").update(patch).eq("square_order_id", orderId);
+      if (purchaseStatus === "pending") {
+        q = q.is("paid_at", null);
+      } else if (purchaseStatus === "failed") {
+        q = q.neq("status", "refunded");
+      }
+      await q;
     } else if (
       eventType === "subscription.created"
       || eventType === "subscription.updated"
@@ -102,10 +117,13 @@ Deno.serve(async (req) => {
         : squareStatus === "PAUSED" ? "past_due"
         : "pending";
 
-      await service
-        .from("store_purchases")
-        .update({ status: purchaseStatus })
-        .eq("square_subscription_id", subId);
+      // Once a subscription is canceled, do not allow webhook to revive it
+      // back to pending — Square may retry events out of order on cancel/reactivate.
+      let q = service.from("store_purchases").update({ status: purchaseStatus }).eq("square_subscription_id", subId);
+      if (purchaseStatus === "pending") {
+        q = q.in("status", ["pending"]);
+      }
+      await q;
     } else if (eventType === "invoice.payment_made") {
       const invoice = obj.invoice;
       if (!invoice) return new Response("ok", { status: 200 });

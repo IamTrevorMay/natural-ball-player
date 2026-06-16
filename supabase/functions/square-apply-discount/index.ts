@@ -113,18 +113,16 @@ Deno.serve(async (req) => {
       priceOverrideMoney = { amount: newPriceCents, currency: "USD" };
     }
 
-    // Square `UpdateSubscription` (PUT) takes a `subscription` object. To
-    // clear an override, omit price_override_money and set it via Square's
-    // null-fields convention: include the field with value null.
-    const body: Record<string, unknown> = {
-      subscription: discount_id
-        ? { price_override_money: priceOverrideMoney }
-        : { price_override_money: null },
-    };
-    await squareFetch(`/v2/subscriptions/${purchase.square_subscription_id}`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    });
+    // Atomic-ish flow: capture current DB state so we can revert if Square
+    // rejects, then update DB FIRST so that on a Square failure the user-visible
+    // state stays consistent (no charge applied at Square, no record in DB).
+    // If DB succeeds but Square fails, we revert the DB row back to the
+    // previously-captured state.
+    const { data: priorRow } = await service
+      .from("store_purchases")
+      .select("applied_discount_id, discounted_price_cents")
+      .eq("id", purchase.id)
+      .single();
 
     const { error: uErr } = await service
       .from("store_purchases")
@@ -134,6 +132,46 @@ Deno.serve(async (req) => {
       })
       .eq("id", purchase.id);
     if (uErr) return jsonRes(cors, 500, { error: uErr.message });
+
+    // Square `UpdateSubscription` (PUT). On failure, revert the DB so it
+    // mirrors Square truth instead of silently drifting.
+    const body: Record<string, unknown> = {
+      subscription: discount_id
+        ? { price_override_money: priceOverrideMoney }
+        : { price_override_money: null },
+    };
+    try {
+      await squareFetch(`/v2/subscriptions/${purchase.square_subscription_id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+    } catch (squareErr) {
+      // Revert DB
+      await service
+        .from("store_purchases")
+        .update({
+          applied_discount_id: priorRow?.applied_discount_id ?? null,
+          discounted_price_cents: priorRow?.discounted_price_cents ?? null,
+        })
+        .eq("id", purchase.id);
+      return jsonRes(cors, 502, { error: `Square rejected the change: ${(squareErr as Error).message}. DB reverted.` });
+    }
+
+    // Best-effort audit log into metadata (no separate table yet).
+    await service
+      .from("store_purchases")
+      .update({
+        metadata: {
+          last_discount_change: {
+            at: new Date().toISOString(),
+            by: user.id,
+            discount_id: discount_id || null,
+            prior_discount_id: priorRow?.applied_discount_id || null,
+            new_price_cents: newPriceCents,
+          },
+        },
+      })
+      .eq("id", purchase.id);
 
     return jsonRes(cors, 200, {
       ok: true,

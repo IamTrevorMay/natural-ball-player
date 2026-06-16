@@ -31,6 +31,34 @@ async function encrypt(plaintext: string): Promise<string> {
 const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v2";
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
 
+// Constant-time string comparison
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function verifyOAuthState(userId: string, nonce: string, signature: string): Promise<boolean> {
+  const secret = Deno.env.get("WHOOP_ENCRYPTION_KEY");
+  if (!secret) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${userId}:${nonce}`)
+  );
+  const expected = btoa(String.fromCharCode(...new Uint8Array(sig)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return timingSafeEqual(expected, signature);
+}
+
 Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
@@ -41,27 +69,50 @@ Deno.serve(async (req) => {
       return new Response("Missing code or state", { status: 400 });
     }
 
-    const [userId, state] = stateParam.split(":");
+    // State format: `${userId}:${nonce}:${signature}`. Validated via HMAC, no
+    // DB round-trip — so two parallel connect attempts can't invalidate each
+    // other (previous design stored state on users row).
+    const parts = stateParam.split(":");
+    if (parts.length !== 3) {
+      // Backwards compatibility: legacy state format was `${userId}:${state}`
+      // stored on users.whoop_oauth_state. Fall back to DB lookup for any
+      // OAuth flow that started before this deploy.
+      const [userIdLegacy, legacyState] = parts;
+      if (!userIdLegacy || !legacyState) {
+        return new Response("Invalid state", { status: 400 });
+      }
+      const adminLegacy = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const { data: legacyUser } = await adminLegacy
+        .from("users")
+        .select("whoop_oauth_state")
+        .eq("id", userIdLegacy)
+        .single();
+      if (!legacyUser || legacyUser.whoop_oauth_state !== legacyState) {
+        return new Response("Invalid state", { status: 403 });
+      }
+      // Re-assemble as if it had passed the HMAC path so the rest of the
+      // handler can proceed with userId.
+      (globalThis as any).__legacy_state_user_id = userIdLegacy;
+    }
+
+    const [userId, nonce, signature] = parts.length === 3 ? parts : [
+      (globalThis as any).__legacy_state_user_id as string,
+      "",
+      "",
+    ];
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Validate state
-    const { data: user, error: userErr } = await adminClient
-      .from("users")
-      .select("whoop_oauth_state")
-      .eq("id", userId)
-      .single();
-
-    if (userErr) {
-      console.error("State lookup error");
-      return new Response("State lookup failed", { status: 500 });
-    }
-
-    if (!user || user.whoop_oauth_state !== state) {
-      console.error("State mismatch");
-      return new Response("Invalid state", { status: 403 });
+    if (parts.length === 3) {
+      const ok = await verifyOAuthState(userId, nonce, signature);
+      if (!ok) {
+        return new Response("Invalid state", { status: 403 });
+      }
     }
 
     // Exchange code for tokens - use the SAME redirect_uri as was sent in the auth request

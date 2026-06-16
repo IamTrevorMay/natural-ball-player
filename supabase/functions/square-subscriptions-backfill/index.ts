@@ -119,17 +119,45 @@ Deno.serve(async (req) => {
       if (p.square_plan_id) productByPlan.set(p.square_plan_id, p);
     }
 
-    // Preload users by lowercased email
-    const { data: users } = await service.from("users").select("id, email");
+    // Preload users by lowercased email. Only players need lookup — coaches
+    // and admins never hold Square subscriptions.
+    const { data: users } = await service
+      .from("users")
+      .select("id, email")
+      .eq("role", "player");
     const userByEmail = new Map<string, string>();
     for (const u of (users || [])) {
       if (u.email) userByEmail.set(u.email.trim().toLowerCase(), u.id);
     }
 
-    // Cache customer lookups
+    // Pre-fetch every Square customer referenced by a subscription in parallel
+    // (bounded concurrency). Previously this happened serially inside the main
+    // loop, turning every backfill into one Square round-trip per sub.
     const customerCache = new Map<string, any>();
+    const uniqueCustomerIds = Array.from(new Set(subs.map((s: any) => s.customer_id).filter(Boolean)));
+    const CUSTOMER_CONCURRENCY = 10;
+    let cIdx = 0;
+    const customerWorkers: Promise<void>[] = [];
+    for (let w = 0; w < Math.min(CUSTOMER_CONCURRENCY, uniqueCustomerIds.length); w++) {
+      customerWorkers.push((async () => {
+        while (true) {
+          const idx = cIdx++;
+          if (idx >= uniqueCustomerIds.length) return;
+          const cid = uniqueCustomerIds[idx];
+          try {
+            const data = await squareFetch(`/v2/customers/${cid}`);
+            customerCache.set(cid, data.customer);
+          } catch {
+            customerCache.set(cid, null);
+          }
+        }
+      })());
+    }
+    await Promise.all(customerWorkers);
+
     const fetchCustomer = async (customerId: string) => {
       if (customerCache.has(customerId)) return customerCache.get(customerId);
+      // Cache miss is rare after the pre-fetch; fall back to a direct lookup.
       try {
         const data = await squareFetch(`/v2/customers/${customerId}`);
         customerCache.set(customerId, data.customer);
@@ -149,7 +177,6 @@ Deno.serve(async (req) => {
 
     // Auto-create missing recurring products by fetching the catalog object
     // directly from Square. Handles plan_variation_id (newer) and plan_id (older).
-    const fetchDiagnostics = new Map<string, string>();
     const ensureProduct = async (planVarId: string | null, planId: string | null) => {
       if (planVarId) {
         const cached = productByVariation.get(planVarId);

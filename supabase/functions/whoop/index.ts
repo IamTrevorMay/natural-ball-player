@@ -107,6 +107,14 @@ function getUserClient(authHeader: string) {
 
 // ---- Token management ----
 
+// Single-flight refresh cache keyed by user_id. WHOOP rotates refresh_token on
+// every use; two concurrent calls without coordination invalidate each other.
+// This guarantees only one refresh request is ever in-flight per user. The
+// cache is per-isolate so it doesn't survive cold starts, but Deno keeps warm
+// isolates long enough to cover the realistic concurrency window (a single
+// browser tab firing sync + data back-to-back).
+const refreshInFlight = new Map<string, Promise<string>>();
+
 async function ensureValidToken(
   adminClient: ReturnType<typeof getAdminClient>,
   userId: string
@@ -119,44 +127,54 @@ async function ensureValidToken(
 
   if (!tokenRow) throw new Error("No WHOOP tokens found");
 
-  let accessToken = await decrypt(tokenRow.encrypted_access_token);
-
   const expiresAt = new Date(tokenRow.token_expires_at).getTime();
-  if (Date.now() > expiresAt - 60_000 && tokenRow.encrypted_refresh_token) {
-    const currentRefreshToken = await decrypt(
-      tokenRow.encrypted_refresh_token
-    );
-
-    const res = await fetch(WHOOP_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: currentRefreshToken,
-        client_id: Deno.env.get("WHOOP_CLIENT_ID")!,
-        client_secret: Deno.env.get("WHOOP_CLIENT_SECRET")!,
-      }),
-    });
-
-    if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
-    const data = await res.json();
-
-    await adminClient
-      .from("whoop_tokens")
-      .update({
-        encrypted_access_token: await encrypt(data.access_token),
-        encrypted_refresh_token: await encrypt(data.refresh_token),
-        token_expires_at: new Date(
-          Date.now() + data.expires_in * 1000
-        ).toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", tokenRow.id);
-
-    accessToken = data.access_token;
+  if (Date.now() <= expiresAt - 60_000) {
+    return await decrypt(tokenRow.encrypted_access_token);
+  }
+  if (!tokenRow.encrypted_refresh_token) {
+    return await decrypt(tokenRow.encrypted_access_token);
   }
 
-  return accessToken;
+  const existing = refreshInFlight.get(userId);
+  if (existing) return await existing;
+
+  const refreshPromise = (async () => {
+    try {
+      const currentRefreshToken = await decrypt(tokenRow.encrypted_refresh_token);
+
+      const res = await fetch(WHOOP_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: currentRefreshToken,
+          client_id: Deno.env.get("WHOOP_CLIENT_ID")!,
+          client_secret: Deno.env.get("WHOOP_CLIENT_SECRET")!,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
+      const data = await res.json();
+
+      await adminClient
+        .from("whoop_tokens")
+        .update({
+          encrypted_access_token: await encrypt(data.access_token),
+          encrypted_refresh_token: await encrypt(data.refresh_token),
+          token_expires_at: new Date(
+            Date.now() + data.expires_in * 1000
+          ).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", tokenRow.id);
+
+      return data.access_token as string;
+    } finally {
+      refreshInFlight.delete(userId);
+    }
+  })();
+  refreshInFlight.set(userId, refreshPromise);
+  return await refreshPromise;
 }
 
 // ---- Paginated WHOOP fetch ----
@@ -177,8 +195,8 @@ async function fetchPaginated<T>(
 
   do {
     const params = new URLSearchParams({
-      start: new Date(startDate).toISOString(),
-      end: new Date(endDate + "T23:59:59").toISOString(),
+      start: new Date(`${startDate}T00:00:00Z`).toISOString(),
+      end: new Date(`${endDate}T23:59:59Z`).toISOString(),
       limit: "25",
     });
     if (nextToken) params.set("nextToken", nextToken);
@@ -204,17 +222,34 @@ async function fetchPaginated<T>(
 
 // ---- Route handlers ----
 
+// Sign the OAuth state with HMAC-SHA256 so the callback can verify it without
+// a DB lookup. This removes the concurrent-connect race that the previous
+// implementation had (state stored on users row → second connect overwrote
+// the first, invalidating the original flow).
+async function signOAuthState(userId: string, nonce: string): Promise<string> {
+  const secret = Deno.env.get("WHOOP_ENCRYPTION_KEY");
+  if (!secret) throw new Error("WHOOP_ENCRYPTION_KEY not configured");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${userId}:${nonce}`)
+  );
+  // base64url, no padding
+  return btoa(String.fromCharCode(...new Uint8Array(sig)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 async function handleConnect(userId: string, corsHeaders: Record<string, string>): Promise<Response> {
-  const adminClient = getAdminClient();
-  const state = crypto.randomUUID();
+  const nonce = crypto.randomUUID();
+  const signature = await signOAuthState(userId, nonce);
 
-  // Store state for validation on callback
-  await adminClient
-    .from("users")
-    .update({ whoop_oauth_state: state })
-    .eq("id", userId);
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const callbackUrl = `${Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app"}/api/whoop/callback`;
 
   const params = new URLSearchParams({
@@ -222,7 +257,7 @@ async function handleConnect(userId: string, corsHeaders: Record<string, string>
     redirect_uri: callbackUrl,
     response_type: "code",
     scope: "offline read:recovery read:cycles read:sleep read:workout read:profile",
-    state: `${userId}:${state}`,
+    state: `${userId}:${nonce}:${signature}`,
   });
 
   return new Response(
@@ -231,96 +266,20 @@ async function handleConnect(userId: string, corsHeaders: Record<string, string>
   );
 }
 
-async function handleCallback(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
-  const url = new URL(req.url);
-  const code = url.searchParams.get("code");
-  const stateParam = url.searchParams.get("state");
-
-  if (!code || !stateParam) {
-    return new Response("Missing code or state", { status: 400 });
-  }
-
-  const [userId, state] = stateParam.split(":");
-  const adminClient = getAdminClient();
-
-  // Validate state
-  const { data: user } = await adminClient
-    .from("users")
-    .select("whoop_oauth_state")
-    .eq("id", userId)
-    .single();
-
-  if (!user || user.whoop_oauth_state !== state) {
-    return new Response("Invalid state", { status: 403 });
-  }
-
-  // Exchange code for tokens
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const callbackUrl = `${Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app"}/api/whoop/callback`;
-
-  const tokenRes = await fetch(WHOOP_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      client_id: Deno.env.get("WHOOP_CLIENT_ID")!,
-      client_secret: Deno.env.get("WHOOP_CLIENT_SECRET")!,
-      redirect_uri: callbackUrl,
-    }),
-  });
-
-  if (!tokenRes.ok) {
-    const text = await tokenRes.text();
-    return new Response(`Token exchange failed: ${text}`, { status: 500 });
-  }
-
-  const tokenData = await tokenRes.json();
-
-  // Get WHOOP user ID
-  const profileRes = await fetch(`${WHOOP_API_BASE}/user/profile/basic`, {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
-  });
-  const profile = await profileRes.json();
-
-  // Store encrypted tokens
-  await adminClient.from("whoop_tokens").upsert(
-    {
-      user_id: userId,
-      whoop_user_id: String(profile.user_id),
-      encrypted_access_token: await encrypt(tokenData.access_token),
-      encrypted_refresh_token: tokenData.refresh_token
-        ? await encrypt(tokenData.refresh_token)
-        : null,
-      token_expires_at: new Date(
-        Date.now() + tokenData.expires_in * 1000
-      ).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" }
-  );
-
-  // Mark user as connected
-  await adminClient
-    .from("users")
-    .update({ whoop_connected: true, whoop_oauth_state: null })
-    .eq("id", userId);
-
-  // Redirect back to the app
-  const appUrl = Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app";
-  return new Response(null, {
-    status: 302,
-    headers: { Location: `${appUrl}?whoop_connected=true` },
-  });
-}
+// NOTE: OAuth callback lives in the dedicated `whoop-callback` edge function
+// (routed by vercel.json /api/whoop/callback). Do not add a copy here — it
+// would silently diverge from the canonical implementation.
 
 async function handleDisconnect(userId: string, corsHeaders: Record<string, string>): Promise<Response> {
   const adminClient = getAdminClient();
 
-  await adminClient.from("whoop_tokens").delete().eq("user_id", userId);
-  await adminClient.from("whoop_cycles").delete().eq("athlete_id", userId);
-  await adminClient.from("whoop_sleep").delete().eq("athlete_id", userId);
-  await adminClient.from("whoop_workouts").delete().eq("athlete_id", userId);
+  // Independent deletes — run in parallel.
+  await Promise.all([
+    adminClient.from("whoop_tokens").delete().eq("user_id", userId),
+    adminClient.from("whoop_cycles").delete().eq("athlete_id", userId),
+    adminClient.from("whoop_sleep").delete().eq("athlete_id", userId),
+    adminClient.from("whoop_workouts").delete().eq("athlete_id", userId),
+  ]);
   await adminClient
     .from("users")
     .update({ whoop_connected: false })
@@ -338,9 +297,19 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
   const accessToken = await ensureValidToken(adminClient, athleteId);
 
   const endDate = new Date().toISOString().split("T")[0];
-  const startDate = new Date(Date.now() - 365 * 86_400_000)
-    .toISOString()
-    .split("T")[0];
+  // Incremental sync: start from the day after the most recent cycle we have
+  // (with a 1-day overlap to catch late-arriving recovery data). First-time
+  // sync (no rows yet) falls back to 365 days.
+  const { data: lastCycle } = await adminClient
+    .from("whoop_cycles")
+    .select("cycle_date")
+    .eq("athlete_id", athleteId)
+    .order("cycle_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const startDate = lastCycle?.cycle_date
+    ? new Date(new Date(lastCycle.cycle_date).getTime() - 86_400_000).toISOString().split("T")[0]
+    : new Date(Date.now() - 365 * 86_400_000).toISOString().split("T")[0];
 
   // Fetch all data in parallel
   const [cycles, recoveries, sleeps, workouts] = await Promise.all([
@@ -526,12 +495,11 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const action = url.searchParams.get("action");
 
-    // Callback doesn't require auth (it's the OAuth redirect)
-    if (action === "callback") {
-      return await handleCallback(req, corsHeaders);
-    }
+    // OAuth callback now lives in `whoop-callback` (vercel.json routes
+    // /api/whoop/callback → that function). The `?action=callback` path here
+    // is removed to keep one canonical implementation.
 
-    // All other actions require auth
+    // All actions require auth
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(

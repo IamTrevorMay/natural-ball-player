@@ -62,24 +62,31 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Delete from public.users first (cascades to child tables via FK rules)
+    // Delete auth user first. If this fails the public row is still intact
+    // and the operation can be retried safely. The reverse order (public
+    // first) risks an orphaned auth row that permanently blocks email reuse.
+    const { error: deleteError } = await serviceClient.auth.admin.deleteUser(user_id);
+    if (deleteError) {
+      return new Response(
+        JSON.stringify({ error: deleteError.message }),
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Then delete public.users row (cascades to child tables via FK rules).
+    // If this fails, the auth row is already gone — surface the error but the
+    // email is still reusable since auth was the gating constraint.
     const { error: dbError } = await serviceClient
       .from("users")
       .delete()
       .eq("id", user_id);
     if (dbError) {
       return new Response(
-        JSON.stringify({ error: "Failed to delete user data: " + dbError.message }),
-        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Then delete from Supabase Auth
-    const { error: deleteError } = await serviceClient.auth.admin.deleteUser(user_id);
-    if (deleteError) {
-      return new Response(
-        JSON.stringify({ error: deleteError.message }),
-        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: "Auth user deleted but public.users delete failed: " + dbError.message,
+          partial: true,
+        }),
+        { status: 500, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
 

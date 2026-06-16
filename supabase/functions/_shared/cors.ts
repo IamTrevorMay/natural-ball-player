@@ -19,10 +19,16 @@ const BASE_HEADERS = {
 
 // Returns CORS headers reflecting the request Origin if allowed.
 // Unknown / missing origin -> no Allow-Origin header (browser blocks the response).
+//
+// Preview match must use a strict pattern: hostname must START with
+// `nbp-portal-` (Vercel preview deployments) and END with `.vercel.app`. The
+// previous `.includes("nbp-portal")` substring match was satisfied by any
+// attacker-controlled subdomain containing the literal "nbp-portal".
+const VERCEL_PREVIEW_RE = /^https:\/\/nbp-portal-[a-z0-9-]+\.vercel\.app$/i;
+
 export function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") || "";
-  const previewMatch = /^https:\/\/.*\.vercel\.app$/.test(origin) &&
-    origin.includes("nbp-portal");
+  const previewMatch = VERCEL_PREVIEW_RE.test(origin);
   const allowed = ALLOWED_ORIGINS.includes(origin) || previewMatch;
   if (!allowed) return { ...BASE_HEADERS };
   return { ...BASE_HEADERS, "Access-Control-Allow-Origin": origin };

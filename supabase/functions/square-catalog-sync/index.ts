@@ -107,14 +107,15 @@ Deno.serve(async (req) => {
     let skipped = 0;
     const errors: string[] = [];
 
-    // Helper: upsert one product
+    // Helper: upsert one product. Sync `recurring` too so Square reclassifying
+    // a plan as one-time (or vice versa) actually reflects in our DB.
     const upsert = async (row: Record<string, unknown>, lookupId: string, byMap: Map<string, string>) => {
       const id = byMap.get(lookupId);
       if (id) {
-        // Update only price/name/square IDs — preserve admin-edited fields.
         const patch = {
           name: row.name,
           price_cents: row.price_cents,
+          recurring: row.recurring,
           square_catalog_id: row.square_catalog_id ?? null,
           square_plan_id: row.square_plan_id ?? null,
           square_variation_id: row.square_variation_id ?? null,
@@ -129,7 +130,26 @@ Deno.serve(async (req) => {
       }
     };
 
-    // ITEMs (one-time). One row per variation when item has variations.
+    // Bounded-concurrency runner: run async tasks N at a time. Catalog sync
+    // would otherwise serialize hundreds of round-trips into seconds of
+    // unnecessary latency.
+    const runConcurrent = async <T>(tasks: Array<() => Promise<T>>, limit = 10): Promise<void> => {
+      let i = 0;
+      const workers: Promise<void>[] = [];
+      for (let w = 0; w < Math.min(limit, tasks.length); w++) {
+        workers.push((async () => {
+          while (true) {
+            const idx = i++;
+            if (idx >= tasks.length) return;
+            await tasks[idx]();
+          }
+        })());
+      }
+      await Promise.all(workers);
+    };
+
+    // Collect all upsert tasks first, then run them with bounded concurrency.
+    const itemTasks: Array<() => Promise<void>> = [];
     for (const it of items) {
       const itemData = it.item_data;
       if (!itemData) { skipped++; continue; }
@@ -142,7 +162,7 @@ Deno.serve(async (req) => {
         const name = variations.length === 1
           ? itemData.name
           : `${itemData.name} – ${vd.name || "Variation"}`;
-        await upsert(
+        itemTasks.push(() => upsert(
           {
             kind: "lesson",
             name,
@@ -155,11 +175,12 @@ Deno.serve(async (req) => {
           },
           v.id,
           bySvId,
-        );
+        ));
       }
     }
+    await runConcurrent(itemTasks);
 
-    // SUBSCRIPTION_PLAN_VARIATIONs (recurring monthly packages)
+    const planVarTasks: Array<() => Promise<void>> = [];
     for (const pv of planVars) {
       const pvd = pv.subscription_plan_variation_data;
       if (!pvd) { skipped++; continue; }
@@ -167,7 +188,7 @@ Deno.serve(async (req) => {
       const priceCents = phase?.pricing?.price?.amount ?? phase?.recurring_price_money?.amount;
       if (priceCents == null) { skipped++; continue; }
       const name = pvd.name || "Subscription";
-      await upsert(
+      planVarTasks.push(() => upsert(
         {
           kind: "package",
           name,
@@ -181,13 +202,15 @@ Deno.serve(async (req) => {
         },
         pv.id,
         bySvId,
-      );
+      ));
     }
+    await runConcurrent(planVarTasks);
 
     // Older SUBSCRIPTION_PLAN objects (pre-2022 catalog model). Each plan has
     // its own phases array. We still insert one product per plan so that
     // backfilling subscriptions stored against plan_id (not plan_variation_id)
     // can resolve a matching product.
+    const planTasks: Array<() => Promise<void>> = [];
     for (const pl of plans) {
       const pld = pl.subscription_plan_data;
       if (!pld) { skipped++; continue; }
@@ -195,7 +218,7 @@ Deno.serve(async (req) => {
       const priceCents = phase?.recurring_price_money?.amount ?? phase?.pricing?.price?.amount;
       if (priceCents == null) { skipped++; continue; }
       const name = pld.name || "Subscription";
-      await upsert(
+      planTasks.push(() => upsert(
         {
           kind: "package",
           name,
@@ -209,14 +232,27 @@ Deno.serve(async (req) => {
         },
         pl.id,
         byCatId,
-      );
+      ));
     }
+    await runConcurrent(planTasks);
 
     let discountInserted = 0;
     let discountUpdated = 0;
-    for (const d of discounts) {
+    // Batch-load existing discount IDs in one round-trip instead of N
+    const discountIds = discounts.map((d: any) => d.id).filter(Boolean);
+    const existingDiscountMap = new Map<string, string>();
+    if (discountIds.length > 0) {
+      const { data: existingDiscounts } = await service
+        .from("store_discounts")
+        .select("id, square_catalog_id")
+        .in("square_catalog_id", discountIds);
+      for (const r of (existingDiscounts || [])) {
+        if (r.square_catalog_id) existingDiscountMap.set(r.square_catalog_id, r.id);
+      }
+    }
+    const discountTasks: Array<() => Promise<void>> = discounts.map((d: any) => async () => {
       const dd = d.discount_data;
-      if (!dd) continue;
+      if (!dd) return;
       const percentage = dd.percentage ? Number(dd.percentage) : null;
       const amountCents = dd.amount_money?.amount ?? null;
       const row = {
@@ -227,13 +263,9 @@ Deno.serve(async (req) => {
         active: !d.is_deleted,
         synced_at: new Date().toISOString(),
       };
-      const { data: existingDiscount } = await service
-        .from("store_discounts")
-        .select("id")
-        .eq("square_catalog_id", d.id)
-        .maybeSingle();
-      if (existingDiscount) {
-        const { error } = await service.from("store_discounts").update(row).eq("id", existingDiscount.id);
+      const existingId = existingDiscountMap.get(d.id);
+      if (existingId) {
+        const { error } = await service.from("store_discounts").update(row).eq("id", existingId);
         if (error) errors.push(`discount update ${d.id}: ${error.message}`);
         else discountUpdated++;
       } else {
@@ -241,7 +273,8 @@ Deno.serve(async (req) => {
         if (error) errors.push(`discount insert ${d.id}: ${error.message}`);
         else discountInserted++;
       }
-    }
+    });
+    await runConcurrent(discountTasks);
 
     return jsonRes(cors, 200, {
       inserted,

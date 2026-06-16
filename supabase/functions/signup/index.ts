@@ -80,13 +80,26 @@ Deno.serve(async (req) => {
       return json({ error: userError.message }, 400);
     }
 
-    // 3. Create the player profile (best-effort).
+    // Helper: roll back everything on partial failure so the signup is atomic
+    // from the caller's perspective.
+    const rollback = async (msg: string) => {
+      await serviceClient.from("team_members").delete().eq("user_id", newUserId).catch(() => {});
+      await serviceClient.from("player_profiles").delete().eq("user_id", newUserId).catch(() => {});
+      await serviceClient.from("users").delete().eq("id", newUserId).catch(() => {});
+      await serviceClient.auth.admin.deleteUser(newUserId).catch(() => {});
+      return json({ error: msg }, 500);
+    };
+
+    // 3. Create the player profile.
     const { error: profileError } = await serviceClient
       .from("player_profiles")
       .insert({ user_id: newUserId });
-    if (profileError) console.error("player_profiles insert failed:", profileError.message);
+    if (profileError) {
+      console.error("player_profiles insert failed:", profileError.message);
+      return await rollback(`Could not create player profile: ${profileError.message}`);
+    }
 
-    // 4. Add to the "New Users" team so coaches are notified (best-effort).
+    // 4. Add to the "New Users" team so coaches are notified.
     let teamId: string | null = null;
     const { data: team } = await serviceClient
       .from("teams")
@@ -95,18 +108,25 @@ Deno.serve(async (req) => {
       .maybeSingle();
     teamId = team?.id ?? null;
     if (!teamId) {
-      const { data: created } = await serviceClient
+      const { data: created, error: teamCreateErr } = await serviceClient
         .from("teams")
         .insert({ name: NEW_USER_TEAM_NAME })
         .select("id")
         .single();
+      if (teamCreateErr) {
+        console.error("teams insert failed:", teamCreateErr.message);
+        return await rollback(`Could not create default team: ${teamCreateErr.message}`);
+      }
       teamId = created?.id ?? null;
     }
     if (teamId) {
       const { error: teamError } = await serviceClient
         .from("team_members")
         .insert({ team_id: teamId, user_id: newUserId, role: "player" });
-      if (teamError) console.error("team_members insert failed:", teamError.message);
+      if (teamError) {
+        console.error("team_members insert failed:", teamError.message);
+        return await rollback(`Could not add to team: ${teamError.message}`);
+      }
     }
 
     return json({ success: true, message: confirmMessage });

@@ -76,17 +76,31 @@ Deno.serve(async (req) => {
       // UI re-create attempt failed with "user already exists"), look up the
       // existing auth user and backfill the public.users row instead of
       // returning the duplicate-email error.
+      // Supabase Auth returns 422 / `email_exists` for duplicate emails. Use
+      // the structured status code first; keep the message-matching fallback
+      // since older SDK versions don't surface a stable status field.
+      const status = (createError as any).status as number | undefined;
       const msg = (createError.message || "").toLowerCase();
       const looksDup =
+        status === 422 ||
+        (createError as any).code === "email_exists" ||
         msg.includes("already") || msg.includes("registered") ||
         msg.includes("duplicate") || msg.includes("exists");
 
       if (looksDup) {
         const normalizedEmail = email.trim().toLowerCase();
-        const { data: page } = await serviceClient.auth.admin.listUsers({ page: 1, perPage: 200 });
-        const existingAuth = (page?.users || []).find(
-          (u: any) => (u.email || "").toLowerCase() === normalizedEmail
-        );
+        // Paginate through all auth users — listUsers caps at perPage=1000.
+        // Single-page scan misses everyone past the page boundary, which broke
+        // orphan recovery (#166) once the directory crossed 200 accounts.
+        const PER_PAGE = 1000;
+        let existingAuth: any = null;
+        for (let page = 1; page <= 50 && !existingAuth; page++) {
+          const { data: pageData, error: pageErr } = await serviceClient.auth.admin.listUsers({ page, perPage: PER_PAGE });
+          if (pageErr) break;
+          const users = pageData?.users || [];
+          existingAuth = users.find((u: any) => (u.email || "").toLowerCase() === normalizedEmail);
+          if (users.length < PER_PAGE) break; // last page
+        }
         if (existingAuth) {
           const { data: existingPub } = await serviceClient
             .from("users")
