@@ -149,32 +149,60 @@ Deno.serve(async (req) => {
 
     // Auto-create missing recurring products by fetching the catalog object
     // directly from Square. Handles plan_variation_id (newer) and plan_id (older).
+    const fetchDiagnostics = new Map<string, string>();
     const ensureProduct = async (planVarId: string | null, planId: string | null) => {
       if (planVarId) {
         const cached = productByVariation.get(planVarId);
-        if (cached) return cached;
+        if (cached) return { product: cached, diag: null as string | null };
       }
       if (planId) {
         const cached = productByPlan.get(planId);
-        if (cached) return cached;
+        if (cached) return { product: cached, diag: null as string | null };
       }
-      const tryFetch = async (id: string) => {
+      const tryFetch = async (id: string): Promise<{ obj: any; err: string | null }> => {
         try {
-          const data = await squareFetch(`/v2/catalog/object/${id}`);
-          return data?.object || null;
-        } catch { return null; }
+          const data = await squareFetch(`/v2/catalog/object/${id}?include_related_objects=true`);
+          if (data?.object) return { obj: data.object, err: null };
+          return { obj: null, err: `no object in response (keys: ${Object.keys(data || {}).join(",")})` };
+        } catch (err) {
+          return { obj: null, err: (err as Error).message };
+        }
       };
-      const obj = (planVarId ? await tryFetch(planVarId) : null) || (planId ? await tryFetch(planId) : null);
-      if (!obj) return null;
+      let obj: any = null;
+      let diag: string | null = null;
+      if (planVarId) {
+        const r = await tryFetch(planVarId);
+        obj = r.obj;
+        if (!obj) diag = `variation ${planVarId}: ${r.err}`;
+      }
+      if (!obj && planId) {
+        const r = await tryFetch(planId);
+        obj = r.obj;
+        if (!obj) diag = `${diag ? diag + "; " : ""}plan ${planId}: ${r.err}`;
+      }
+      if (!obj) return { product: null, diag };
+      diag = `found type=${obj.type}`;
+      const phasePrice = (phase: any) =>
+        phase?.pricing?.price_money?.amount
+          ?? phase?.pricing?.price?.amount
+          ?? phase?.recurring_price_money?.amount
+          ?? phase?.price_money?.amount
+          ?? null;
+      const firstPhaseWithPrice = (phases: any[]) =>
+        (phases || []).map((p: any) => ({ phase: p, price: phasePrice(p) })).find((x: any) => x.price != null);
       let row: Record<string, unknown> | null = null;
       if (obj.type === "SUBSCRIPTION_PLAN_VARIATION") {
         const pvd = obj.subscription_plan_variation_data;
-        const phase = pvd?.phases?.[0];
-        const priceCents = phase?.pricing?.price?.amount ?? phase?.recurring_price_money?.amount;
-        if (priceCents == null) return null;
+        const hit = firstPhaseWithPrice(pvd?.phases);
+        // Square's RELATIVE pricing inherits price from the linked catalog
+        // item — it's not stored on the plan itself. Fall back to 0 so we can
+        // still record the subscription; admin can edit price in Catalog UI.
+        const priceCents = hit?.price ?? 0;
+        const cadence = pvd?.phases?.[0]?.cadence || "";
+        const suffix = hit?.price == null ? ` (${cadence || "inherited"} price)` : "";
         row = {
           kind: "package",
-          name: pvd?.name || "Subscription",
+          name: (pvd?.name || "Subscription") + suffix,
           price_cents: priceCents,
           recurring: true,
           square_catalog_id: pvd?.subscription_plan_id || null,
@@ -185,9 +213,8 @@ Deno.serve(async (req) => {
         };
       } else if (obj.type === "SUBSCRIPTION_PLAN") {
         const pld = obj.subscription_plan_data;
-        const phase = pld?.phases?.[0];
-        const priceCents = phase?.recurring_price_money?.amount ?? phase?.pricing?.price?.amount;
-        if (priceCents == null) return null;
+        const hit = firstPhaseWithPrice(pld?.phases);
+        const priceCents = hit?.price ?? 0;
         row = {
           kind: "package",
           name: pld?.name || "Subscription",
@@ -200,17 +227,21 @@ Deno.serve(async (req) => {
           sort_order: 100,
         };
       }
-      if (!row) return null;
-      const { data: inserted, error } = await service
+      if (!row) {
+        return { product: null, diag: `${diag} unsupported type ${obj.type}` };
+      }
+      const { data: insertedRow, error } = await service
         .from("store_products")
         .insert(row)
         .select("id, name, price_cents, square_variation_id, square_plan_id, kind")
         .single();
-      if (error || !inserted) return null;
+      if (error || !insertedRow) {
+        return { product: null, diag: `${diag} db insert: ${error?.message || "unknown"}` };
+      }
       productsAutoCreated++;
-      if (inserted.square_variation_id) productByVariation.set(inserted.square_variation_id, inserted);
-      if (inserted.square_plan_id) productByPlan.set(inserted.square_plan_id, inserted);
-      return inserted;
+      if (insertedRow.square_variation_id) productByVariation.set(insertedRow.square_variation_id, insertedRow);
+      if (insertedRow.square_plan_id) productByPlan.set(insertedRow.square_plan_id, insertedRow);
+      return { product: insertedRow, diag: null };
     };
 
     for (const sub of subs) {
@@ -219,13 +250,13 @@ Deno.serve(async (req) => {
       const planId = sub.plan_id || null;
       const status = mapStatus(sub.status);
 
-      let product: any = await ensureProduct(planVarId, planId);
+      const { product, diag } = await ensureProduct(planVarId, planId);
       if (!product) {
         unmatchedProduct++;
         const customer = await fetchCustomer(sub.customer_id);
         unmatched.push({
           subscription_id: subId,
-          reason: "no product",
+          reason: diag || "no product",
           plan_variation_id: planVarId,
           plan_id: planId,
           customer_name: customer ? `${customer.given_name || ""} ${customer.family_name || ""}`.trim() : null,
