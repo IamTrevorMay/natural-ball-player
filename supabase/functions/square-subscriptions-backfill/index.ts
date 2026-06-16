@@ -199,7 +199,7 @@ Deno.serve(async (req) => {
       updated,
       unmatched_user: unmatchedUser,
       unmatched_product: unmatchedProduct,
-      unmatched_details: unmatched.slice(0, 20),
+      unmatched_details: unmatched,
     });
   } catch (err) {
     return jsonRes(cors, 500, { error: (err as Error).message });

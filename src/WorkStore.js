@@ -169,7 +169,10 @@ function CatalogTab() {
         inserted: json.inserted,
         updated: json.updated,
         skipped: json.unmatched_user + json.unmatched_product,
-        errors: (json.unmatched_details || []).map(d => `${d.subscription_id}: ${d.reason}${d.email ? ` (${d.email})` : ''}`),
+        errors: (json.unmatched_details || []).map(d =>
+          `${d.subscription_id}: ${d.reason}${d.email ? ` (${d.email})` : ''}${d.plan_variation_id ? ` [plan ${d.plan_variation_id}]` : ''}`
+        ),
+        rawUnmatched: json.unmatched_details || [],
       });
     } catch (err) {
       setError(err.message);
@@ -328,10 +331,42 @@ function CatalogTab() {
       </div>
 
       {syncResult && (
-        <div className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-2 text-sm">
-          Synced: {syncResult.inserted} added, {syncResult.updated} updated, {syncResult.skipped} skipped.
-          {syncResult.errors?.length > 0 && (
-            <span className="block text-red-700 mt-1">Errors: {syncResult.errors.join('; ')}</span>
+        <div className="space-y-2">
+          <div className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-2 text-sm">
+            Synced: {syncResult.inserted} added, {syncResult.updated} updated, {syncResult.skipped} skipped.
+          </div>
+          {syncResult.rawUnmatched?.length > 0 && (
+            <div className="bg-white border border-red-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm font-semibold text-red-800">
+                {syncResult.rawUnmatched.length} unmatched
+              </div>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Reason</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Customer</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Email</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Product</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Square sub</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Square status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {syncResult.rawUnmatched.map(u => (
+                      <tr key={u.subscription_id}>
+                        <td className="px-3 py-1.5 text-red-700">{u.reason}</td>
+                        <td className="px-3 py-1.5">{u.customer_name || '—'}</td>
+                        <td className="px-3 py-1.5">{u.email || '—'}</td>
+                        <td className="px-3 py-1.5">{u.product_name || u.plan_variation_id || '—'}</td>
+                        <td className="px-3 py-1.5 font-mono text-gray-500">{u.subscription_id}</td>
+                        <td className="px-3 py-1.5">{u.square_status || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </div>
       )}
