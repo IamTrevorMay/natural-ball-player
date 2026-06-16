@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History } from 'lucide-react';
+import BackfillHistory from './BackfillHistory';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -555,8 +556,17 @@ export default function WorkStore() {
           <ListChecks size={16} />
           <span>Purchases</span>
         </button>
+        <button
+          onClick={() => setTab('backfill')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
+            tab === 'backfill' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <History size={16} />
+          <span>Backfill History</span>
+        </button>
       </div>
-      {tab === 'catalog' ? <CatalogTab /> : <PurchasesTab />}
+      {tab === 'catalog' ? <CatalogTab /> : tab === 'purchases' ? <PurchasesTab /> : <BackfillHistory />}
     </div>
   );
 }

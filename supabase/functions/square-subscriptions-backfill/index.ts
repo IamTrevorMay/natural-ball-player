@@ -271,7 +271,16 @@ Deno.serve(async (req) => {
       const userId = email ? userByEmail.get(email) : null;
       if (!userId) {
         unmatchedUser++;
-        unmatched.push({ subscription_id: subId, reason: "no user", email });
+        unmatched.push({
+          subscription_id: subId,
+          reason: "no user",
+          email,
+          customer_name: customer ? `${customer.given_name || ""} ${customer.family_name || ""}`.trim() : null,
+          plan_variation_id: planVarId,
+          plan_id: planId,
+          product_name: product.name,
+          square_status: sub.status,
+        });
         continue;
       }
 
@@ -303,7 +312,23 @@ Deno.serve(async (req) => {
       }
     }
 
+    const { data: logRow } = await service
+      .from("store_backfill_runs")
+      .insert({
+        ran_by: user.id,
+        total_square_subs: subs.length,
+        inserted,
+        updated,
+        products_auto_created: productsAutoCreated,
+        unmatched_user: unmatchedUser,
+        unmatched_product: unmatchedProduct,
+        unmatched,
+      })
+      .select("id")
+      .single();
+
     return jsonRes(cors, 200, {
+      run_id: logRow?.id || null,
       total_square_subs: subs.length,
       inserted,
       updated,
