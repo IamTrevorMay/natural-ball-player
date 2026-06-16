@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw } from 'lucide-react';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -42,6 +42,8 @@ function CatalogTab() {
   const [draft, setDraft] = useState(emptyDraft());
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
@@ -109,6 +111,33 @@ function CatalogTab() {
     if (res.error) { setError(res.error.message); return; }
     cancel();
     fetchProducts();
+  };
+
+  const syncFromSquare = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    setError('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        `${process.env.REACT_APP_SUPABASE_URL || 'https://cjilkqzifyhssbsiqgfu.supabase.co'}/functions/v1/square-catalog-sync`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+        },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Sync failed');
+      setSyncResult(json);
+      await fetchProducts();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const remove = async (id) => {
@@ -236,18 +265,37 @@ function CatalogTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-sm text-gray-600">Active products show to players in the Store on their profile.</p>
-        {!creating && editingId === null && (
+        <div className="flex items-center space-x-2">
           <button
-            onClick={() => { setCreating(true); setDraft(emptyDraft()); }}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center space-x-2"
+            onClick={syncFromSquare}
+            disabled={syncing}
+            className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 disabled:opacity-60 flex items-center space-x-2"
           >
-            <Plus size={18} />
-            <span>Add Product</span>
+            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            <span>{syncing ? 'Syncing…' : 'Sync from Square'}</span>
           </button>
-        )}
+          {!creating && editingId === null && (
+            <button
+              onClick={() => { setCreating(true); setDraft(emptyDraft()); }}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center space-x-2"
+            >
+              <Plus size={18} />
+              <span>Add Product</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {syncResult && (
+        <div className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-2 text-sm">
+          Synced: {syncResult.inserted} added, {syncResult.updated} updated, {syncResult.skipped} skipped.
+          {syncResult.errors?.length > 0 && (
+            <span className="block text-red-700 mt-1">Errors: {syncResult.errors.join('; ')}</span>
+          )}
+        </div>
+      )}
 
       {creating && renderForm()}
 
