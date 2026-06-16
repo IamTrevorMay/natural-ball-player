@@ -107,14 +107,16 @@ Deno.serve(async (req) => {
       if (r.square_subscription_id) existing.set(r.square_subscription_id, { id: r.id, status: r.status });
     }
 
-    // Preload products by variation id
+    // Preload products by variation id AND plan id (older subs reference plan_id only)
     const { data: products } = await service
       .from("store_products")
-      .select("id, name, price_cents, square_variation_id, kind")
+      .select("id, name, price_cents, square_variation_id, square_plan_id, kind")
       .eq("recurring", true);
     const productByVariation = new Map<string, any>();
+    const productByPlan = new Map<string, any>();
     for (const p of (products || [])) {
       if (p.square_variation_id) productByVariation.set(p.square_variation_id, p);
+      if (p.square_plan_id) productByPlan.set(p.square_plan_id, p);
     }
 
     // Preload users by lowercased email
@@ -146,13 +148,24 @@ Deno.serve(async (req) => {
 
     for (const sub of subs) {
       const subId = sub.id;
-      const planVarId = sub.plan_variation_id;
+      const planVarId = sub.plan_variation_id || null;
+      const planId = sub.plan_id || null;
       const status = mapStatus(sub.status);
 
-      const product = productByVariation.get(planVarId);
+      let product: any = planVarId ? productByVariation.get(planVarId) : null;
+      if (!product && planId) product = productByPlan.get(planId);
       if (!product) {
         unmatchedProduct++;
-        unmatched.push({ subscription_id: subId, reason: "no product", plan_variation_id: planVarId });
+        const customer = await fetchCustomer(sub.customer_id);
+        unmatched.push({
+          subscription_id: subId,
+          reason: "no product",
+          plan_variation_id: planVarId,
+          plan_id: planId,
+          customer_name: customer ? `${customer.given_name || ""} ${customer.family_name || ""}`.trim() : null,
+          email: customer?.email_address || null,
+          square_status: sub.status,
+        });
         continue;
       }
 

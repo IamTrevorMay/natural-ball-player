@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
 
     const items = await listAllCatalog("ITEM");
     const planVars = await listAllCatalog("SUBSCRIPTION_PLAN_VARIATION");
+    const plans = await listAllCatalog("SUBSCRIPTION_PLAN");
     const discounts = await listAllCatalog("DISCOUNT");
 
     // Existing rows keyed by square_variation_id (preferred) and square_catalog_id (fallback)
@@ -183,6 +184,34 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Older SUBSCRIPTION_PLAN objects (pre-2022 catalog model). Each plan has
+    // its own phases array. We still insert one product per plan so that
+    // backfilling subscriptions stored against plan_id (not plan_variation_id)
+    // can resolve a matching product.
+    for (const pl of plans) {
+      const pld = pl.subscription_plan_data;
+      if (!pld) { skipped++; continue; }
+      const phase = pld.phases?.[0];
+      const priceCents = phase?.recurring_price_money?.amount ?? phase?.pricing?.price?.amount;
+      if (priceCents == null) { skipped++; continue; }
+      const name = pld.name || "Subscription";
+      await upsert(
+        {
+          kind: "package",
+          name,
+          price_cents: priceCents,
+          recurring: true,
+          square_catalog_id: pl.id,
+          square_plan_id: pl.id,
+          square_variation_id: null,
+          active: true,
+          sort_order: 100,
+        },
+        pl.id,
+        byCatId,
+      );
+    }
+
     let discountInserted = 0;
     let discountUpdated = 0;
     for (const d of discounts) {
@@ -224,6 +253,7 @@ Deno.serve(async (req) => {
       counts: {
         items: items.length,
         plan_variations: planVars.length,
+        plans: plans.length,
         discounts: discounts.length,
       },
     });
