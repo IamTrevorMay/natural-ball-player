@@ -60,7 +60,7 @@ function UserPicker({ onPick, onCancel }) {
   );
 }
 
-function UnmatchedRow({ runId, item, onResolved }) {
+function UnmatchedRow({ runId, item, onResolved, onRemove }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -105,7 +105,18 @@ function UnmatchedRow({ runId, item, onResolved }) {
         <td className="px-3 py-1.5">{item.product_name || '—'}</td>
         <td className="px-3 py-1.5 font-mono text-xs">{item.subscription_id}</td>
         <td className="px-3 py-1.5">{item.square_status || '—'}</td>
-        <td className="px-3 py-1.5">✓</td>
+        <td className="px-3 py-1.5 no-underline" style={{ textDecoration: 'none' }}>
+          <div className="flex items-center gap-2">
+            <span>✓</span>
+            <button
+              onClick={onRemove}
+              className="text-gray-400 hover:text-red-500 transition"
+              title="Remove from list"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </td>
       </tr>
     );
   }
@@ -180,7 +191,13 @@ function RunDetails({ runId }) {
         </thead>
         <tbody className="divide-y divide-gray-100">
           {items.map(it => (
-            <UnmatchedRow key={it.subscription_id} runId={runId} item={it} onResolved={markResolved} />
+            <UnmatchedRow
+              key={it.subscription_id}
+              runId={runId}
+              item={it}
+              onResolved={markResolved}
+              onRemove={() => setItems(prev => prev.filter(p => p.subscription_id !== it.subscription_id))}
+            />
           ))}
         </tbody>
       </table>
