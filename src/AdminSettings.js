@@ -1765,7 +1765,7 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
   const fetchMembers = async () => {
     const { data, error } = await supabase
       .from('team_members')
-      .select('*, users(id, full_name, email, role)')
+      .select('*, users(id, full_name, email, role, player_profiles!player_profiles_user_id_fkey(status))')
       .eq('team_id', team.id);
 
     if (error) {
@@ -2050,6 +2050,15 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
+                          {member.role === 'player' && (() => {
+                            const profile = member.users?.player_profiles;
+                            const status = Array.isArray(profile) ? profile[0]?.status : profile?.status;
+                            return status ? (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                                {status}
+                              </span>
+                            ) : null;
+                          })()}
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
                             {member.role}
                           </span>
