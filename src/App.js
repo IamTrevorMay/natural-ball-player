@@ -16,6 +16,7 @@ import ContractPage from './ContractPage';
 import FacilityFinePage from './FacilityFinePage';
 import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
+import MobileShell from './MobileShell';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
@@ -714,6 +715,18 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const mainCounts = useMainPortalCounts(userId, effectiveRole);
   const workCounts = useWorkPortalCounts(userId, effectiveRole);
 
+  const [isNarrow, setIsNarrow] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 767px)').matches;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const handler = (e) => setIsNarrow(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   const handleNotifJump = (portal, view) => {
     if (portal === 'main') setCurrentView(view);
     else { setWorkPortalView(view); setCurrentPortal('work'); }
@@ -736,6 +749,20 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   }
 
   const handleNav = (view) => { setCurrentView(view); setSidebarOpen(false); };
+
+  const forceDesktop = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('desktop');
+  const useMobileShell = userRole === 'player' && isNarrow && !forceDesktop;
+
+  if (useMobileShell) {
+    return (
+      <MobileShell
+        userId={userId}
+        userName={userName}
+        userAvatar={userAvatar}
+        onLogout={onLogout}
+      />
+    );
+  }
 
   return (
     <div className="flex">
