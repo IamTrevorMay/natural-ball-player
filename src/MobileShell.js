@@ -81,7 +81,6 @@ function MobileDashboard({ userId, userName }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      try {
       const today = fmtLocalDate(new Date());
 
       // Player's teams
@@ -115,11 +114,11 @@ function MobileDashboard({ userId, userName }) {
       // 2) facility_events the player is signed up for, today
       const { data: signups } = await supabase
         .from('event_signups')
-        .select('event_id, event_date, facility_events:event_id(id, title, event_type, start_time, end_time, location)')
+        .select('event_id, event_date, response, facility_events:event_id(id, title, event_type, start_time, end_time, location)')
         .eq('user_id', userId)
         .eq('event_date', today);
       const facilityList = (signups || [])
-        .filter(s => s.facility_events)
+        .filter(s => s.facility_events && s.response !== 'no')
         .map(s => ({
           id: s.event_id,
           title: s.facility_events.title || s.facility_events.event_type || 'Facility event',
@@ -199,11 +198,7 @@ function MobileDashboard({ userId, userName }) {
       setFacilityItems(facilityList);
       setProgram(programSummary);
       setMealPlan(mealAssignment?.meal_plans || null);
-      } catch (err) {
-        console.error('MobileDashboard fetch failed:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [userId]);
@@ -332,7 +327,6 @@ function MobileSchedule({ userId }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      try {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const end = new Date(start);
@@ -378,7 +372,7 @@ function MobileSchedule({ userId }) {
       // facility_events from event_signups in window
       const { data: signups } = await supabase
         .from('event_signups')
-        .select('event_id, event_date, facility_events:event_id(id, title, event_type, start_time, end_time, location)')
+        .select('event_id, event_date, response, facility_events:event_id(id, title, event_type, start_time, end_time, location)')
         .eq('user_id', userId)
         .gte('event_date', startStr)
         .lte('event_date', endStr);
@@ -430,7 +424,7 @@ function MobileSchedule({ userId }) {
 
       (signups || []).forEach(s => {
         const ev = s.facility_events;
-        if (!ev) return;
+        if (!ev || s.response === 'no') return;
         addItem(s.event_date, {
           key: `fe-${s.event_id}-${s.event_date}`,
           title: ev.title || ev.event_type || 'Facility event',
@@ -459,11 +453,7 @@ function MobileSchedule({ userId }) {
 
       if (cancelled) return;
       setItemsByDate(buckets);
-      } catch (err) {
-        console.error('MobileSchedule fetch failed:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [userId]);
@@ -564,7 +554,6 @@ function MobileWorkouts({ userId }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      try {
       const today = fmtLocalDate(new Date());
       const { data: tmRows } = await supabase
         .from('team_members')
@@ -598,27 +587,25 @@ function MobileWorkouts({ userId }) {
       if (!assignment) {
         setProgram(null);
         setDays([]);
-      } else {
-        const { data: dayRows } = await supabase
-          .from('training_days')
-          .select('id, day_number, title, notes, training_exercises(id, category, name, description, sets, reps, weight, video_url, image_url, sort_order, rest, load, super_set)')
-          .eq('program_id', assignment.program_id)
-          .order('day_number', { ascending: true });
-
-        const sortedDays = (dayRows || []).map(d => ({
-          ...d,
-          training_exercises: (d.training_exercises || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
-        }));
-
-        if (cancelled) return;
-        setProgram(assignment.training_programs);
-        setDays(sortedDays);
+        setLoading(false);
+        return;
       }
-      } catch (err) {
-        console.error('MobileWorkouts fetch failed:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+
+      const { data: dayRows } = await supabase
+        .from('training_days')
+        .select('id, day_number, title, notes, training_exercises(id, category, name, description, sets, reps, weight, video_url, image_url, sort_order, rest, load, super_set)')
+        .eq('program_id', assignment.program_id)
+        .order('day_number', { ascending: true });
+
+      const sortedDays = (dayRows || []).map(d => ({
+        ...d,
+        training_exercises: (d.training_exercises || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+      }));
+
+      if (cancelled) return;
+      setProgram(assignment.training_programs);
+      setDays(sortedDays);
+      setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [userId]);
@@ -969,56 +956,53 @@ function MobileMeals({ userId }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      try {
-        const today = fmtLocalDate(new Date());
-        const { data: tmRows } = await supabase
-          .from('team_members')
-          .select('team_id')
-          .eq('user_id', userId);
-        const teamIds = (tmRows || []).map(r => r.team_id).filter(Boolean);
+      const today = fmtLocalDate(new Date());
+      const { data: tmRows } = await supabase
+        .from('team_members')
+        .select('team_id')
+        .eq('user_id', userId);
+      const teamIds = (tmRows || []).map(r => r.team_id).filter(Boolean);
 
-        const [{ data: mealPlayer }, { data: mealTeam }] = await Promise.all([
-          supabase
-            .from('meal_plan_assignments')
-            .select('id, meal_plan_id, start_date, end_date, meal_plans(id, name, description)')
-            .eq('player_id', userId)
-            .lte('start_date', today)
-            .or(`end_date.is.null,end_date.gte.${today}`)
-            .order('start_date', { ascending: false })
-            .limit(1),
-          teamIds.length > 0
-            ? supabase
-                .from('meal_plan_assignments')
-                .select('id, meal_plan_id, start_date, end_date, meal_plans(id, name, description)')
-                .in('team_id', teamIds)
-                .lte('start_date', today)
-                .or(`end_date.is.null,end_date.gte.${today}`)
-                .order('start_date', { ascending: false })
-                .limit(1)
-            : Promise.resolve({ data: [] }),
-        ]);
-        const assignment = (mealPlayer && mealPlayer[0]) || (mealTeam && mealTeam[0]) || null;
+      const [{ data: mealPlayer }, { data: mealTeam }] = await Promise.all([
+        supabase
+          .from('meal_plan_assignments')
+          .select('id, meal_plan_id, start_date, end_date, meal_plans(id, name, description)')
+          .eq('player_id', userId)
+          .lte('start_date', today)
+          .or(`end_date.is.null,end_date.gte.${today}`)
+          .order('start_date', { ascending: false })
+          .limit(1),
+        teamIds.length > 0
+          ? supabase
+              .from('meal_plan_assignments')
+              .select('id, meal_plan_id, start_date, end_date, meal_plans(id, name, description)')
+              .in('team_id', teamIds)
+              .lte('start_date', today)
+              .or(`end_date.is.null,end_date.gte.${today}`)
+              .order('start_date', { ascending: false })
+              .limit(1)
+          : Promise.resolve({ data: [] }),
+      ]);
+      const assignment = (mealPlayer && mealPlayer[0]) || (mealTeam && mealTeam[0]) || null;
 
-        if (cancelled) return;
-        if (!assignment) {
-          setPlan(null);
-          setItems([]);
-        } else {
-          const { data: itemRows } = await supabase
-            .from('meal_plan_items')
-            .select('id, sort_order, meal_id, meals(id, name, description, meal_type, calories, protein_g, carbs_g, fat_g)')
-            .eq('meal_plan_id', assignment.meal_plan_id)
-            .order('sort_order', { ascending: true });
-
-          if (cancelled) return;
-          setPlan(assignment.meal_plans);
-          setItems((itemRows || []).filter(r => r.meals));
-        }
-      } catch (err) {
-        console.error('MobileMeals fetch failed:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (cancelled) return;
+      if (!assignment) {
+        setPlan(null);
+        setItems([]);
+        setLoading(false);
+        return;
       }
+
+      const { data: itemRows } = await supabase
+        .from('meal_plan_items')
+        .select('id, sort_order, meal_id, meals(id, name, description, meal_type, calories, protein_g, carbs_g, fat_g)')
+        .eq('meal_plan_id', assignment.meal_plan_id)
+        .order('sort_order', { ascending: true });
+
+      if (cancelled) return;
+      setPlan(assignment.meal_plans);
+      setItems((itemRows || []).filter(r => r.meals));
+      setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [userId]);
