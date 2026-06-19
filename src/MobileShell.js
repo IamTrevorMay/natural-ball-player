@@ -73,7 +73,7 @@ function MobileDashboard({ userId, userName }) {
   const [loading, setLoading] = useState(true);
   const [scheduleItems, setScheduleItems] = useState([]);
   const [facilityItems, setFacilityItems] = useState([]);
-  const [todayWorkouts, setTodayWorkouts] = useState([]);
+  const [program, setProgram] = useState(null);
   const [mealPlan, setMealPlan] = useState(null);
 
   useEffect(() => {
@@ -128,34 +128,48 @@ function MobileDashboard({ userId, userName }) {
         }))
         .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
-      // 3) today's workout(s) — schedule_events with event_type='workout'
-      const [{ data: woDirect }, { data: woTeam }] = await Promise.all([
+      // 3) active training program assignment (today between start_date and end_date)
+      const [{ data: progPlayer }, { data: progTeam }] = await Promise.all([
         supabase
-          .from('schedule_events')
-          .select('id, event_date, event_time, event_type, opponent, notes')
+          .from('training_program_assignments')
+          .select('id, program_id, start_date, end_date, training_programs(id, name, description, duration_weeks)')
           .eq('player_id', userId)
-          .eq('event_type', 'workout')
-          .eq('event_date', today),
+          .lte('start_date', today)
+          .or(`end_date.is.null,end_date.gte.${today}`)
+          .order('start_date', { ascending: false })
+          .limit(1),
         teamIds.length > 0
           ? supabase
-              .from('schedule_events')
-              .select('id, event_date, event_time, event_type, opponent, notes')
-              .overlaps('team_ids', teamIds)
-              .eq('event_type', 'workout')
-              .eq('event_date', today)
+              .from('training_program_assignments')
+              .select('id, program_id, start_date, end_date, training_programs(id, name, description, duration_weeks)')
+              .in('team_id', teamIds)
+              .lte('start_date', today)
+              .or(`end_date.is.null,end_date.gte.${today}`)
+              .order('start_date', { ascending: false })
+              .limit(1)
           : Promise.resolve({ data: [] }),
       ]);
-      const woDedup = new Map();
-      [...(woDirect || []), ...(woTeam || [])].forEach(e => woDedup.set(e.id, e));
-      const todayWorkouts = Array.from(woDedup.values()).map(e => {
-        const parsed = parseWorkoutNotes(e.notes);
-        return {
-          id: e.id,
-          title: parsed.title || e.opponent || 'Workout',
-          exerciseCount: parsed.exercises.length,
-          time: e.event_time,
+      const programAssignment = (progPlayer && progPlayer[0]) || (progTeam && progTeam[0]) || null;
+
+      let programSummary = null;
+      if (programAssignment?.training_programs) {
+        const { data: days } = await supabase
+          .from('training_days')
+          .select('id, day_number, title, training_exercises(id)')
+          .eq('program_id', programAssignment.program_id)
+          .order('day_number', { ascending: true });
+        const totalDays = (days || []).length;
+        const totalExercises = (days || []).reduce(
+          (sum, d) => sum + (d.training_exercises?.length || 0),
+          0
+        );
+        programSummary = {
+          name: programAssignment.training_programs.name,
+          description: programAssignment.training_programs.description,
+          totalDays,
+          totalExercises,
         };
-      });
+      }
 
       // 4) active meal plan assignment
       const [{ data: mealPlayer }, { data: mealTeam }] = await Promise.all([
@@ -183,7 +197,7 @@ function MobileDashboard({ userId, userName }) {
       if (cancelled) return;
       setScheduleItems(scheduleList);
       setFacilityItems(facilityList);
-      setTodayWorkouts(todayWorkouts);
+      setProgram(programSummary);
       setMealPlan(mealAssignment?.meal_plans || null);
       } catch (err) {
         console.error('MobileDashboard fetch failed:', err);
@@ -243,17 +257,14 @@ function MobileDashboard({ userId, userName }) {
         ))}
       </Section>
 
-      <Section title="Workouts" empty="No workouts scheduled today">
-        {todayWorkouts.map(w => (
+      <Section title="Workout" empty="No active program assigned">
+        {program && (
           <Row
-            key={w.id}
-            title={w.title}
-            subtitle={[w.time && formatTime(w.time), `${w.exerciseCount} ${w.exerciseCount === 1 ? 'exercise' : 'exercises'}`]
-              .filter(Boolean)
-              .join(' · ')}
+            title={program.name}
+            subtitle={`${program.totalDays} ${program.totalDays === 1 ? 'day' : 'days'} · ${program.totalExercises} exercises`}
             cta="Open"
           />
-        ))}
+        )}
       </Section>
 
       <Section title="Meal Plan" empty="No active meal plan assigned">
@@ -541,30 +552,11 @@ function MobileProgram({ userId }) {
   );
 }
 
-const EXERCISES_DELIMITER = '--- Exercises ---';
-
-function parseWorkoutNotes(notes) {
-  if (!notes) return { title: '', exercises: [] };
-  const idx = notes.indexOf(EXERCISES_DELIMITER);
-  const title = (idx >= 0 ? notes.slice(0, idx) : '').trim();
-  const body = idx >= 0 ? notes.slice(idx + EXERCISES_DELIMITER.length) : '';
-  const lines = body.split('\n').map(l => l.trim()).filter(Boolean);
-  return {
-    title,
-    exercises: lines.map((line, i) => {
-      const parts = line.split('|').map(p => p.trim());
-      const [name = '', setsReps = '', rest = '', load = '', link = ''] = parts;
-      const m = setsReps.match(/^(\d+)\s*[xX]/);
-      const setsCount = m ? Math.max(1, parseInt(m[1], 10)) : 1;
-      return { index: i, name, setsReps, rest, load, link, setsCount };
-    }),
-  };
-}
-
 function MobileWorkouts({ userId }) {
   const [loading, setLoading] = useState(true);
-  const [workouts, setWorkouts] = useState([]);
-  const [openWorkout, setOpenWorkout] = useState(null);
+  const [program, setProgram] = useState(null);
+  const [days, setDays] = useState([]);
+  const [openDay, setOpenDay] = useState(null);
   const [openExercise, setOpenExercise] = useState(null);
 
   useEffect(() => {
@@ -573,54 +565,55 @@ function MobileWorkouts({ userId }) {
     (async () => {
       setLoading(true);
       try {
-        const start = new Date(); start.setHours(0, 0, 0, 0);
-        const end = new Date(start); end.setDate(end.getDate() + 13);
-        const startStr = fmtLocalDate(start);
-        const endStr = fmtLocalDate(end);
+      const today = fmtLocalDate(new Date());
+      const { data: tmRows } = await supabase
+        .from('team_members')
+        .select('team_id')
+        .eq('user_id', userId);
+      const teamIds = (tmRows || []).map(r => r.team_id).filter(Boolean);
 
-        const { data: tmRows } = await supabase
-          .from('team_members')
-          .select('team_id')
-          .eq('user_id', userId);
-        const teamIds = (tmRows || []).map(r => r.team_id).filter(Boolean);
+      const [{ data: progPlayer }, { data: progTeam }] = await Promise.all([
+        supabase
+          .from('training_program_assignments')
+          .select('id, program_id, start_date, end_date, training_programs(id, name, description, duration_weeks)')
+          .eq('player_id', userId)
+          .lte('start_date', today)
+          .or(`end_date.is.null,end_date.gte.${today}`)
+          .order('start_date', { ascending: false })
+          .limit(1),
+        teamIds.length > 0
+          ? supabase
+              .from('training_program_assignments')
+              .select('id, program_id, start_date, end_date, training_programs(id, name, description, duration_weeks)')
+              .in('team_id', teamIds)
+              .lte('start_date', today)
+              .or(`end_date.is.null,end_date.gte.${today}`)
+              .order('start_date', { ascending: false })
+              .limit(1)
+          : Promise.resolve({ data: [] }),
+      ]);
+      const assignment = (progPlayer && progPlayer[0]) || (progTeam && progTeam[0]) || null;
 
-        const [{ data: direct }, { data: team }] = await Promise.all([
-          supabase
-            .from('schedule_events')
-            .select('id, event_date, event_time, event_type, opponent, notes')
-            .eq('player_id', userId)
-            .eq('event_type', 'workout')
-            .gte('event_date', startStr)
-            .lte('event_date', endStr),
-          teamIds.length > 0
-            ? supabase
-                .from('schedule_events')
-                .select('id, event_date, event_time, event_type, opponent, notes')
-                .overlaps('team_ids', teamIds)
-                .eq('event_type', 'workout')
-                .gte('event_date', startStr)
-                .lte('event_date', endStr)
-            : Promise.resolve({ data: [] }),
-        ]);
+      if (cancelled) return;
+      if (!assignment) {
+        setProgram(null);
+        setDays([]);
+      } else {
+        const { data: dayRows } = await supabase
+          .from('training_days')
+          .select('id, day_number, title, notes, training_exercises(id, category, name, description, sets, reps, weight, video_url, image_url, sort_order, rest, load, super_set)')
+          .eq('program_id', assignment.program_id)
+          .order('day_number', { ascending: true });
 
-        const dedup = new Map();
-        [...(direct || []), ...(team || [])].forEach(e => dedup.set(e.id, e));
-        const enriched = Array.from(dedup.values())
-          .map(e => {
-            const parsed = parseWorkoutNotes(e.notes);
-            return {
-              ...e,
-              parsedTitle: parsed.title,
-              exercises: parsed.exercises,
-            };
-          })
-          .sort((a, b) =>
-            a.event_date.localeCompare(b.event_date) ||
-            (a.event_time || '').localeCompare(b.event_time || '')
-          );
+        const sortedDays = (dayRows || []).map(d => ({
+          ...d,
+          training_exercises: (d.training_exercises || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)),
+        }));
 
         if (cancelled) return;
-        setWorkouts(enriched);
+        setProgram(assignment.training_programs);
+        setDays(sortedDays);
+      }
       } catch (err) {
         console.error('MobileWorkouts fetch failed:', err);
       } finally {
@@ -631,115 +624,62 @@ function MobileWorkouts({ userId }) {
   }, [userId]);
 
   if (loading) return <div className="p-6 text-center text-gray-500 text-sm">Loading workouts…</div>;
+  if (!program) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm p-6 text-center text-sm text-gray-400">
+        No active program assigned
+      </div>
+    );
+  }
 
   if (openExercise) {
     return (
       <ExerciseDetail
         userId={userId}
-        scheduleEventId={openExercise.eventId}
-        exercise={openExercise.exercise}
-        workoutDate={openExercise.date}
+        exercise={openExercise}
         onBack={() => setOpenExercise(null)}
       />
     );
   }
 
-  if (openWorkout) {
+  if (openDay) {
     return (
-      <WorkoutDetail
-        workout={openWorkout}
-        onBack={() => setOpenWorkout(null)}
-        onOpenExercise={(ex) =>
-          setOpenExercise({ eventId: openWorkout.id, exercise: ex, date: openWorkout.event_date })
-        }
+      <DayDetail
+        day={openDay}
+        onBack={() => setOpenDay(null)}
+        onOpenExercise={(ex) => setOpenExercise(ex)}
       />
     );
   }
 
-  if (workouts.length === 0) {
-    return (
-      <div className="bg-white rounded-2xl shadow-sm p-6 text-center text-sm text-gray-400">
-        No workouts scheduled in the next 14 days
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
-      <div className="bg-white rounded-2xl shadow-sm overflow-hidden divide-y divide-gray-100">
-        {workouts.map(w => {
-          const dt = new Date(w.event_date + 'T00:00:00');
-          const isToday = fmtLocalDate(new Date()) === w.event_date;
-          const dateLabel = isToday
-            ? 'Today'
-            : `${DAY_LABELS[dt.getDay()]} ${MONTH_LABELS[dt.getMonth()]} ${dt.getDate()}`;
-          return (
-            <button
-              key={w.id}
-              onClick={() => setOpenWorkout(w)}
-              className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50"
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-semibold text-gray-900 truncate">
-                    {w.parsedTitle || w.opponent || 'Workout'}
-                  </p>
-                  {isToday && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold">Today</span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {dateLabel}
-                  {w.event_time && ` · ${formatTime(w.event_time)}`}
-                  {` · ${w.exercises.length} ${w.exercises.length === 1 ? 'exercise' : 'exercises'}`}
-                </p>
-              </div>
-              <ChevronRight size={16} className="text-gray-400" />
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function WorkoutDetail({ workout, onBack, onOpenExercise }) {
-  const exercises = workout.exercises || [];
-  const dt = new Date(workout.event_date + 'T00:00:00');
-  return (
-    <div className="space-y-3">
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1 text-sm font-semibold text-blue-600"
-      >
-        <ChevronLeft size={16} />
-        Back to workouts
-      </button>
-
       <div className="bg-white rounded-2xl shadow-sm p-4">
-        <p className="text-xs uppercase tracking-wide text-gray-500">
-          {DAY_LABELS[dt.getDay()]} {MONTH_LABELS[dt.getMonth()]} {dt.getDate()}
-          {workout.event_time && ` · ${formatTime(workout.event_time)}`}
-        </p>
-        <p className="text-lg font-bold text-gray-900 leading-tight">
-          {workout.parsedTitle || workout.opponent || 'Workout'}
+        <p className="text-sm font-bold text-gray-900">{program.name}</p>
+        {program.description && (
+          <p className="text-xs text-gray-500 mt-1">{program.description}</p>
+        )}
+        <p className="text-xs text-gray-400 mt-2">
+          {days.length} {days.length === 1 ? 'day' : 'days'} · {days.reduce((s, d) => s + (d.training_exercises?.length || 0), 0)} exercises
         </p>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden divide-y divide-gray-100">
-        {exercises.length === 0 && (
-          <div className="px-4 py-5 text-sm text-gray-400">No exercises listed</div>
-        )}
-        {exercises.map(ex => (
+        {days.map(d => (
           <button
-            key={ex.index}
-            onClick={() => onOpenExercise(ex)}
+            key={d.id}
+            onClick={() => setOpenDay(d)}
             className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50"
           >
+            <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-bold flex-shrink-0">
+              {d.day_number}
+            </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{ex.name || `Exercise ${ex.index + 1}`}</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {[ex.setsReps, ex.load, ex.rest].filter(Boolean).join(' · ') || '—'}
+              <p className="text-sm font-semibold text-gray-900 truncate">
+                {d.title || `Day ${d.day_number}`}
+              </p>
+              <p className="text-xs text-gray-500">
+                {(d.training_exercises?.length || 0)} exercises
               </p>
             </div>
             <ChevronRight size={16} className="text-gray-400" />
@@ -750,9 +690,58 @@ function WorkoutDetail({ workout, onBack, onOpenExercise }) {
   );
 }
 
-function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack }) {
-  const setsCount = Math.max(1, exercise.setsCount || 1);
-  const logDate = workoutDate || fmtLocalDate(new Date());
+function DayDetail({ day, onBack, onOpenExercise }) {
+  const exercises = day.training_exercises || [];
+  return (
+    <div className="space-y-3">
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1 text-sm font-semibold text-blue-600"
+      >
+        <ChevronLeft size={16} />
+        Back to days
+      </button>
+
+      <div className="bg-white rounded-2xl shadow-sm p-4">
+        <p className="text-xs uppercase tracking-wide text-gray-500">Day {day.day_number}</p>
+        <p className="text-lg font-bold text-gray-900 leading-tight">{day.title || `Day ${day.day_number}`}</p>
+        {day.notes && <p className="text-xs text-gray-500 mt-2">{day.notes}</p>}
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden divide-y divide-gray-100">
+        {exercises.length === 0 && (
+          <div className="px-4 py-5 text-sm text-gray-400">No exercises in this day</div>
+        )}
+        {exercises.map(ex => (
+          <button
+            key={ex.id}
+            onClick={() => onOpenExercise(ex)}
+            className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-gray-900 truncate">{ex.name}</p>
+                {ex.category && (
+                  <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 flex-shrink-0">
+                    {ex.category}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {[ex.sets && `${ex.sets}×${ex.reps || '—'}`, ex.load, ex.rest].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+            <ChevronRight size={16} className="text-gray-400" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExerciseDetail({ userId, exercise, onBack }) {
+  const setsCount = Math.max(1, parseInt(exercise.sets) || 1);
+  const today = fmtLocalDate(new Date());
   const [logs, setLogs] = useState(() =>
     Array.from({ length: setsCount }, (_, i) => ({
       id: null,
@@ -770,39 +759,34 @@ function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack
     let cancelled = false;
     (async () => {
       setLoading(true);
-      try {
-        const { data } = await supabase
-          .from('player_workout_logs')
-          .select('id, set_number, reps_actual, load_actual, notes')
-          .eq('player_id', userId)
-          .eq('schedule_event_id', scheduleEventId)
-          .eq('exercise_index', exercise.index)
-          .order('set_number', { ascending: true });
+      const { data } = await supabase
+        .from('player_workout_logs')
+        .select('id, set_number, reps_actual, load_actual, notes')
+        .eq('player_id', userId)
+        .eq('training_exercise_id', exercise.id)
+        .eq('log_date', today)
+        .order('set_number', { ascending: true });
 
-        if (cancelled) return;
-        const byNumber = new Map((data || []).map(r => [r.set_number, r]));
-        setLogs(prev =>
-          prev.map(row => {
-            const found = byNumber.get(row.set_number);
-            return found
-              ? {
-                  id: found.id,
-                  set_number: found.set_number,
-                  reps_actual: found.reps_actual ?? '',
-                  load_actual: found.load_actual ?? '',
-                  notes: found.notes ?? '',
-                }
-              : row;
-          })
-        );
-      } catch (err) {
-        console.error('ExerciseDetail load failed:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      if (cancelled) return;
+      const byNumber = new Map((data || []).map(r => [r.set_number, r]));
+      setLogs(prev =>
+        prev.map(row => {
+          const found = byNumber.get(row.set_number);
+          return found
+            ? {
+                id: found.id,
+                set_number: found.set_number,
+                reps_actual: found.reps_actual ?? '',
+                load_actual: found.load_actual ?? '',
+                notes: found.notes ?? '',
+              }
+            : row;
+        })
+      );
+      setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [userId, scheduleEventId, exercise.index]);
+  }, [userId, exercise.id, today]);
 
   const updateRow = (idx, patch) => {
     setLogs(prev => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -813,9 +797,8 @@ function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack
     setSaving(true);
     const payload = {
       player_id: userId,
-      schedule_event_id: scheduleEventId,
-      exercise_index: exercise.index,
-      log_date: logDate,
+      training_exercise_id: exercise.id,
+      log_date: today,
       set_number: row.set_number,
       reps_actual: row.reps_actual === '' ? null : parseInt(row.reps_actual),
       load_actual: row.load_actual || null,
@@ -824,7 +807,7 @@ function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack
     };
     const { data, error } = await supabase
       .from('player_workout_logs')
-      .upsert(payload, { onConflict: 'player_id,schedule_event_id,exercise_index,set_number' })
+      .upsert(payload, { onConflict: 'player_id,training_exercise_id,log_date,set_number' })
       .select('id')
       .single();
     setSaving(false);
@@ -851,7 +834,7 @@ function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack
     ]);
   };
 
-  const videoUrl = exercise.link;
+  const videoUrl = exercise.video_url;
 
   return (
     <div className="space-y-3">
@@ -866,7 +849,17 @@ function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack
       <div className="bg-white rounded-2xl shadow-sm p-4">
         <div className="flex items-start gap-3">
           <div className="flex-1 min-w-0">
-            <p className="text-lg font-bold text-gray-900 leading-tight">{exercise.name || `Exercise ${exercise.index + 1}`}</p>
+            <div className="flex items-center gap-2 mb-1">
+              {exercise.category && (
+                <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                  {exercise.category}
+                </span>
+              )}
+            </div>
+            <p className="text-lg font-bold text-gray-900 leading-tight">{exercise.name}</p>
+            {exercise.description && (
+              <p className="text-sm text-gray-600 mt-1">{exercise.description}</p>
+            )}
           </div>
           {videoUrl && (
             <a
@@ -882,10 +875,17 @@ function ExerciseDetail({ userId, scheduleEventId, exercise, workoutDate, onBack
         </div>
 
         <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
-          <Stat label="Prescribed" value={exercise.setsReps || '—'} />
+          <Stat label="Sets" value={exercise.sets || '—'} />
+          <Stat label="Reps" value={exercise.reps || '—'} />
           <Stat label="Load" value={exercise.load || '—'} />
-          <Stat label="Rest" value={exercise.rest || '—'} />
         </dl>
+        {(exercise.rest || exercise.super_set) && (
+          <p className="text-xs text-gray-500 mt-2">
+            {[exercise.rest && `Rest ${exercise.rest}`, exercise.super_set && `Superset: ${exercise.super_set}`]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
