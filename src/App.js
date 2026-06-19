@@ -751,7 +751,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const handleNav = (view) => { setCurrentView(view); setSidebarOpen(false); };
 
   const forceDesktop = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('desktop');
-  const useMobileShell = effectiveRole === 'player' && isNarrow && !forceDesktop;
+  const useMobileShell = userRole === 'player' && isNarrow && !forceDesktop;
 
   if (useMobileShell) {
     return (
