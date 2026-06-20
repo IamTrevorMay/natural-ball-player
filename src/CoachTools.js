@@ -1554,6 +1554,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
   };
 
   const handleSave = async () => {
+    trackAction('save_training_program');
     if (!name.trim()) return;
     setLoading(true);
     setError('');
@@ -2291,6 +2292,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
   };
 
   const handleSave = async () => {
+    trackAction('save_workout_template');
     if (!name.trim()) return;
     setLoading(true);
     setError('');
@@ -3194,6 +3196,7 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
   };
 
   const handleSave = async () => {
+    trackAction('save_workout_template');
     if (!name.trim()) { setError('Name is required'); return; }
     setLoading(true);
     setError('');
@@ -3379,6 +3382,7 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
   };
 
   const handleSave = async () => {
+    trackAction('save_workout_template');
     if (!playerId) { setError('Please select a player'); return; }
     setLoading(true);
     setError('');

@@ -772,6 +772,7 @@ export default function Schedule({ userId, userRole }) {
   // payload: { kind: 'template'|'program'|'meal_plan'|'meal', id, name }
   // ============================================
   const handleProgramDrop = async (payload, dateStr) => {
+    trackAction('drop_template_on_calendar', { kind: payload?.kind });
     if (!payload || !dateStr) return;
     if (!canManageCalendar() && view !== 'my-schedule') { alert('You do not have permission to schedule events here.'); return; }
 

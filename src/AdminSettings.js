@@ -957,6 +957,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   };
 
   const handleSave = async () => {
+    trackAction('save_user');
     setLoading(true);
     setError('');
     try {
@@ -1067,6 +1068,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   };
 
   const handleDeleteUser = async () => {
+    trackAction('delete_user');
     setDeleting(true);
     try {
       if (user.id === userId) {
@@ -1876,6 +1878,7 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
   });
 
   const handleSaveDetails = async () => {
+    trackAction('save_team_details');
     setSaving(true);
     setError('');
     const { error: updateError } = await supabase
@@ -1962,6 +1965,7 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
   };
 
   const handleDeleteTeam = async () => {
+    trackAction('delete_team');
     setSaving(true);
     // Delete team members first, then team
     await supabase.from('team_members').delete().eq('team_id', team.id);
