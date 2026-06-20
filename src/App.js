@@ -17,6 +17,7 @@ import FacilityFinePage from './FacilityFinePage';
 import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
+import { formatUserError } from './errorMessage';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
 import './App.css';
@@ -241,7 +242,7 @@ export default function App() {
     });
 
     if (error) {
-      alert('Error logging in: ' + error.message);
+      alert('Error logging in: ' + formatUserError(error));
     }
   };
 
@@ -365,7 +366,7 @@ function LoginPage({ onLogin }) {
     });
     setForgotLoading(false);
     if (error) {
-      alert('Error: ' + error.message);
+      alert('Error: ' + formatUserError(error));
     } else {
       setForgotSent(true);
     }
@@ -584,7 +585,7 @@ function ResetPasswordPage({ session, onComplete }) {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     setSaving(false);
     if (error) {
-      alert('Error resetting password: ' + error.message);
+      alert('Error resetting password: ' + formatUserError(error));
     } else {
       alert('Password updated successfully!');
       onComplete();
