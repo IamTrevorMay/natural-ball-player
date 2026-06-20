@@ -178,7 +178,7 @@ export default function WorkAdminHours({ userId }) {
                           <span>Approve</span>
                         </button>
                         <button
-                          onClick={() => { setReviewingId(e.id); setReviewNotes(''); }}
+                          onClick={() => { startReview(e); setReviewNotes(''); }}
                           className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm font-medium hover:bg-red-200 transition flex items-center space-x-1"
                         >
                           <X size={14} />
