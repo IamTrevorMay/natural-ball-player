@@ -378,10 +378,18 @@ function Thread({ kind, id, userId, userRole, channel, dmOther, onBack, onSent }
   useEffect(() => {
     fetchMessages();
     const filter = kind === 'channel' ? `channel_id=eq.${id}` : `dm_thread_id=eq.${id}`;
+    // Debounce burst refetches — Realtime will fire one event per row change,
+    // so a five-person reply storm or an admin batch-edit was spawning a
+    // refetch per event. Coalesce to one refetch per 200ms window.
+    let timer = null;
+    const debouncedRefetch = () => {
+      if (timer) return;
+      timer = setTimeout(() => { timer = null; fetchMessages(); }, 200);
+    };
     const ch = supabase.channel(`thread-${kind}-${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_messages', filter }, () => fetchMessages())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_messages', filter }, debouncedRefetch)
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => { if (timer) clearTimeout(timer); supabase.removeChannel(ch); };
   }, [kind, id, fetchMessages]);
 
   // Auto-scroll on new messages
