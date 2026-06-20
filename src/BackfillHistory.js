@@ -155,11 +155,12 @@ function RunDetails({ runId }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('store_backfill_runs')
       .select('unmatched')
       .eq('id', runId)
       .single();
+    if (error) console.error('BackfillHistory load failed:', error);
     setItems(data?.unmatched || []);
     setLoading(false);
   }, [runId]);
