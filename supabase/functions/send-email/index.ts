@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     }
 
     const {
-      recipientEmail,
+      recipientEmail: rawRecipient,
       recipientName,
       subject,
       body,
@@ -60,10 +60,25 @@ Deno.serve(async (req) => {
       prospectId,
       attachments,   // optional: [{ filename, content (base64) }]
     } = await req.json();
+    const recipientEmail = typeof rawRecipient === "string" ? rawRecipient.trim() : "";
 
     if (!recipientEmail || !subject || !body || !recipientName) {
       return new Response(
         JSON.stringify({ error: "Missing required fields" }),
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+      );
+    }
+
+    // M4: validate the recipient is a single well-formed email and not a
+    // header-injection / multi-recipient blast. Block comma/semicolon/CRLF.
+    const EMAIL_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$/;
+    if (
+      recipientEmail.length > 254
+      || /[\r\n,;<>]/.test(recipientEmail)
+      || !EMAIL_RE.test(recipientEmail)
+    ) {
+      return new Response(
+        JSON.stringify({ error: "Invalid recipient email" }),
         { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
