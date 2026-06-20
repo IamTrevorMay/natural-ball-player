@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 import { X, ShoppingBag, Loader2, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { useModalTracking, trackAction } from './usage';
 
 const KIND_LABEL = {
   lesson: 'Lessons',

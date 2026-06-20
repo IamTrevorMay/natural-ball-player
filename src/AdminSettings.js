@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { useModalTracking, trackAction } from './usage';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -904,6 +905,7 @@ function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
 }
 
 function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
+  useModalTracking('EditUserModal');
   const profile = Array.isArray(user.player_profiles) ? user.player_profiles[0] : user.player_profiles || null;
   const currentTeamIds = (user.team_members || []).map(tm => tm.team_id);
 
@@ -1348,6 +1350,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
 }
 
 function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
+  useModalTracking('CreateUserModal');
   const isCoachCaller = callerRole === 'coach';
   const [formData, setFormData] = useState({
     email: '',

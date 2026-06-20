@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { useModalTracking, trackAction } from './usage';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -1471,6 +1472,7 @@ function ExerciseRow({ exercise, onRefresh }) {
 /* ---- CREATE TRAINING PROGRAM MODAL ---- */
 
 function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
+  useModalTracking('CreateTrainingProgramModal');
   const [name, setName] = useState(editingProgram?.name || '');
   const [program, setProgram] = useState('Pitching');
   const [folder, setFolder] = useState('No Folder');
@@ -1886,6 +1888,7 @@ function AddExerciseModal({ dayId, currentCount, onClose, onSuccess }) {
 /* ---- ASSIGN TRAINING PROGRAM MODAL ---- */
 
 function AssignTrainingProgramModal({ program, teams, players, onClose, onSuccess }) {
+  useModalTracking('AssignTrainingProgramModal');
   const [assignType, setAssignType] = useState('team');
   const [teamId, setTeamId] = useState('');
   const [selectedPlayerIds, setSelectedPlayerIds] = useState([]);
@@ -2206,6 +2209,7 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
 /* ---- CREATE WORKOUT TEMPLATE MODAL ---- */
 
 function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
+  useModalTracking('CreateWorkoutTemplateModal');
   const [name, setName] = useState(editingWorkout?.name || '');
   const [program, setProgram] = useState(editingWorkout?.program || 'Pitching');
   const [folder, setFolder] = useState(editingWorkout?.folder || 'No Folder');
@@ -3345,6 +3349,7 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
    ============================================ */
 
 function FillAssessmentModal({ template, templates, players, userId, onClose, onSuccess }) {
+  useModalTracking('FillAssessmentModal');
   const [selectedTemplate, setSelectedTemplate] = useState(template);
   const [playerId, setPlayerId] = useState('');
   const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));

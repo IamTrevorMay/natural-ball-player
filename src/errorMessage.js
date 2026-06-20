@@ -4,6 +4,8 @@
 // map the schema. Translate the common patterns to plain language and fall
 // back to a generic message for everything else.
 
+import { trackError } from './usage';
+
 const RLS_HINTS = [
   /row[- ]level security/i,
   /policy/i,
@@ -26,13 +28,34 @@ const KNOWN_TRANSLATIONS = [
 export function formatUserError(err, fallback = 'Something went wrong. Please try again.') {
   if (!err) return fallback;
   const raw = typeof err === 'string' ? err : (err.message || err.error_description || '');
-  if (!raw) return fallback;
-  for (const [pattern, msg] of KNOWN_TRANSLATIONS) {
-    if (pattern.test(raw)) return msg;
+  // Categorize once so we both return a string AND record the bucket.
+  let bucket = 'generic';
+  let out = fallback;
+  if (!raw) {
+    bucket = 'empty';
+    out = fallback;
+  } else {
+    let matched = false;
+    for (const [pattern, msg] of KNOWN_TRANSLATIONS) {
+      if (pattern.test(raw)) { out = msg; bucket = String(pattern).slice(0, 40); matched = true; break; }
+    }
+    if (!matched) {
+      if (RLS_HINTS.some((p) => p.test(raw))) {
+        out = 'You do not have permission to do that.';
+        bucket = 'rls';
+      } else if (/^\s*\d{5}\s*:/.test(raw)) {
+        out = fallback;
+        bucket = 'pg_sqlstate';
+      } else if (raw.length > 160) {
+        out = fallback;
+        bucket = 'too_long';
+      } else {
+        out = raw;
+        bucket = 'passthrough';
+      }
+    }
   }
-  if (RLS_HINTS.some((p) => p.test(raw))) return 'You do not have permission to do that.';
-  // PostgreSQL SQLSTATE codes like "23505" — drop the rest of the message.
-  if (/^\s*\d{5}\s*:/.test(raw)) return fallback;
-  // Generic Supabase code-prefixed messages can leak schema. Cap length.
-  return raw.length > 160 ? fallback : raw;
+  // Fire-and-forget; tracker is feature-flagged + no-ops if disabled.
+  try { trackError('format_user_error', { bucket }); } catch { /* ignore */ }
+  return out;
 }

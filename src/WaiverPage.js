@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 import SignedSignatureImage from './SignedSignatureImage';
 import { formatUserError } from './errorMessage';
+import { trackAction } from './usage';
 
 const WAIVER_TEXT = `NATURAL BALL PLAYER, LLC
 LIABILITY WAIVER AND RELEASE OF CLAIMS
@@ -185,6 +186,7 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
   const handleSubmit = async () => {
     if (!participantName.trim()) return alert('Please enter the participant name.');
     if (!agreed) return alert('Please confirm you have read and agree to the waiver.');
+    trackAction('submit_waiver');
     if (!participantHasSignature) return alert('Please provide a signature.');
     if (isMinor && !guardianName.trim()) return alert('Please enter the guardian name.');
     if (isMinor && !guardianRelationship) return alert('Please select the guardian relationship.');

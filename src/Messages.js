@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
+import { useModalTracking, trackAction } from './usage';
 
 export default function Messages({ userId, userRole }) {
   const [conversations, setConversations] = useState([]);
@@ -630,7 +631,7 @@ function ConversationDetail({ conversation, userId, userRole, users, onBack, onR
   const handleSend = async (e) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
-
+    trackAction('send_message');
     setSending(true);
     const { error } = await supabase.from('messages').insert({
       conversation_id: conversation.id,
@@ -823,7 +824,7 @@ function ChatRoomDetail({ conversation, userId, userRole, users, onBack, onRefre
   const handleSend = async (e) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
-
+    trackAction('send_message');
     setSending(true);
     const { error } = await supabase.from('messages').insert({
       conversation_id: conversation.id,
@@ -1098,6 +1099,7 @@ function MessageBubble({ message, isOwn, onReply, replies, userId }) {
 }
 
 function NewMessageModal({ teams, users, userId, userRole, onClose, onSuccess }) {
+  useModalTracking('NewMessageModal');
   const [messageType, setMessageType] = useState('direct');
   const [repliesDisabled, setRepliesDisabled] = useState(false);
   const [formData, setFormData] = useState({

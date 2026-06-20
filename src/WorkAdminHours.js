@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Clock, Check, X, RotateCcw } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { trackAction } from './usage';
 
 const STATUS_BADGE = {
   pending:  'bg-yellow-100 text-yellow-700',
@@ -58,6 +59,7 @@ export default function WorkAdminHours({ userId }) {
   };
 
   const setStatus = async (entry, status) => {
+    trackAction(`hours_${status}`);
     const { error } = await supabase
       .from('staff_hour_entries')
       .update({

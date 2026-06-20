@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { X, Send, CheckCircle, AlertTriangle, Paperclip } from 'lucide-react';
 import { supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { supabase } from './supabaseClient';
+import { useModalTracking, trackAction } from './usage';
 
 const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -21,6 +22,7 @@ function formatSize(bytes) {
 }
 
 export default function EmailComposeModal({ recipientName, recipientEmail, playerId, prospectId, onClose, onSent }) {
+  useModalTracking('EmailComposeModal');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [attachments, setAttachments] = useState([]); // [{ file, name, size }]
@@ -58,6 +60,7 @@ export default function EmailComposeModal({ recipientName, recipientEmail, playe
 
   const handleSend = async () => {
     if (!subject.trim() || !body.trim()) return;
+    trackAction('send_email');
     setSending(true);
     setResult(null);
 

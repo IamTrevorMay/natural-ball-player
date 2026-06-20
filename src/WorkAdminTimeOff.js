@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Plane, Check, X, RotateCcw, Star } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { trackAction } from './usage';
 
 const STATUS_BADGE = {
   pending:   'bg-yellow-100 text-yellow-700',
@@ -81,6 +82,7 @@ export default function WorkAdminTimeOff({ userId }) {
   };
 
   const setStatus = async (r, status) => {
+    trackAction(`time_off_${status}`);
     const { error } = await supabase
       .from('staff_time_off_requests')
       .update({

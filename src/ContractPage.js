@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 import SignedSignatureImage from './SignedSignatureImage';
 import { formatUserError } from './errorMessage';
+import { trackAction } from './usage';
 
 const POSITION_OPTIONS = ['1B', '2B', '3B', 'SS', 'OF', 'P', 'C'];
 const BATS_THROWS_OPTIONS = ['R/R', 'L/L', 'R/L', 'L/R'];
@@ -194,6 +195,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
   const handleSubmit = async () => {
     if (!playerName.trim()) return alert('Please enter the player name.');
     if (!playerHasSignature) return alert('Please provide the player signature.');
+    trackAction('submit_contract');
     if (!parentHasSignature) return alert('Please provide the parent/guardian signature.');
     if (!consentParentFirst.trim() || !consentParentLast.trim()) return alert('Please fill in parent/guardian name in the medical consent section.');
     if (!playerFirst.trim() || !playerLast.trim()) return alert('Please fill in player name in the medical consent section.');

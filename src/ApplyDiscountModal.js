@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 import { X, BadgePercent, Loader2 } from 'lucide-react';
+import { useModalTracking, trackAction } from './usage';
 
 function fmtDiscount(d) {
   if (d.percentage != null) return `${Number(d.percentage).toFixed(d.percentage % 1 ? 1 : 0)}% off`;

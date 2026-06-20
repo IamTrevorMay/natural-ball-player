@@ -9,6 +9,7 @@
 // When the experiment ends, flip the flag off, drop public.usage_events, and
 // delete this file.
 
+import { useEffect } from 'react';
 import { supabase, supabaseUrl } from './supabaseClient';
 
 const ENABLED = process.env.REACT_APP_USAGE_TRACKING === '1';
@@ -163,3 +164,16 @@ export function trackError(name, meta) {
 
 // Convenience for environments where we want a runtime check.
 export const usageEnabled = ENABLED;
+
+// Drop into the BODY of a conditionally-mounted modal:
+//   if (!show) return null;
+//   useModalTracking('EditUserModal');
+// Fires modal_open on mount, modal_close on unmount with duration.
+export function useModalTracking(name, meta) {
+  useEffect(() => {
+    if (!ENABLED || !name) return undefined;
+    trackModalOpen(name, meta);
+    return () => { trackModalClose(name, meta); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
+}

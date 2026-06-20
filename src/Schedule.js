@@ -7,6 +7,7 @@ import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
 import { formatUserError } from './errorMessage';
+import { useModalTracking, trackAction } from './usage';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -735,6 +736,7 @@ export default function Schedule({ userId, userRole }) {
   const bulkDelete = async () => {
     if (selectedEvents.length === 0) return;
     if (!window.confirm(`Delete ${selectedEvents.length} selected event(s)?`)) return;
+    trackAction('bulk_delete_events', { count: selectedEvents.length });
     // Group by source — but we only support one source at a time per view. Infer from selecting context: use first event's known fields.
     // Determine source per current view
     let source = 'facility';
@@ -3524,6 +3526,7 @@ const WORKOUT_HEADER_COLOR = {
 };
 
 function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
+  useModalTracking('WorkoutDetailModal');
   const [exercises, setExercises] = useState([]);
   const [trainingDay, setTrainingDay] = useState(null);
   const [program, setProgram] = useState(null);
@@ -3770,6 +3773,7 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
 // ============================================
 
 function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId }) {
+  useModalTracking('EventDetailModal');
   console.log('🔵 EventDetailModal rendered with event:', event);
 
   const isOwnGame = event.player_id === userId && event.event_type === 'game';

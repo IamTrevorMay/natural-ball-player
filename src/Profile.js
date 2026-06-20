@@ -12,6 +12,7 @@ import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import { BadgePercent } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { useModalTracking, trackAction } from './usage';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -3951,6 +3952,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 // Read-only viewer for a training program: shows each day's exercises. Used by players
 // (and staff) to view what's programmed for them without any edit controls (#153).
 function ProgramViewerModal({ programId, programName, onClose }) {
+  useModalTracking('ProgramViewerModal');
   const [days, setDays] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -4160,6 +4162,7 @@ function SubmissionView({ submission, ageGroupData }) {
 }
 
 function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
+  useModalTracking('AssessmentFormModal');
   const [responses, setResponses] = useState({});
   const [notes, setNotes] = useState('');
   const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
