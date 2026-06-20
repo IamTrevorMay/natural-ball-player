@@ -132,7 +132,11 @@ async function ensureValidToken(
     return await decrypt(tokenRow.encrypted_access_token);
   }
   if (!tokenRow.encrypted_refresh_token) {
-    return await decrypt(tokenRow.encrypted_access_token);
+    // L3: access token expired AND we have no refresh token to renew with.
+    // Returning the stale token just causes the next API call to 401 with
+    // an opaque error. Surface a structured signal so the client can prompt
+    // the user to re-authorise WHOOP instead of looping on failed syncs.
+    throw new Error("WHOOP_REAUTH_REQUIRED");
   }
 
   const existing = refreshInFlight.get(userId);
@@ -272,6 +276,38 @@ async function handleConnect(userId: string, corsHeaders: Record<string, string>
 
 async function handleDisconnect(userId: string, corsHeaders: Record<string, string>): Promise<Response> {
   const adminClient = getAdminClient();
+
+  // L4: best-effort token revocation at WHOOP so the disconnect actually
+  // invalidates the OAuth grant rather than just dropping our local copy.
+  // Failure here is non-fatal — Whoop's tokens are short-lived (1h) so even
+  // a missed revoke ages out quickly. Read the existing row before we delete
+  // it so we have the refresh_token to revoke.
+  try {
+    const { data: tokenRow } = await adminClient
+      .from("whoop_tokens")
+      .select("encrypted_refresh_token, encrypted_access_token")
+      .eq("user_id", userId)
+      .single();
+    if (tokenRow?.encrypted_refresh_token) {
+      const refreshToken = await decrypt(tokenRow.encrypted_refresh_token);
+      const clientId = Deno.env.get("WHOOP_CLIENT_ID");
+      const clientSecret = Deno.env.get("WHOOP_CLIENT_SECRET");
+      if (clientId && clientSecret) {
+        await fetch("https://api.prod.whoop.com/oauth/oauth2/revoke", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            token: refreshToken,
+            token_type_hint: "refresh_token",
+            client_id: clientId,
+            client_secret: clientSecret,
+          }),
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    // ignore — disconnect should always succeed locally
+  }
 
   // Independent deletes — run in parallel.
   await Promise.all([
