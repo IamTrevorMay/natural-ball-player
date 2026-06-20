@@ -32,13 +32,17 @@ export default function WorkInvoices({ userId, userRole }) {
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
-    const query = supabase
+    let query = supabase
       .from('coach_invoices')
       .select('*, coach:coach_id(full_name)')
       .order('created_at', { ascending: false });
 
+    // query.eq() returns a new builder, it does not mutate. Re-assign or the
+    // filter is silently dropped — without this, every non-admin coach was
+    // pulling the full invoice table (RLS still gates it server-side, but
+    // the intent was per-coach filtering).
     if (!isAdmin) {
-      query.eq('coach_id', userId);
+      query = query.eq('coach_id', userId);
     }
 
     const { data, error } = await query;
