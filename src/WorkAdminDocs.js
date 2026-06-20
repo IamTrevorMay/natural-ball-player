@@ -61,8 +61,16 @@ export default function WorkAdminDocs({ userId }) {
     let fileType = editing?.file_type || null;
 
     if (file) {
-      const ext = file.name.split('.').pop();
-      const newPath = `${crypto.randomUUID()}.${ext}`;
+      // CM4: sanitize the persisted display name.
+      const rawName = file.name || 'file';
+      const safeName = rawName
+        .split(/[\\/]/).pop()
+        .normalize('NFKD')
+        .replace(/[^\w.\-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'file';
+      const ext = safeName.includes('.') ? safeName.split('.').pop() : '';
+      const newPath = `${crypto.randomUUID()}${ext ? `.${ext}` : ''}`;
       const { error: uploadError } = await supabase.storage
         .from('staff-documents')
         .upload(newPath, file, { contentType: file.type, upsert: false });
@@ -77,7 +85,7 @@ export default function WorkAdminDocs({ userId }) {
       }
 
       filePath = newPath;
-      fileName = file.name;
+      fileName = safeName;
       fileSize = file.size;
       fileType = file.type;
     }

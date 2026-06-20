@@ -214,8 +214,19 @@ export default function WorkAdminPayroll({ userId }) {
     let fileType = editing?.file_type || null;
 
     if (file) {
-      const ext = file.name.split('.').pop();
-      const newPath = `${formUserId}/${crypto.randomUUID()}.${ext}`;
+      // CM3: sanitize the persisted display name — strip path components,
+      // normalize unicode, replace runs of unsafe chars with a dash, cap
+      // length. The storage key was already random-UUID so this only
+      // affects what we show in the table.
+      const rawName = file.name || 'file';
+      const safeName = rawName
+        .split(/[\\/]/).pop()
+        .normalize('NFKD')
+        .replace(/[^\w.\-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'file';
+      const ext = safeName.includes('.') ? safeName.split('.').pop() : '';
+      const newPath = `${formUserId}/${crypto.randomUUID()}${ext ? `.${ext}` : ''}`;
       const { error: uploadError } = await supabase.storage
         .from('staff-pay-docs')
         .upload(newPath, file, { contentType: file.type, upsert: false });
@@ -228,7 +239,7 @@ export default function WorkAdminPayroll({ userId }) {
         await supabase.storage.from('staff-pay-docs').remove([editing.file_path]);
       }
       filePath = newPath;
-      fileName = file.name;
+      fileName = safeName;
       fileSize = file.size;
       fileType = file.type;
     }
