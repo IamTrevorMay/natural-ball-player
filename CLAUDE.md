@@ -26,6 +26,7 @@ When creating new tables:
 ## Workflow
 - Trevor prefers batched feature requests and "commit push deploy" as a single flow
 - Build must pass (`npx react-scripts build`) before committing
+- **Never `git push` until Trevor explicitly says push (or pushes via "commit push", "push it", etc.). Commit freely, but the publish step is gated on his signal.**
 - Vercel auto-deploys from main branch on push
 - **Before implementing any suggested change**, ask clarifying questions using the AskUserQuestion multiple-choice selector before starting work
 

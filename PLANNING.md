@@ -198,3 +198,58 @@ Round-2 sweep across `src/*.js` (53 files, ~36k LOC) by 4 parallel reviewers: ro
 - Storage bucket lifecycle configs
 - Vercel env vars / secret config
 - Realtime channel subscriptions for auth-bypass tricks (separate sweep would be needed)
+
+## Infra Audit — 2026-06-20
+
+Round-3 sweep of dashboard-defined DB objects, Supabase Storage configs, Realtime publications vs client subscriptions, and Vercel env.
+
+### CRITICAL
+
+| # | Location | Bug | Fix |
+|---|----------|-----|-----|
+| IC1 | `storage.objects` policy `"Allow Updates 1oj01fe_0"` | Avatars UPDATE policy is just `bucket_id = 'avatars'` — no `auth.uid()` / folder check. Any authenticated user can overwrite anyone else's avatar (deface, phishing, swap with NSFW) | Add `AND (storage.foldername(name))[1] = auth.uid()::text` and admin override |
+| IC2 | `storage.objects` policy `"Allow Uploads 1oj01fe_0"` | Avatars INSERT mirrors IC1 — anyone can write to anyone's folder | Same fix |
+| IC3 | `storage.buckets` row `signatures` | Bucket is `public = true`. URL is `https://<project>.supabase.co/storage/v1/object/public/signatures/<user-uuid>/<file>` and viewable anonymously. Waiver/contract/LOI/facility-fine signatures = PII | Flip bucket to `public = false`; switch clients to signed URLs via `createSignedUrl` |
+| IC4 | `storage.objects` policy `"Anyone can view signatures"` | Pairs with IC3 — SELECT qual = bucket match only. Anonymous viewing path | Replace with own-only + staff override using `storage.foldername(name)` |
+
+### HIGH
+
+| # | Location | Bug |
+|---|----------|-----|
+| IH1 | `storage.buckets` row `message-attachments` | `public = true`. DM attachments anonymously viewable via public URL. Should be private + signed URLs |
+| IH2 | `storage.objects` policies `"Authenticated users can upload signatures"` + `"Authenticated users can update signatures"` | INSERT/UPDATE allowed for any authenticated user with no folder check. Coexists with the strict per-user policy — the broader one wins (policies OR together). Drop the loose policies |
+| IH3 | Realtime publication drift | Client subscribes to `messages`, `message_reads`, `slot_reservations`, `staff_hour_entries`, `staff_time_off_requests`, `staff_schedule_events`, `staff_schedule_assignments`, `staff_announcements` (8 tables). `pg_publication_tables` for `supabase_realtime` lists ONLY `work_dm_threads`, `work_message_reads`, `work_messages`. All 8 client subscriptions silently no-op. UI features that depend on push updates fall back to manual refresh | Add the missing tables to `supabase_realtime` publication OR remove the dead subscriptions |
+| IH4 | Vercel env audit not possible via MCP | The `mcp__claude_ai_Vercel__*` toolset has no env-list endpoint. Manual check needed in dashboard: confirm no `SUPABASE_SERVICE_ROLE_KEY` / `SQUARE_ACCESS_TOKEN` is exposed via a `REACT_APP_*` prefix (CRA inlines REACT_APP_ vars into the browser bundle) |
+
+### MED
+
+| # | Location | Bug |
+|---|----------|-----|
+| IM1 | `storage.buckets` — most rows | No `file_size_limit` and no `allowed_mime_types`. Lets a user upload arbitrarily large files or HTML/EXE to a public bucket. Tighten per bucket (e.g. avatars: 5 MB images only — already partial; signatures: PDF/PNG only) |
+| IM2 | `public.store_touch_updated_at` trigger function | INVOKER (fine) but has NO `search_path` set (`proconfig = null`). The other touch functions all set `search_path=public, pg_temp`. Cosmetic but worth aligning for consistency |
+| IM3 | Storage bucket `avatars` has `public = true` | Standard pattern but combined with IC1/IC2 means avatar paths leak user UUIDs anonymously (URL contains the auth.uid). If user UUIDs are considered sensitive, switch to a short random ID prefix |
+
+### LOW
+
+| # | Location | Note |
+|---|----------|------|
+| IL1 | All SECURITY DEFINER functions (`get_user_role`, `is_conversation_participant`, `user_can_access_channel`) | Verified hardened with `search_path=public, pg_temp`. No findings — listed for the record |
+| IL2 | All triggers | Read every public-schema trigger; all are `updated_at` touchers or a single thread-bump on `work_messages`. No surprise logic |
+
+### Suggested fix order
+
+1. IC1 + IC2 — single migration: tighten the avatars policies
+2. IC3 + IC4 + IH2 — single migration: lock signatures bucket and policies; client switches to signed URLs
+3. IH1 — same pattern as IC3 for `message-attachments`
+4. IH3 — `ALTER PUBLICATION supabase_realtime ADD TABLE …` for the 8 missing tables, OR rip the dead client subscriptions
+5. IH4 — manual: open Vercel dashboard, confirm no service-role/access-token in `REACT_APP_*` vars
+6. MED sweep last
+
+### What was checked
+
+- `pg_proc` (12 functions in public schema) for SECURITY DEFINER + `search_path` + ownership
+- `information_schema.triggers` (10 triggers) for unexpected behavior
+- `storage.buckets` (8 buckets) for public flag, size limit, MIME allowlist
+- `pg_policies` for `storage.objects` (25 policies) for missing folder/auth checks
+- `pg_publication_tables` for `supabase_realtime` vs client `supabase.channel(...).on('postgres_changes', ...)` calls in `src/`
+- Vercel project metadata via `get_project` (env vars not enumerable via current MCP)
