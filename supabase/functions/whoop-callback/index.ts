@@ -71,48 +71,53 @@ Deno.serve(async (req) => {
 
     // State format: `${userId}:${nonce}:${signature}`. Validated via HMAC, no
     // DB round-trip — so two parallel connect attempts can't invalidate each
-    // other (previous design stored state on users row).
+    // other (previous design stored state on users row). Legacy format from
+    // before this deploy was `${userId}:${state}` stored on
+    // users.whoop_oauth_state and is validated via DB lookup.
     const parts = stateParam.split(":");
-    if (parts.length !== 3) {
-      // Backwards compatibility: legacy state format was `${userId}:${state}`
-      // stored on users.whoop_oauth_state. Fall back to DB lookup for any
-      // OAuth flow that started before this deploy.
-      const [userIdLegacy, legacyState] = parts;
-      if (!userIdLegacy || !legacyState) {
-        return new Response("Invalid state", { status: 400 });
-      }
-      const adminLegacy = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      );
-      const { data: legacyUser } = await adminLegacy
-        .from("users")
-        .select("whoop_oauth_state")
-        .eq("id", userIdLegacy)
-        .single();
-      if (!legacyUser || legacyUser.whoop_oauth_state !== legacyState) {
-        return new Response("Invalid state", { status: 403 });
-      }
-      // Re-assemble as if it had passed the HMAC path so the rest of the
-      // handler can proceed with userId.
-      (globalThis as any).__legacy_state_user_id = userIdLegacy;
-    }
-
-    const [userId, nonce, signature] = parts.length === 3 ? parts : [
-      (globalThis as any).__legacy_state_user_id as string,
-      "",
-      "",
-    ];
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    let userId: string;
+
     if (parts.length === 3) {
-      const ok = await verifyOAuthState(userId, nonce, signature);
+      // H6: HMAC-signed path. All three pieces must be non-empty before we
+      // hand them to verifyOAuthState.
+      const [hmacUserId, nonce, signature] = parts;
+      if (!hmacUserId || !nonce || !signature) {
+        return new Response("Invalid state", { status: 400 });
+      }
+      const ok = await verifyOAuthState(hmacUserId, nonce, signature);
       if (!ok) {
         return new Response("Invalid state", { status: 403 });
       }
+      userId = hmacUserId;
+    } else if (parts.length === 2) {
+      // H6: legacy path requires EXACTLY 2 non-empty parts. The previous
+      // `parts.length !== 3` check accepted 4+ parts and silently ignored the
+      // trailing fragments via destructuring, letting a crafted state slip
+      // past the HMAC path.
+      const [userIdLegacy, legacyState] = parts;
+      if (!userIdLegacy || !legacyState) {
+        return new Response("Invalid state", { status: 400 });
+      }
+      const { data: legacyUser } = await adminClient
+        .from("users")
+        .select("whoop_oauth_state")
+        .eq("id", userIdLegacy)
+        .single();
+      if (
+        !legacyUser ||
+        !legacyUser.whoop_oauth_state ||
+        !timingSafeEqual(legacyUser.whoop_oauth_state, legacyState)
+      ) {
+        return new Response("Invalid state", { status: 403 });
+      }
+      userId = userIdLegacy;
+    } else {
+      return new Response("Invalid state", { status: 400 });
     }
 
     // Exchange code for tokens - use the SAME redirect_uri as was sent in the auth request
@@ -143,9 +148,13 @@ Deno.serve(async (req) => {
     });
 
     if (!profileRes.ok) {
-      const text = await profileRes.text();
-      console.error("Profile fetch failed");
-      return new Response(`Profile fetch failed: ${text}`, { status: 500 });
+      // H7: keep the raw WHOOP response body on the server side (logs) but
+      // do NOT echo it to the client — a third-party API error body can
+      // include identifiers / rate-limit hints / OAuth-server diagnostics
+      // we don't want surfaced to an attacker probing the flow.
+      const text = await profileRes.text().catch(() => "");
+      console.error("Profile fetch failed", profileRes.status, text);
+      return new Response("Profile fetch failed", { status: 500 });
     }
 
     const profile = await profileRes.json();
