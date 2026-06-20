@@ -44,7 +44,13 @@ export function useStatusOptions(category) {
   const defaults = category.includes('sub_status') ? DEFAULT_SUB_STATUS : DEFAULT_STATUS;
 
   useEffect(() => {
-    fetchCustomOptions(category).then(setCustomOptions);
+    // CH3: if `category` flips before the in-flight promise settles, the
+    // stale result would overwrite the fresh category's options.
+    let cancelled = false;
+    fetchCustomOptions(category).then((opts) => {
+      if (!cancelled) setCustomOptions(opts);
+    });
+    return () => { cancelled = true; };
   }, [category]);
 
   const allOptions = [...defaults, ...customOptions.filter(c => !defaults.includes(c))];

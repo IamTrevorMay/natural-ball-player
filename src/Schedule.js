@@ -3811,72 +3811,38 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   };
 
   const handleDelete = async () => {
-    console.log('🔴 handleDelete function called!');
-    console.log('✅ User confirmed delete (via custom modal)');
-    console.log('=== DELETE ATTEMPT ===');
-    console.log('Event to delete:', event);
     setDeleting(true);
-    
     try {
-      // First, verify we're authenticated
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      console.log('Current user:', user);
-      console.log('Auth error:', authError);
-      
       if (authError || !user) {
         throw new Error('Not authenticated. Please log in again.');
       }
 
-      // Check user role
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('role')
         .eq('id', user.id)
         .single();
-      
-      console.log('User role:', userData?.role);
-      console.log('User error:', userError);
-
       if (userError || !userData) {
         throw new Error('Could not verify user permissions.');
       }
-
       if (!['admin', 'coach'].includes(userData.role) && !isOwnGame) {
         throw new Error('You do not have permission to delete events.');
       }
 
-      // Now attempt the delete
-      console.log('Attempting delete with ID:', event.id);
       const { data: deleteData, error: deleteError } = await supabase
         .from('schedule_events')
         .delete()
         .eq('id', event.id)
-        .select(); // Get the deleted row to confirm
-      
-      console.log('Delete data:', deleteData);
-      console.log('Delete error:', deleteError);
-
-      if (deleteError) {
-        console.error('Delete error details:', {
-          message: deleteError.message,
-          details: deleteError.details,
-          hint: deleteError.hint,
-          code: deleteError.code
-        });
-        throw deleteError;
-      }
-      
+        .select();
+      if (deleteError) throw deleteError;
       if (!deleteData || deleteData.length === 0) {
-        console.error('No rows deleted - event may not exist or RLS prevented deletion');
         throw new Error('Event could not be deleted. It may have already been removed or you lack permission.');
       }
-      
-      console.log('=== DELETE SUCCESS ===');
+
       alert('Event deleted successfully!');
       onDelete();
     } catch (error) {
-      console.error('=== DELETE FAILED ===');
-      console.error('Error:', error);
       alert('Error deleting event: ' + error.message);
       setDeleting(false);
     }

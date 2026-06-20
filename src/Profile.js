@@ -243,6 +243,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const avatarInputRef = useRef(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetchUserData();
     fetchRecruitmentTeams();
     fetchSchools();
@@ -256,18 +257,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchAssessmentData();
     fetchPtVisits();
     fetchCommunicationLogs();
-    supabase.from('users').select('id, full_name').in('role', ['coach', 'admin']).order('full_name').then(({ data }) => setAllCoaches(data || []));
+    supabase.from('users').select('id, full_name').in('role', ['coach', 'admin']).order('full_name').then(({ data }) => {
+      if (!cancelled) setAllCoaches(data || []);
+    });
+    return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
 
   useEffect(() => {
+    let cancelled = false;
     if (userData && userData.role === 'player') fetchAttendanceData();
     if (userData && (userData.role === 'coach' || userData.role === 'admin')) fetchCoachAthletes();
-    // Fetch trainer name if player has one assigned
+    // Fetch trainer name if player has one assigned. Guard with cancelled so a
+    // rapid userData change doesn't write a stale trainer name into state.
     const trainerId = userData?._profile?.trainer_id;
     if (trainerId) {
       supabase.from('users').select('full_name').eq('id', trainerId).single().then(({ data }) => {
-        if (data) setTrainerName(data.full_name);
+        if (!cancelled && data) setTrainerName(data.full_name);
       });
     } else {
       setTrainerName(null);
@@ -282,8 +288,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
-        .then(({ data }) => setSubscriptionRow(data || null));
+        .then(({ data }) => {
+          if (!cancelled) setSubscriptionRow(data || null);
+        });
     }
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userData]);
 
@@ -5245,11 +5254,22 @@ function MarekTab({ playerId, canEdit, dateOfBirth }) {
     const { data: { user } } = await supabase.auth.getUser();
     let file_url = null, file_name = null;
     if (draft.file) {
-      const path = `${playerId}/${Date.now()}-${draft.file.name}`;
+      // CH1: sanitize filename — strip directory components, normalize unicode,
+      // collapse runs of unsafe chars to a single dash, cap length. Stops
+      // `../../foo.pdf` style names from escaping the player-id folder even
+      // if Supabase Storage relaxes path checks in the future.
+      const rawName = draft.file.name || 'file';
+      const safeName = rawName
+        .split(/[\\/]/).pop()
+        .normalize('NFKD')
+        .replace(/[^\w.\-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'file';
+      const path = `${playerId}/${Date.now()}-${safeName}`;
       const { error: upErr } = await supabase.storage.from('bloodwork').upload(path, draft.file, { upsert: false });
       if (upErr) { setUploading(false); alert('Upload failed: ' + upErr.message); return; }
       file_url = path;
-      file_name = draft.file.name;
+      file_name = safeName;
     }
     const { error } = await supabase.from('marek_panels').insert({
       player_id: playerId,
