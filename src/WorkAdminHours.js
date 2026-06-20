@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Clock, Check, X, RotateCcw } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const STATUS_BADGE = {
   pending:  'bg-yellow-100 text-yellow-700',
@@ -66,7 +67,7 @@ export default function WorkAdminHours({ userId }) {
         review_notes: reviewNotes.trim() || null,
       })
       .eq('id', entry.id);
-    if (error) { alert('Update failed: ' + error.message); return; }
+    if (error) { alert('Update failed: ' + formatUserError(error)); return; }
     cancelReview();
     fetchAll();
   };
@@ -77,7 +78,7 @@ export default function WorkAdminHours({ userId }) {
       .from('staff_hour_entries')
       .update({ status: 'pending', reviewed_by: null, reviewed_at: null, review_notes: null })
       .eq('id', entry.id);
-    if (error) alert('Update failed: ' + error.message);
+    if (error) alert('Update failed: ' + formatUserError(error));
     else fetchAll();
   };
 

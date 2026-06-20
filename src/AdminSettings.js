@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -436,7 +437,7 @@ function CoachCard({ coach, refreshUsers }) {
 
     if (error) {
       console.error('Error removing coach:', error);
-      alert('Error removing coach: ' + error.message);
+      alert('Error removing coach: ' + formatUserError(error));
     } else {
       refreshUsers();
     }
@@ -453,7 +454,7 @@ function CoachCard({ coach, refreshUsers }) {
 
     if (error) {
       console.error('Error updating title:', error);
-      alert('Error updating title: ' + error.message);
+      alert('Error updating title: ' + formatUserError(error));
     } else {
       await refreshUsers();
       setEditingTitle(false);
@@ -936,7 +937,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
       redirectTo: 'https://www.thenatural-app.com/reset-password',
     });
     setResetSending(false);
-    if (resetError) { alert('Failed to send reset email: ' + resetError.message); return; }
+    if (resetError) { alert('Failed to send reset email: ' + formatUserError(resetError)); return; }
     setResetSent(true);
   };
 
@@ -1039,7 +1040,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
       onSuccess();
     } catch (err) {
       console.error('Error deleting user:', err);
-      alert('Error deleting user: ' + err.message);
+      alert('Error deleting user: ' + formatUserError(err));
       setDeleting(false);
     }
   };
@@ -2296,7 +2297,7 @@ function ProspectsTab({ prospects, teams, showCreateProspect, setShowCreateProsp
   const handleDeleteProspect = async (id) => {
     if (!window.confirm('Delete this prospect?')) return;
     const { error } = await supabase.from('prospects').delete().eq('id', id);
-    if (error) alert('Error deleting prospect: ' + error.message);
+    if (error) alert('Error deleting prospect: ' + formatUserError(error));
     else refreshProspects();
   };
 
@@ -2881,7 +2882,7 @@ function CodesTab({ players }) {
       .insert({ vendor: '', code: '' })
       .select()
       .single();
-    if (error) { alert('Error adding code: ' + error.message); return; }
+    if (error) { alert('Error adding code: ' + formatUserError(error)); return; }
     setCodes([...codes, data]);
   };
 
@@ -3008,7 +3009,7 @@ function InventoryTab() {
       .insert({ category: '', item: '', color: '', size: '', qty_in_stock: 0, on_order: 0 })
       .select()
       .single();
-    if (error) { alert('Error adding row: ' + error.message); return; }
+    if (error) { alert('Error adding row: ' + formatUserError(error)); return; }
     setItems([...items, data]);
   };
 
@@ -3461,7 +3462,7 @@ function CoachTasksTab({ coaches, userId }) {
   const handleDelete = async (taskId) => {
     if (!window.confirm('Delete this task?')) return;
     const { error } = await supabase.from('coach_tasks').delete().eq('id', taskId);
-    if (error) alert('Error deleting task: ' + error.message);
+    if (error) alert('Error deleting task: ' + formatUserError(error));
     else fetchTasks();
   };
 
@@ -3600,7 +3601,7 @@ function CreateTaskModal({ coaches, userId, onClose, onSuccess }) {
     }));
     const { error } = await supabase.from('coach_tasks').insert(rows);
     setSaving(false);
-    if (error) alert('Error creating task: ' + error.message);
+    if (error) alert('Error creating task: ' + formatUserError(error));
     else onSuccess();
   };
 
@@ -3696,7 +3697,7 @@ function EditTaskModal({ task, coaches, onClose, onSuccess }) {
     }
     const { error } = await supabase.from('coach_tasks').update(updates).eq('id', task.id);
     setSaving(false);
-    if (error) alert('Error updating task: ' + error.message);
+    if (error) alert('Error updating task: ' + formatUserError(error));
     else onSuccess();
   };
 
@@ -3798,7 +3799,7 @@ function DuplicatesTab({ users, refreshUsers, onNavigateToProfile }) {
       await deleteAuthUser(userId);
       refreshUsers();
     } catch (err) {
-      alert('Delete failed: ' + err.message);
+      alert('Delete failed: ' + formatUserError(err));
     }
   };
 

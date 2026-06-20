@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, X, Edit2, Trash2, Clock, Check, AlertCircle } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const STATUS_BADGE = {
   pending:  'bg-yellow-100 text-yellow-700',
@@ -102,10 +103,10 @@ export default function WorkMyHours({ userId }) {
     };
     if (editing) {
       const { error } = await supabase.from('staff_hour_entries').update(payload).eq('id', editing.id);
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
     } else {
       const { error } = await supabase.from('staff_hour_entries').insert({ ...payload, user_id: userId, status: 'pending' });
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
     }
     setSaving(false);
     resetForm();
@@ -115,7 +116,7 @@ export default function WorkMyHours({ userId }) {
   const handleDelete = async (e) => {
     if (!window.confirm('Delete this hour entry?')) return;
     const { error } = await supabase.from('staff_hour_entries').delete().eq('id', e.id);
-    if (error) alert('Delete failed: ' + error.message);
+    if (error) alert('Delete failed: ' + formatUserError(error));
     else fetchEntries();
   };
 

@@ -6,6 +6,7 @@ import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
+import { formatUserError } from './errorMessage';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -587,7 +588,7 @@ export default function Schedule({ userId, userRole }) {
       (async () => {
         const id = event._master_id || event.id;
         const { error } = await supabase.from(tableForSource(source)).delete().eq('id', id);
-        if (error) { alert('Failed to delete: ' + error.message); return; }
+        if (error) { alert('Failed to delete: ' + formatUserError(error)); return; }
         refetchForSource(source);
       })();
       return;
@@ -601,7 +602,7 @@ export default function Schedule({ userId, userRole }) {
         if (choice === 'one') err = await deleteVirtualOccurrence(event, source);
         else if (choice === 'future') err = await deleteFuture(event, source);
         else err = await deleteSeries(event, source);
-        if (err) { alert('Failed to delete: ' + err.message); return; }
+        if (err) { alert('Failed to delete: ' + formatUserError(err)); return; }
         refetchForSource(source);
       },
     });
@@ -641,7 +642,7 @@ export default function Schedule({ userId, userRole }) {
       }
     }
     const { error } = await supabase.from(tableForSource(source)).insert(clone);
-    if (error) { alert('Failed to duplicate: ' + error.message); return; }
+    if (error) { alert('Failed to duplicate: ' + formatUserError(error)); return; }
     refetchForSource(source);
   };
 
@@ -787,7 +788,7 @@ export default function Schedule({ userId, userRole }) {
         for (const r of rows) expanded.push({ ...r, ...targets });
       }
       const { error } = await supabase.from('schedule_events').insert(expanded);
-      if (error) { alert('Failed to schedule: ' + error.message); return false; }
+      if (error) { alert('Failed to schedule: ' + formatUserError(error)); return false; }
       return true;
     };
 
@@ -839,7 +840,7 @@ export default function Schedule({ userId, userRole }) {
         assignments.push({ meal_plan_id: payload.id, player_id: userId, start_date: dateStr });
       }
       const { error } = await supabase.from('meal_plan_assignments').insert(assignments);
-      if (error) { alert('Failed to assign meal plan: ' + error.message); return; }
+      if (error) { alert('Failed to assign meal plan: ' + formatUserError(error)); return; }
       if (view === 'team') fetchTeamEvents(); else if (view === 'player') fetchPlayerEvents(); else fetchMyScheduleEvents();
     }
   };
@@ -1136,18 +1137,18 @@ export default function Schedule({ userId, userRole }) {
                       const slot = coachSlots.find((s) => String(s.id) === String(slotId));
                       if (!slot || slot._is_virtual || slot.slot_date === newDate) return;
                       const { error } = await supabase.from('training_slots').update({ slot_date: newDate }).eq('id', slotId);
-                      if (error) { alert('Failed to move slot: ' + error.message); return; }
+                      if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
                       fetchCoachSlots(selectedCoach.id);
                     }}
                     onReserve={(slot) => setShowReserveSlot(slot)}
                     onConfirm={async (reservationId) => {
                       const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
-                      if (error) { alert('Failed to confirm reservation: ' + error.message); return; }
+                      if (error) { alert('Failed to confirm reservation: ' + formatUserError(error)); return; }
                       fetchCoachSlots(selectedCoach.id);
                     }}
                     onDecline={async (reservationId) => {
                       const { error } = await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId);
-                      if (error) { alert('Failed to decline reservation: ' + error.message); return; }
+                      if (error) { alert('Failed to decline reservation: ' + formatUserError(error)); return; }
                       fetchCoachSlots(selectedCoach.id);
                     }}
                   />
@@ -1169,7 +1170,7 @@ export default function Schedule({ userId, userRole }) {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
-                    if (error) { alert('Failed to move event: ' + error.message); return; }
+                    if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
                     fetchFacilityEvents();
                   }} />
                 ) : (
@@ -1177,7 +1178,7 @@ export default function Schedule({ userId, userRole }) {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
-                    if (error) { alert('Failed to move event: ' + error.message); return; }
+                    if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
                     fetchFacilityEvents();
                   }} />
                 )}
@@ -1381,7 +1382,7 @@ export default function Schedule({ userId, userRole }) {
                 const ev = events.find(e => String(e.id) === String(eventId));
                 if (!ev || ev.event_date === newDate) return;
                 const { error } = await supabase.from('schedule_events').update({ event_date: newDate }).eq('id', eventId);
-                if (error) { alert('Failed to move event: ' + error.message); return; }
+                if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
                 if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
               }}
               playerNames={(view === 'player' && selectedPlayers.length > 1) || view === 'team' ? players.reduce((m, p) => { m[p.id] = p.full_name; return m; }, {}) : null}
@@ -1403,7 +1404,7 @@ export default function Schedule({ userId, userRole }) {
                 const ev = events.find(e => String(e.id) === String(eventId));
                 if (!ev || ev.event_date === newDate) return;
                 const { error } = await supabase.from('schedule_events').update({ event_date: newDate }).eq('id', eventId);
-                if (error) { alert('Failed to move event: ' + error.message); return; }
+                if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
                 if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
               }}
               playerNames={(view === 'player' && selectedPlayers.length > 1) || view === 'team' ? players.reduce((m, p) => { m[p.id] = p.full_name; return m; }, {}) : null}
@@ -2554,7 +2555,7 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
       onSuccess();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
-      alert('Error creating event: ' + error.message);
+      alert('Error creating event: ' + formatUserError(error));
     } finally {
       setLoading(false);
     }
@@ -3042,7 +3043,7 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
                         exercises: filteredExercises,
                         created_by: user?.id,
                       });
-                      if (error) { alert('Error saving template: ' + error.message); }
+                      if (error) { alert('Error saving template: ' + formatUserError(error)); }
                       else { alert('Workout saved as template!'); }
                     }}
                     className="w-full border-2 border-dashed border-blue-300 text-blue-600 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition"
@@ -3575,7 +3576,7 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
     const { error } = await supabase.from('schedule_events').delete().eq('id', event.id);
     setDeleting(false);
     if (error) {
-      alert('Could not delete: ' + error.message);
+      alert('Could not delete: ' + formatUserError(error));
       return;
     }
     onDelete && onDelete();
@@ -3843,7 +3844,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
       alert('Event deleted successfully!');
       onDelete();
     } catch (error) {
-      alert('Error deleting event: ' + error.message);
+      alert('Error deleting event: ' + formatUserError(error));
       setDeleting(false);
     }
   };
@@ -3905,7 +3906,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
       onUpdate();
     } catch (error) {
       console.error('Error updating event:', error);
-      alert('Error updating event: ' + error.message);
+      alert('Error updating event: ' + formatUserError(error));
     } finally {
       setLoading(false);
     }
@@ -4415,7 +4416,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
       if (error) throw error;
       onSuccess();
     } catch (err) {
-      alert('Error creating event: ' + err.message);
+      alert('Error creating event: ' + formatUserError(err));
     } finally { setLoading(false); }
   };
 
@@ -4598,7 +4599,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
       setSignupNotes('');
       await fetchSignups();
     } catch (err) {
-      alert('Error signing up: ' + err.message);
+      alert('Error signing up: ' + formatUserError(err));
     } finally {
       setSignupLoading(false);
     }
@@ -4612,7 +4613,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
       if (error) throw error;
       await fetchSignups();
     } catch (err) {
-      alert('Error: ' + err.message);
+      alert('Error: ' + formatUserError(err));
     } finally {
       setSignupLoading(false);
     }
@@ -4624,7 +4625,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
       const { error } = await supabase.from('facility_events').update({ title: formData.title, description: formData.description || null, start_time: formData.start_time || null, end_time: formData.end_time || null, location: formData.location || null, color: formData.color || null }).eq('id', eventMasterId);
       if (error) throw error;
       onUpdate();
-    } catch (err) { alert('Error: ' + err.message); } finally { setLoading(false); }
+    } catch (err) { alert('Error: ' + formatUserError(err)); } finally { setLoading(false); }
   };
 
   const handleDelete = async () => {
@@ -4633,7 +4634,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
       const { error } = await supabase.from('facility_events').delete().eq('id', eventMasterId);
       if (error) throw error;
       onDelete();
-    } catch (err) { alert('Error: ' + err.message); }
+    } catch (err) { alert('Error: ' + formatUserError(err)); }
   };
 
   const headerColorKey = (editing ? formData.color : event.color) || 'teal';
@@ -4994,7 +4995,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
         if (error) throw error;
       }
       onSuccess();
-    } catch (err) { alert('Error ' + (isEdit ? 'updating' : 'creating') + ' slot: ' + err.message); } finally { setLoading(false); }
+    } catch (err) { alert('Error ' + (isEdit ? 'updating' : 'creating') + ' slot: ' + formatUserError(err)); } finally { setLoading(false); }
   };
 
   return (
@@ -5079,7 +5080,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
       if (error) throw error;
       alert(slot.auto_confirm ? 'Reservation confirmed!' : 'Reservation submitted! Waiting for coach confirmation.');
       onSuccess();
-    } catch (err) { alert('Error: ' + err.message); } finally { setLoading(false); }
+    } catch (err) { alert('Error: ' + formatUserError(err)); } finally { setLoading(false); }
   };
 
   return (

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 import SignedSignatureImage from './SignedSignatureImage';
+import { formatUserError } from './errorMessage';
 
 const POSITION_OPTIONS = ['1B', '2B', '3B', 'SS', 'OF', 'P', 'C'];
 const BATS_THROWS_OPTIONS = ['R/R', 'L/L', 'R/L', 'L/R'];
@@ -268,7 +269,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
       alert('Contract signed successfully!');
     } catch (error) {
       console.error('Error submitting contract:', error);
-      alert('Error submitting contract: ' + error.message);
+      alert('Error submitting contract: ' + formatUserError(error));
     } finally {
       setSubmitting(false);
     }

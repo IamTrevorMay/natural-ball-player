@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { MapPin, Plus, Pencil, Trash2, ExternalLink, X, Search } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 export default function Fields({ userId, userRole }) {
   const [fields, setFields] = useState([]);
@@ -30,7 +31,7 @@ export default function Fields({ userId, userRole }) {
     if (!window.confirm(`Delete "${field.name}"?`)) return;
     const { error } = await supabase.from('fields').delete().eq('id', field.id);
     if (error) {
-      alert('Error deleting field: ' + error.message);
+      alert('Error deleting field: ' + formatUserError(error));
       return;
     }
     fetchFields();

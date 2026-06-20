@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext, createContext } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, ChevronDown, ChevronUp, Plus, Trash2, Save } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const MHFormContext = createContext();
 
@@ -256,7 +257,7 @@ export default function MedicalHistoryForm({ userId, userRole }) {
       alert('Medical history saved successfully!');
     } catch (error) {
       console.error('Error saving medical history:', error);
-      alert('Error saving: ' + error.message);
+      alert('Error saving: ' + formatUserError(error));
     } finally {
       setSaving(false);
     }

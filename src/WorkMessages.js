@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Hash, Lock, Send, Paperclip, X, Plus, Search, Check, MessageSquare, ArrowLeft, Image as ImageIcon, FileText } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const AUDIENCE_LABEL = { all: 'All staff', coaches: 'Coaches + admins', admin: 'Admins only', custom: 'Custom' };
 
@@ -158,7 +159,7 @@ export default function WorkMessages({ userId, userRole }) {
         .insert({ user_a_id: a, user_b_id: b })
         .select('id')
         .single();
-      if (error) { alert('Could not create DM: ' + error.message); return; }
+      if (error) { alert('Could not create DM: ' + formatUserError(error)); return; }
       threadId = data.id;
       await loadSidebar();
     }
@@ -398,7 +399,7 @@ function Thread({ kind, id, userId, userRole, channel, dmOther, onBack, onSent }
       const folder = kind === 'channel' ? `channel/${id}` : `dm/${id}`;
       const path = `${folder}/${crypto.randomUUID()}.${ext}`;
       const { error: upErr } = await supabase.storage.from('work-attachments').upload(path, file, { contentType: file.type });
-      if (upErr) { alert('Upload failed: ' + upErr.message); setSending(false); return; }
+      if (upErr) { alert('Upload failed: ' + formatUserError(upErr)); setSending(false); return; }
       attachment_path = path;
       attachment_name = file.name;
       attachment_size = file.size;
@@ -413,7 +414,7 @@ function Thread({ kind, id, userId, userRole, channel, dmOther, onBack, onSent }
     };
 
     const { error } = await supabase.from('work_messages').insert(payload);
-    if (error) { alert('Send failed: ' + error.message); setSending(false); return; }
+    if (error) { alert('Send failed: ' + formatUserError(error)); setSending(false); return; }
 
     setBody('');
     setFile(null);
@@ -442,7 +443,7 @@ function Thread({ kind, id, userId, userRole, channel, dmOther, onBack, onSent }
       .from('work_messages')
       .update({ body: text, edited_at: new Date().toISOString() })
       .eq('id', editingId);
-    if (error) alert('Edit failed: ' + error.message);
+    if (error) alert('Edit failed: ' + formatUserError(error));
     setEditingId(null);
     setEditBody('');
   };
@@ -450,7 +451,7 @@ function Thread({ kind, id, userId, userRole, channel, dmOther, onBack, onSent }
   const handleDelete = async (m) => {
     if (!window.confirm('Delete this message?')) return;
     const { error } = await supabase.from('work_messages').delete().eq('id', m.id);
-    if (error) alert('Delete failed: ' + error.message);
+    if (error) alert('Delete failed: ' + formatUserError(error));
   };
 
   const handleKeyDown = (e) => {

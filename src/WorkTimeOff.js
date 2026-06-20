@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, X, Edit2, Trash2, Plane, Check, AlertCircle, Ban } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const STATUS_BADGE = {
   pending:   'bg-yellow-100 text-yellow-700',
@@ -101,10 +102,10 @@ export default function WorkTimeOff({ userId }) {
     const payload = { type, start_date: startDate, end_date: endDate, reason: reason.trim() || null };
     if (editing) {
       const { error } = await supabase.from('staff_time_off_requests').update(payload).eq('id', editing.id);
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
     } else {
       const { error } = await supabase.from('staff_time_off_requests').insert({ ...payload, user_id: userId, status: 'pending' });
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
     }
     setSaving(false);
     resetForm();
@@ -114,14 +115,14 @@ export default function WorkTimeOff({ userId }) {
   const handleCancel = async (r) => {
     if (!window.confirm('Cancel this time-off request?')) return;
     const { error } = await supabase.from('staff_time_off_requests').update({ status: 'cancelled' }).eq('id', r.id);
-    if (error) alert('Cancel failed: ' + error.message);
+    if (error) alert('Cancel failed: ' + formatUserError(error));
     else fetchAll();
   };
 
   const handleDelete = async (r) => {
     if (!window.confirm('Delete this request?')) return;
     const { error } = await supabase.from('staff_time_off_requests').delete().eq('id', r.id);
-    if (error) alert('Delete failed: ' + error.message);
+    if (error) alert('Delete failed: ' + formatUserError(error));
     else fetchAll();
   };
 

@@ -5,6 +5,7 @@ import { fmtLocalDate, generateOccurrenceDates, expandRecurringEvents } from './
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
+import { formatUserError } from './errorMessage';
 
 function startOfWeek(d) {
   const x = new Date(d);
@@ -206,7 +207,7 @@ export default function WorkSchedule({ userId, userRole }) {
       (async () => {
         const id = event._master_id || event.id;
         const { error } = await supabase.from('staff_schedule_events').delete().eq('id', id);
-        if (error) { alert('Failed to delete: ' + error.message); return; }
+        if (error) { alert('Failed to delete: ' + formatUserError(error)); return; }
         fetchAll();
       })();
       return;
@@ -217,7 +218,7 @@ export default function WorkSchedule({ userId, userRole }) {
       if (choice === 'one') err = await deleteStaffOccurrence(event);
       else if (choice === 'future') err = await deleteStaffFuture(event);
       else err = await deleteStaffSeries(event);
-      if (err) { alert('Failed to delete: ' + err.message); return; }
+      if (err) { alert('Failed to delete: ' + formatUserError(err)); return; }
       fetchAll();
     } });
   };
@@ -243,7 +244,7 @@ export default function WorkSchedule({ userId, userRole }) {
       clone.end_at = new Date(newStart.getTime() + dur).toISOString();
     }
     const { error } = await supabase.from('staff_schedule_events').insert(clone);
-    if (error) { alert('Failed to duplicate: ' + error.message); return; }
+    if (error) { alert('Failed to duplicate: ' + formatUserError(error)); return; }
     fetchAll();
   };
   const handleStaffCopyTo = async (event) => {
@@ -299,7 +300,7 @@ export default function WorkSchedule({ userId, userRole }) {
       start_at: newStart.toISOString(),
       end_at: new Date(newStart.getTime() + dur).toISOString(),
     }).eq('id', ev.id);
-    if (error) { alert('Failed to move event: ' + error.message); return; }
+    if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
     fetchAll();
   };
 
@@ -790,7 +791,7 @@ function EventDetailModal({ event, assignments, canManage, onClose, onEdit, onDe
     if (!isRecurring) {
       if (!window.confirm(`Delete "${event.title}"?`)) return;
       const { error } = await supabase.from('staff_schedule_events').delete().eq('id', event.id);
-      if (error) { alert('Delete failed: ' + error.message); return; }
+      if (error) { alert('Delete failed: ' + formatUserError(error)); return; }
       onDeleted();
       return;
     }
@@ -809,7 +810,7 @@ function EventDetailModal({ event, assignments, canManage, onClose, onEdit, onDe
       is_cancelled: true,
       is_recurring: false,
     });
-    if (error) { alert('Delete failed: ' + error.message); setDeleting(false); return; }
+    if (error) { alert('Delete failed: ' + formatUserError(error)); setDeleting(false); return; }
     onDeleted();
   };
 
@@ -1021,7 +1022,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
         })
         .select('id')
         .single();
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
       await syncAssignments(data.id);
       setSaving(false);
       onSaved();
@@ -1047,7 +1048,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
         })
         .select('id')
         .single();
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
       await syncAssignments(data.id);
       setSaving(false);
       onSaved();
@@ -1063,14 +1064,14 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
 
     if (editRealId) {
       const { error } = await supabase.from('staff_schedule_events').update(payload).eq('id', editRealId);
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
     } else {
       const { data, error } = await supabase
         .from('staff_schedule_events')
         .insert({ ...payload, created_by: createdBy })
         .select('id')
         .single();
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
       eventId = data.id;
     }
 

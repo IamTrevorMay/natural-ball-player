@@ -11,6 +11,7 @@ import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import { BadgePercent } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -433,7 +434,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       alert('Profile updated successfully!');
     } catch (error) {
       console.error('Error updating profile:', error);
-      alert('Error updating profile: ' + error.message);
+      alert('Error updating profile: ' + formatUserError(error));
     } finally {
       setSaving(false);
     }
@@ -481,7 +482,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       await fetchUserData();
     } catch (error) {
       console.error(`Error updating ${field}:`, error);
-      alert(`Error updating ${field}: ` + error.message);
+      alert(`Error updating ${field}: ` + formatUserError(error));
     }
   };
 
@@ -507,7 +508,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       await fetchUserData();
     } catch (error) {
       console.error('Error uploading avatar:', error);
-      alert('Error uploading avatar: ' + error.message);
+      alert('Error uploading avatar: ' + formatUserError(error));
     } finally {
       setUploadingAvatar(false);
     }
@@ -569,7 +570,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setAddingSchool(false);
     } catch (error) {
       console.error('Error adding school:', error);
-      alert('Error adding school: ' + error.message);
+      alert('Error adding school: ' + formatUserError(error));
     }
   };
 
@@ -583,7 +584,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       if (expandedSchool === schoolId) setExpandedSchool(null);
     } catch (error) {
       console.error('Error deleting school:', error);
-      alert('Error deleting school: ' + error.message);
+      alert('Error deleting school: ' + formatUserError(error));
     }
   };
 
@@ -604,7 +605,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setAddingContact(null);
     } catch (error) {
       console.error('Error adding contact:', error);
-      alert('Error adding contact: ' + error.message);
+      alert('Error adding contact: ' + formatUserError(error));
     }
   };
 
@@ -618,7 +619,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       }));
     } catch (error) {
       console.error('Error deleting contact:', error);
-      alert('Error deleting contact: ' + error.message);
+      alert('Error deleting contact: ' + formatUserError(error));
     }
   };
 
@@ -692,7 +693,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       cancelEditRoutine();
     } catch (error) {
       console.error('Error saving routine:', error);
-      alert('Error saving routine: ' + error.message);
+      alert('Error saving routine: ' + formatUserError(error));
     } finally {
       setSavingRoutine(false);
     }
@@ -706,7 +707,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       await fetchArmCareRoutines();
     } catch (error) {
       console.error('Error deleting routine:', error);
-      alert('Error deleting routine: ' + error.message);
+      alert('Error deleting routine: ' + formatUserError(error));
     }
   };
 
@@ -759,7 +760,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       cancelEditGoal();
     } catch (error) {
       console.error('Error saving goal:', error);
-      alert('Error saving goal: ' + error.message);
+      alert('Error saving goal: ' + formatUserError(error));
     } finally {
       setSavingGoal(false);
     }
@@ -773,7 +774,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       await fetchGoals();
     } catch (error) {
       console.error('Error deleting goal:', error);
-      alert('Error deleting goal: ' + error.message);
+      alert('Error deleting goal: ' + formatUserError(error));
     }
   };
 
@@ -867,7 +868,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       cancelEditNote();
     } catch (error) {
       console.error('Error saving note:', error);
-      alert('Error saving note: ' + error.message);
+      alert('Error saving note: ' + formatUserError(error));
     } finally {
       setSavingNote(false);
     }
@@ -881,7 +882,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       await fetchPlayerNotes();
     } catch (error) {
       console.error('Error deleting note:', error);
-      alert('Error deleting note: ' + error.message);
+      alert('Error deleting note: ' + formatUserError(error));
     }
   };
 
@@ -1184,7 +1185,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       cancelEditPtVisit();
     } catch (error) {
       console.error('Error saving PT visit:', error);
-      alert('Error saving PT visit: ' + error.message);
+      alert('Error saving PT visit: ' + formatUserError(error));
     } finally {
       setSavingPtVisit(false);
     }
@@ -1197,7 +1198,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       if (error) throw error;
       await fetchPtVisits();
     } catch (error) {
-      alert('Error deleting visit: ' + error.message);
+      alert('Error deleting visit: ' + formatUserError(error));
     }
   };
 
@@ -1208,7 +1209,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       .update({ pt_status: newStatus || null })
       .eq('id', userData._profile.id);
     if (error) {
-      alert('Could not update PT status: ' + error.message);
+      alert('Could not update PT status: ' + formatUserError(error));
       return;
     }
     setUserData(prev => ({ ...prev, _profile: { ...prev._profile, pt_status: newStatus || null } }));
@@ -1309,7 +1310,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       await fetchAttendanceData();
     } catch (error) {
       console.error('Error marking attendance:', error);
-      alert('Error marking attendance: ' + error.message);
+      alert('Error marking attendance: ' + formatUserError(error));
     } finally {
       setSavingAttendance(prev => ({ ...prev, [eventId]: false }));
     }
@@ -1516,7 +1517,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setRecruitmentTeams([...recruitmentTeams, data]);
     } catch (error) {
       console.error('Error adding recruitment team:', error);
-      alert('Error adding team: ' + error.message);
+      alert('Error adding team: ' + formatUserError(error));
     }
   };
 
@@ -1549,7 +1550,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setRecruitmentTeams(prev => prev.filter(t => t.id !== teamId));
     } catch (error) {
       console.error('Error deleting recruitment team:', error);
-      alert('Error deleting team: ' + error.message);
+      alert('Error deleting team: ' + formatUserError(error));
     }
   };
 
@@ -4191,7 +4192,7 @@ function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
       if (error) throw error;
       onSubmitted();
     } catch (err) {
-      alert('Error submitting assessment: ' + err.message);
+      alert('Error submitting assessment: ' + formatUserError(err));
     } finally {
       setSaving(false);
     }
@@ -4710,7 +4711,7 @@ function HittingStatsView({ playerId, canEdit }) {
       notes: draft.notes || null,
       logged_by: user?.id || null,
     });
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { alert('Save failed: ' + formatUserError(error)); return; }
     setAdding(false);
     setDraft({ ab_date: fmtLocalDate(new Date()), context: 'practice', pitcher_name: '', pitch_type: '', result: '1B', exit_velocity: '', launch_angle: '', distance: '', notes: '' });
     load();
@@ -4928,7 +4929,7 @@ function PitchingStatsView({ playerId, canEdit }) {
       notes: draft.notes || null,
       logged_by: user?.id || null,
     });
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { alert('Save failed: ' + formatUserError(error)); return; }
     setAdding(false);
     setDraft({ log_date: fmtLocalDate(new Date()), context: 'bullpen', pitch_type: '', velocity: '', spin_rate: '', location: '', result: 'strike', pitch_count: '', notes: '' });
     load();
@@ -5104,7 +5105,7 @@ function CatchingStatsView({ playerId, canEdit }) {
       notes: draft.notes || null,
       logged_by: user?.id || null,
     });
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { alert('Save failed: ' + formatUserError(error)); return; }
     setAdding(false);
     setDraft({ log_date: fmtLocalDate(new Date()), context: 'practice', drill_type: 'pop_time', pop_time_sec: '', throwdown_accuracy: '', block_attempts: '', block_clean: '', framing_grade: '', notes: '' });
     load();
@@ -5267,7 +5268,7 @@ function MarekTab({ playerId, canEdit, dateOfBirth }) {
         .slice(0, 120) || 'file';
       const path = `${playerId}/${Date.now()}-${safeName}`;
       const { error: upErr } = await supabase.storage.from('bloodwork').upload(path, draft.file, { upsert: false });
-      if (upErr) { setUploading(false); alert('Upload failed: ' + upErr.message); return; }
+      if (upErr) { setUploading(false); alert('Upload failed: ' + formatUserError(upErr)); return; }
       file_url = path;
       file_name = safeName;
     }
@@ -5282,7 +5283,7 @@ function MarekTab({ playerId, canEdit, dateOfBirth }) {
       uploaded_by: user?.id || null,
     });
     setUploading(false);
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { alert('Save failed: ' + formatUserError(error)); return; }
     setAdding(false);
     setDraft({ panel_date: fmtLocalDate(new Date()), panel_type: '', summary: '', follow_up_at: '', file: null });
     load();

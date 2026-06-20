@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { FileText, Plus, X, Edit2, Trash2, Upload, Download, DollarSign, Lock, Settings } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const DOC_TYPES = [
   { value: 'paystub', label: 'Paystub' },
@@ -231,7 +232,7 @@ export default function WorkAdminPayroll({ userId }) {
         .from('staff-pay-docs')
         .upload(newPath, file, { contentType: file.type, upsert: false });
       if (uploadError) {
-        alert('Upload failed: ' + uploadError.message);
+        alert('Upload failed: ' + formatUserError(uploadError));
         setSaving(false);
         return;
       }
@@ -259,12 +260,12 @@ export default function WorkAdminPayroll({ userId }) {
 
     if (editing) {
       const { error } = await supabase.from('staff_pay_documents').update(payload).eq('id', editing.id);
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
     } else {
       const { error } = await supabase.from('staff_pay_documents').insert({ ...payload, uploaded_by: userId });
       if (error) {
         await supabase.storage.from('staff-pay-docs').remove([filePath]);
-        alert('Save failed: ' + error.message);
+        alert('Save failed: ' + formatUserError(error));
         setSaving(false);
         return;
       }
@@ -278,7 +279,7 @@ export default function WorkAdminPayroll({ userId }) {
   const handleDelete = async (doc) => {
     if (!window.confirm(`Delete this ${DOC_TYPE_LABEL[doc.doc_type] || doc.doc_type} for ${doc.recipient?.full_name || 'this user'}?`)) return;
     const { error } = await supabase.from('staff_pay_documents').delete().eq('id', doc.id);
-    if (error) { alert('Delete failed: ' + error.message); return; }
+    if (error) { alert('Delete failed: ' + formatUserError(error)); return; }
     if (doc.file_path) await supabase.storage.from('staff-pay-docs').remove([doc.file_path]);
     fetchAll();
   };

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
+import { formatUserError } from './errorMessage';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -432,7 +433,7 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
     const { error } = await supabase.from('team_members').insert({
       team_id: teamId, user_id: user.id, role: addRole,
     });
-    if (error) { alert('Could not add member: ' + error.message); }
+    if (error) { alert('Could not add member: ' + formatUserError(error)); }
     else {
       setMemberSearch('');
       setMemberResults([]);
@@ -444,7 +445,7 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
   const handleRemoveMember = async (userId) => {
     if (!teamId || !window.confirm('Remove this player from the team?')) return;
     const { error } = await supabase.from('team_members').delete().eq('team_id', teamId).eq('user_id', userId);
-    if (error) { alert('Could not remove member: ' + error.message); }
+    if (error) { alert('Could not remove member: ' + formatUserError(error)); }
     else onRosterChange();
   };
 
@@ -965,7 +966,7 @@ function ProspectsTab({ teamId, userId, userRole, roster, prospects, onProspects
       await onProspectsChange();
     } catch (error) {
       console.error('Error adding prospect:', error);
-      alert('Error adding prospect: ' + error.message);
+      alert('Error adding prospect: ' + formatUserError(error));
     } finally {
       setSaving(false);
     }
@@ -1596,7 +1597,7 @@ function GameChangerTab({ teamId, userRole }) {
     } else {
       ({ error } = await supabase.from('team_game_changer_contacts').insert(payload));
     }
-    if (error) { alert('Save failed: ' + error.message); return; }
+    if (error) { alert('Save failed: ' + formatUserError(error)); return; }
     setAdding(false);
     setEditing(null);
     load();

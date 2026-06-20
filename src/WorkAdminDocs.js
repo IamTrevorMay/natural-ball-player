@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { FileText, Plus, X, Edit2, Trash2, Upload, Download } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const CATEGORIES = ['Handbook', 'SOP', 'Policy', 'Training', 'Other'];
 
@@ -75,7 +76,7 @@ export default function WorkAdminDocs({ userId }) {
         .from('staff-documents')
         .upload(newPath, file, { contentType: file.type, upsert: false });
       if (uploadError) {
-        alert('Upload failed: ' + uploadError.message);
+        alert('Upload failed: ' + formatUserError(uploadError));
         setSaving(false);
         return;
       }
@@ -105,7 +106,7 @@ export default function WorkAdminDocs({ userId }) {
         })
         .eq('id', editing.id);
       if (error) {
-        alert('Save failed: ' + error.message);
+        alert('Save failed: ' + formatUserError(error));
         setSaving(false);
         return;
       }
@@ -125,7 +126,7 @@ export default function WorkAdminDocs({ userId }) {
         });
       if (error) {
         await supabase.storage.from('staff-documents').remove([filePath]);
-        alert('Save failed: ' + error.message);
+        alert('Save failed: ' + formatUserError(error));
         setSaving(false);
         return;
       }
@@ -139,7 +140,7 @@ export default function WorkAdminDocs({ userId }) {
   const handleDelete = async (doc) => {
     if (!window.confirm(`Delete "${doc.title}"? This will also remove the file from storage.`)) return;
     const { error } = await supabase.from('staff_documents').delete().eq('id', doc.id);
-    if (error) { alert('Delete failed: ' + error.message); return; }
+    if (error) { alert('Delete failed: ' + formatUserError(error)); return; }
     if (doc.file_path) {
       await supabase.storage.from('staff-documents').remove([doc.file_path]);
     }

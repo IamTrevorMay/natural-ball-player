@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -104,7 +105,7 @@ function ScheduleTab({ teams }) {
     const { error } = await supabase.from('schedule_events').delete().eq('id', eventId);
     if (error) {
       console.error('Error deleting event:', error);
-      alert('Error deleting event: ' + error.message);
+      alert('Error deleting event: ' + formatUserError(error));
     } else {
       fetchEvents();
     }
@@ -2802,7 +2803,7 @@ function TrainingSlotsTab({ userId }) {
       max_players: formData.maxPlayers,
       notes: formData.notes || null
     });
-    if (error) { alert('Error creating slot: ' + error.message); return; }
+    if (error) { alert('Error creating slot: ' + formatUserError(error)); return; }
     setShowCreateForm(false);
     fetchSlots();
   };
@@ -3635,7 +3636,7 @@ function MyTasksTab({ userId }) {
     if (newStatus === 'completed') updates.completed_at = new Date().toISOString();
     else updates.completed_at = null;
     const { error } = await supabase.from('coach_tasks').update(updates).eq('id', taskId);
-    if (error) alert('Error updating task: ' + error.message);
+    if (error) alert('Error updating task: ' + formatUserError(error));
     else fetchTasks();
   };
 

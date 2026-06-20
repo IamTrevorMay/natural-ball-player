@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 import SignedSignatureImage from './SignedSignatureImage';
+import { formatUserError } from './errorMessage';
 
 // Issue #189: acknowledgment of the Facility Fine policy document. Every user
 // (player/coach/admin) must sign before they can dismiss the prompt. Mirrors
@@ -147,7 +148,7 @@ export default function FacilityFinePage({ userId, onSigned }) {
       if (onSigned) onSigned();
     } catch (error) {
       console.error('Facility Fine sign error:', error);
-      alert('Could not save signature: ' + error.message);
+      alert('Could not save signature: ' + formatUserError(error));
     } finally {
       setSubmitting(false);
     }

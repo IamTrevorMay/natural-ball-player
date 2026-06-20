@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 import SignedSignatureImage from './SignedSignatureImage';
+import { formatUserError } from './errorMessage';
 
 const COMMITMENT_ITEMS = [
   'I commit to participate in the Naturals Select program for the 2026-2027 season.',
@@ -181,7 +182,7 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
       alert('Letter of Intent signed successfully!');
     } catch (error) {
       console.error('Error submitting LOI:', error);
-      alert('Error submitting Letter of Intent: ' + error.message);
+      alert('Error submitting Letter of Intent: ' + formatUserError(error));
     } finally {
       setSubmitting(false);
     }

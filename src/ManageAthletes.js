@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { Users, Search, Edit2, X, Save, AlertTriangle, Mail } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
+import { formatUserError } from './errorMessage';
 
 const PROGRAM_OPTIONS = ['Hitting', 'Pitching', 'Fielding', 'Catching', 'Combo', 'Base Running', 'Physical Therapy', 'Recovery', 'Mobility', 'Meal Planning', 'Stretching'];
 const LEVEL_OPTIONS = ['8u', '9u', '10u', '11u', '12u', '13u', '14u', '15u', '16u', '17u', '18u', 'College', 'A', 'A+', 'AA', 'AAA', 'MLB', 'KBO', 'MEX', 'NPB'];
@@ -230,7 +231,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
       user_id: playerId, team_id: teamId, role: 'player',
     });
     if (error) {
-      alert('Could not add team: ' + error.message);
+      alert('Could not add team: ' + formatUserError(error));
       return;
     }
     fetchRosterPlayers();
@@ -243,7 +244,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
       .eq('user_id', playerId)
       .eq('team_id', teamId);
     if (error) {
-      alert('Could not remove team: ' + error.message);
+      alert('Could not remove team: ' + formatUserError(error));
       return;
     }
     fetchRosterPlayers();

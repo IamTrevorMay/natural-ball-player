@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { CheckCircle, AlertTriangle, Eraser } from 'lucide-react';
 import SignedSignatureImage from './SignedSignatureImage';
+import { formatUserError } from './errorMessage';
 
 const WAIVER_TEXT = `NATURAL BALL PLAYER, LLC
 LIABILITY WAIVER AND RELEASE OF CLAIMS
@@ -232,7 +233,7 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
       alert('Waiver signed successfully!');
     } catch (error) {
       console.error('Error submitting waiver:', error);
-      alert('Error submitting waiver: ' + error.message);
+      alert('Error submitting waiver: ' + formatUserError(error));
     } finally {
       setSubmitting(false);
     }

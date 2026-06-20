@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Pin, PinOff, Trash2, Edit2, Plus, X } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 export default function WorkAdminAnnouncements({ userId }) {
   const [announcements, setAnnouncements] = useState([]);
@@ -56,7 +57,7 @@ export default function WorkAdminAnnouncements({ userId }) {
         .update({ title: title.trim(), body: body.trim(), pinned })
         .eq('id', editing);
       if (error) {
-        alert('Error: ' + error.message);
+        alert('Error: ' + formatUserError(error));
         setSaving(false);
         return;
       }
@@ -65,7 +66,7 @@ export default function WorkAdminAnnouncements({ userId }) {
         .from('staff_announcements')
         .insert({ title: title.trim(), body: body.trim(), pinned, author_id: userId });
       if (error) {
-        alert('Error: ' + error.message);
+        alert('Error: ' + formatUserError(error));
         setSaving(false);
         return;
       }
@@ -79,7 +80,7 @@ export default function WorkAdminAnnouncements({ userId }) {
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this announcement?')) return;
     const { error } = await supabase.from('staff_announcements').delete().eq('id', id);
-    if (error) alert('Error: ' + error.message);
+    if (error) alert('Error: ' + formatUserError(error));
     else fetchAnnouncements();
   };
 
@@ -88,7 +89,7 @@ export default function WorkAdminAnnouncements({ userId }) {
       .from('staff_announcements')
       .update({ pinned: !a.pinned })
       .eq('id', a.id);
-    if (error) alert('Error: ' + error.message);
+    if (error) alert('Error: ' + formatUserError(error));
     else fetchAnnouncements();
   };
 

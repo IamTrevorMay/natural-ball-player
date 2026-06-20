@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Upload, FileText, Trash2, ExternalLink, X, DollarSign } from 'lucide-react';
+import { formatUserError } from './errorMessage';
 
 const STATUS_COLORS = {
   submitted: 'bg-yellow-100 text-yellow-700',
@@ -85,7 +86,7 @@ export default function WorkInvoices({ userId, userRole }) {
       await fetchInvoices();
     } catch (error) {
       console.error('Error uploading invoice:', error);
-      alert('Error uploading invoice: ' + error.message);
+      alert('Error uploading invoice: ' + formatUserError(error));
     } finally {
       setSaving(false);
     }
@@ -102,7 +103,7 @@ export default function WorkInvoices({ userId, userRole }) {
   const handleDelete = async (inv) => {
     if (!window.confirm('Delete this invoice?')) return;
     const { error } = await supabase.from('coach_invoices').delete().eq('id', inv.id);
-    if (error) { alert('Delete failed: ' + error.message); return; }
+    if (error) { alert('Delete failed: ' + formatUserError(error)); return; }
     if (inv.file_path) {
       await supabase.storage.from('coach-invoices').remove([inv.file_path]);
     }
@@ -114,7 +115,7 @@ export default function WorkInvoices({ userId, userRole }) {
       .from('coach_invoices')
       .update({ status: newStatus })
       .eq('id', inv.id);
-    if (error) { alert('Update failed: ' + error.message); return; }
+    if (error) { alert('Update failed: ' + formatUserError(error)); return; }
     fetchInvoices();
   };
 
