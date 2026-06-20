@@ -1030,19 +1030,30 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
         if (profileError) throw profileError;
       }
 
-      // 3. Sync team assignments
+      // 3. Sync team assignments. Run removals + additions in parallel and
+      // collect failures so the user gets a clear partial-failure signal
+      // instead of silently leaving the user on the wrong teams.
       const teamsToAdd = assignedTeamIds.filter(id => !currentTeamIds.includes(id));
       const teamsToRemove = currentTeamIds.filter(id => !assignedTeamIds.includes(id));
 
-      for (const teamId of teamsToRemove) {
-        await supabase.from('team_members').delete().eq('user_id', user.id).eq('team_id', teamId);
-      }
-      for (const teamId of teamsToAdd) {
-        await supabase.from('team_members').insert({
-          team_id: teamId,
-          user_id: user.id,
-          role: formData.role === 'admin' ? 'coach' : formData.role,
-        });
+      const removeResults = await Promise.all(
+        teamsToRemove.map(teamId =>
+          supabase.from('team_members').delete().eq('user_id', user.id).eq('team_id', teamId)
+        )
+      );
+      const addResults = await Promise.all(
+        teamsToAdd.map(teamId =>
+          supabase.from('team_members').insert({
+            team_id: teamId,
+            user_id: user.id,
+            role: formData.role === 'admin' ? 'coach' : formData.role,
+          })
+        )
+      );
+      const teamErrors = [...removeResults, ...addResults]
+        .map(r => r.error).filter(Boolean);
+      if (teamErrors.length > 0) {
+        throw new Error(`Team sync partially failed (${teamErrors.length} error${teamErrors.length === 1 ? '' : 's'}). Refresh and retry.`);
       }
 
       onSuccess();

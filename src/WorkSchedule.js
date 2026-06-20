@@ -280,10 +280,23 @@ export default function WorkSchedule({ userId, userRole }) {
   const bulkStaffDelete = async () => {
     if (selectedEvents.length === 0) return;
     if (!window.confirm(`Delete ${selectedEvents.length} selected event(s)?`)) return;
+    let failed = 0;
     for (const ev of selectedEvents) {
       const id = ev._master_id || ev.id;
-      if (ev._is_virtual) await deleteStaffOccurrence(ev);
-      else await supabase.from('staff_schedule_events').delete().eq('id', id);
+      try {
+        if (ev._is_virtual) {
+          await deleteStaffOccurrence(ev);
+        } else {
+          const { error } = await supabase.from('staff_schedule_events').delete().eq('id', id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        failed++;
+        console.error('Bulk staff delete failed for event', id, err);
+      }
+    }
+    if (failed > 0) {
+      alert(`${selectedEvents.length - failed} deleted, ${failed} failed. Refresh to see current state.`);
     }
     exitSelectMode();
     fetchAll();

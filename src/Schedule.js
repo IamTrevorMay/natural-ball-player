@@ -740,16 +740,26 @@ export default function Schedule({ userId, userRole }) {
     let source = 'facility';
     if (view === 'team' || view === 'player') source = 'team';
     if (view === 'facility' && selectedCoach) source = 'slot';
+    let failed = 0;
     for (const ev of selectedEvents) {
       const id = ev._master_id || ev.id;
-      if (ev._is_virtual && source === 'facility') {
-        await deleteVirtualOccurrence(ev, source);
-      } else if (ev._is_virtual && source === 'slot') {
-        // Bulk delete of virtual training slot occurrences: skip — would need exception support
-        continue;
-      } else {
-        await supabase.from(tableForSource(source)).delete().eq('id', id);
+      try {
+        if (ev._is_virtual && source === 'facility') {
+          await deleteVirtualOccurrence(ev, source);
+        } else if (ev._is_virtual && source === 'slot') {
+          // Bulk delete of virtual training slot occurrences: skip — would need exception support
+          continue;
+        } else {
+          const { error } = await supabase.from(tableForSource(source)).delete().eq('id', id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        failed++;
+        console.error('Bulk delete failed for event', id, err);
       }
+    }
+    if (failed > 0) {
+      alert(`${selectedEvents.length - failed} deleted, ${failed} failed. Refresh to see current state.`);
     }
     exitSelectMode();
     refetchForSource(source);

@@ -189,25 +189,35 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setSaving(true);
     const entries = Object.entries(pendingEdits);
     const updatedRoster = [...rosterPlayers];
+    // Continue past the first failure so a single bad row doesn't strand the
+    // already-saved earlier rows. Collect failures and keep their pending
+    // edits in state so the user can retry just the broken ones.
+    const failed = {};
+    const failedNames = [];
     for (const [playerId, edits] of entries) {
       const player = updatedRoster.find(p => p.id === playerId);
       if (!player) continue;
-      const profileId = await ensureProfile(player);
-      if (!profileId) {
-        alert(`Could not save ${player.full_name}: failed to locate or create player profile.`);
-        setSaving(false);
-        return;
-      }
-      const { error } = await supabase.from('player_profiles').update(edits).eq('id', profileId);
-      if (error) {
-        alert(`Failed to save ${player.full_name}: ${error.message}`);
-        setSaving(false);
-        return;
+      try {
+        const profileId = await ensureProfile(player);
+        if (!profileId) {
+          failed[playerId] = edits;
+          failedNames.push(player.full_name);
+          continue;
+        }
+        const { error } = await supabase.from('player_profiles').update(edits).eq('id', profileId);
+        if (error) throw error;
+      } catch (err) {
+        failed[playerId] = edits;
+        failedNames.push(player.full_name);
+        console.error('saveAll failed for', player.full_name, err);
       }
     }
     await fetchRosterPlayers();
-    setPendingEdits({});
+    setPendingEdits(failed);
     setSaving(false);
+    if (failedNames.length > 0) {
+      alert(`Saved ${entries.length - failedNames.length}/${entries.length}. Still pending: ${failedNames.join(', ')}.`);
+    }
   };
 
   useEffect(() => {
