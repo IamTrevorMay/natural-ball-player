@@ -40,7 +40,19 @@ async function updateAuthUserEmail(userId, newEmail) {
   return result;
 }
 
-export default function AdminSettings({ userId, userRole, onNavigateToProfile }) {
+export default function AdminSettings(props) {
+  if (props.userRole !== 'admin' && props.userRole !== 'coach') {
+    return (
+      <div className="p-8 text-center">
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Access denied</h2>
+        <p className="text-sm text-gray-600">Settings are available to coaches and admins only.</p>
+      </div>
+    );
+  }
+  return <AdminSettingsInner {...props} />;
+}
+
+function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
   const [activeTab, setActiveTab] = useState('users');
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
