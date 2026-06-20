@@ -422,6 +422,16 @@ export default function WhoopTab({ userId, userRole }) {
         `${functionUrl}?action=data&target_user_id=${userId}&from=${from}&to=${to}`,
         { headers }
       );
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        // Surface re-auth required from the edge function so the user knows
+        // to re-connect rather than seeing stale data.
+        if (body.includes('WHOOP_REAUTH_REQUIRED')) {
+          setConnected(false);
+          throw new Error('Whoop session expired. Please reconnect.');
+        }
+        throw new Error(`Whoop fetch failed: ${res.status}`);
+      }
       const data = await res.json();
       setConnected(data.connected);
       setCycles(data.cycles || []);
@@ -449,9 +459,21 @@ export default function WhoopTab({ userId, userRole }) {
   const handleConnect = async () => {
     const headers = await getAuthHeaders();
     const res = await fetch(`${functionUrl}?action=connect`, { headers });
+    if (!res.ok) {
+      alert('Could not start WHOOP connect. Try again in a moment.');
+      return;
+    }
     const data = await res.json();
-    if (data.url) {
-      window.location.href = data.url;
+    // Validate the redirect URL belongs to WHOOP's OAuth server so a
+    // compromised edge function couldn't redirect users to an attacker page.
+    try {
+      const u = new URL(data.url);
+      if (u.protocol !== 'https:' || !/(^|\.)whoop\.com$/i.test(u.host)) {
+        throw new Error('Unexpected redirect host');
+      }
+      window.location.href = u.toString();
+    } catch {
+      alert('Could not start WHOOP connect — invalid redirect URL.');
     }
   };
 
