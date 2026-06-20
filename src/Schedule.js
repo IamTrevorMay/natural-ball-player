@@ -163,7 +163,10 @@ export default function Schedule({ userId, userRole }) {
     }
   }, [view, viewMode, laneDate]);
 
-  // Sync selectedDate month when laneDate changes to a different month
+  // Sync selectedDate month when laneDate changes to a different month, OR
+  // when viewMode flips into 'lanes' for an existing laneDate. The effect
+  // previously only watched laneDate, so switching to the Lanes view while
+  // laneDate was already set left selectedDate's month out of sync.
   useEffect(() => {
     if (viewMode === 'lanes' && laneDate) {
       const ld = new Date(laneDate + 'T12:00:00');
@@ -171,7 +174,8 @@ export default function Schedule({ userId, userRole }) {
         setSelectedDate(new Date(ld.getFullYear(), ld.getMonth(), 1));
       }
     }
-  }, [laneDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laneDate, viewMode]);
 
   useEffect(() => {
     if (selectedCoach) {
