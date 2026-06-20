@@ -89,3 +89,112 @@
 - Square integration (#142) blocks facility fines (#189) — external dependency on payment platform setup
 - AI features (#174, #170) are large-scope with no architecture design yet
 - Multiple API integrations (#48, #44) blocked on third-party credentials
+
+## Backend Audit — 2026-06-20
+
+Findings from a 4-agent parallel review of `supabase/functions/` and `supabase/migrations/`. Severities follow CRITICAL → HIGH → MED → LOW. Commit `006effc8` ("Backend security + correctness pass") already shipped a prior round; the items below are still present in current code.
+
+### CRITICAL
+
+| # | Location | Bug | Fix |
+|---|----------|-----|-----|
+| C1 | `supabase/functions/square-webhook/index.ts:30` | HMAC signature compared with `===` — timing-attack vulnerable, attacker can forge Square webhooks and mark fake payments paid | Use `crypto.subtle.timingSafeEqual` (same pattern `whoop-callback` already uses) |
+| C2 | `supabase/functions/update-user-email/index.ts:58` | Updates `auth.users.email` only; `public.users.email` stays stale, breaking next sign-in once rows diverge | Update both in the same handler |
+
+### HIGH
+
+| # | Location | Bug |
+|---|----------|-----|
+| H1 | `update-user-email/index.ts:58` | Email change does not call `auth.admin.signOut(uid, 'all')`; old sessions remain valid after change |
+| H2 | `square-webhook/index.ts:99` | Square `payment.order_id` can be null; current query silently matches zero rows so the payment is never marked paid |
+| H3 | `create-user/index.ts:66` | Email not lowercased/trimmed before auth create — bypasses orphan-recovery dedup |
+| H4 | `signup/index.ts:46` | Same email-normalization gap on public signup; `Test@x` vs `test@x` register as two accounts |
+| H5 | `signup/index.ts:28` | No rate limit on the signup endpoint — email enumeration + mass account creation possible |
+| H6 | `whoop-callback/index.ts:75` | Legacy state parser splits on `:` but doesn't enforce exactly 2 parts; malformed states slip through |
+| H7 | `whoop-callback/index.ts:148` | Error response inlines raw WHOOP API body (`${text}`), leaking third-party payload |
+| H8 | `20260524_security_hardening.sql:64,70,76` | `ai_messages` SELECT/INSERT/DELETE policies use inline `EXISTS` into `ai_conversations` (which has RLS). Replace with `is_conversation_participant()` SECURITY DEFINER per the project's RLS rule |
+
+### MED
+
+| # | Location | Bug |
+|---|----------|-----|
+| M1 | `square-apply-discount/index.ts:164` | Metadata replaced wholesale — loses `idempotency_key` + `payment_link_id` from checkout. Merge with prior |
+| M2 | `square-backfill-resolve/index.ts:166` | Update path drops prior metadata on reassignment; audit trail lost |
+| M3 | `whoop/index.ts:131` | Suspected inverted comparison sign around `expiresAt - 60_000` boundary. Verify before patching — flag is plausible but easy to misread |
+| M4 | `send-email/index.ts:96` | No validation of `recipientEmail` shape/domain — function could be abused as a relay |
+| M5 | `20260605_game_changer_contacts.sql:25` | `team_game_changer_contacts` SELECT = `USING (true)`. Parent phone/email visible to every authenticated user, not just teammates. Scope to team membership |
+| M6 | `20260606_facility_fine_signatures.sql:20-38` | No UPDATE policy. Re-collecting a signature collides with `UNIQUE(user_id, document_id)`. Add UPDATE or move to a soft-revoke pattern |
+
+### LOW
+
+| # | Location | Bug |
+|---|----------|-----|
+| L1 | Square handlers (general) | Same metadata-merge omission pattern elsewhere — sweep when M1/M2 are fixed |
+| L2 | `whoop/index.ts:293` | `handleSync(userId, targetId)` first param unused — misleading signature |
+| L3 | `whoop-callback/index.ts:155` | `refresh_token` is nullable but no guard when access token later expires |
+| L4 | `whoop/index.ts:276` | `handleDisconnect` doesn't revoke at WHOOP — token valid until original expiry |
+| L5 | `20260603_school_directory.sql:18-36` | Policies missing explicit `TO authenticated` |
+| L6 | `20260616_rls_to_authenticated.sql:46-47` | `schools_delete` silently narrowed from admin+coach to admin-only. Confirm intent |
+| L7 | `20260605_harden_signatures_storage_policies.sql:19-82` | Storage policies use inline `EXISTS` on `users` instead of SECURITY DEFINER. Safe today but violates project convention |
+
+### Suggested fix order
+
+1. C1, C2 — both 1-line fixes, high blast radius
+2. H1, H2 — payment correctness + session invalidation (same PR as C2)
+3. H3, H4, H5 — signup hardening, single PR
+4. H6, H7 — Whoop callback hardening, single PR
+5. H8 — RLS recursion fix in its own migration
+6. MED batch as time allows; LOW sweep after
+
+## Client Audit — 2026-06-20
+
+Round-2 sweep across `src/*.js` (53 files, ~36k LOC) by 4 parallel reviewers: role enforcement, XSS / input safety, PII / secret exposure, data integrity / races.
+
+### CRITICAL
+
+| # | Location | Bug | Fix |
+|---|----------|-----|-----|
+| CC1 | `src/App.js:810` | `<AdminSettings>` rendered with `userRole` prop but the component never gates on it — any authenticated user who triggers `setCurrentView('settings')` (or sets `localStorage.nbp_current_view='settings'`) loads the admin shell | Gate at the call site AND inside `AdminSettings` |
+| CC2 | `src/KnowledgeBase.js:333` | `<iframe src={article.video_url}>` renders DB-stored URL directly — anyone able to edit a knowledge article can plant `javascript:` / `data:text/html` for stored XSS against viewers | Validate URL scheme + host (https + YouTube/Vimeo allowlist) before render |
+
+### HIGH
+
+| # | Location | Bug |
+|---|----------|-----|
+| CH1 | `src/Profile.js:5248` | File upload path concatenates raw `draft.file.name` — attacker can name a file `../../other.pdf`. Supabase Storage likely blocks it server-side but the client shouldn't rely on that | Strip path with regex / `basename` before composing the storage key |
+| CH2 | `src/Profile.js:259, 269, 277` | Three `useEffect` data fetches with no `cancelled` flag. Stale-promise writes after dependency changes — trainer/subscription/coach list state can flip back to the prior user's data |
+| CH3 | `src/StatusSelect.js:47` | Same `useEffect.then()` race on custom-status fetch when `category` changes mid-flight |
+
+### MED
+
+| # | Location | Bug |
+|---|----------|-----|
+| CM1 | `src/MyTeam.js:187` | Filters with `.contains('team_ids', [teamId])` only — legacy rows with `team_id` set and `team_ids = null` become invisible. Use `.or('team_id.eq.X,team_ids.cs.{X}')` |
+| CM2 | `src/AdminSettings.js:3245` | `mailto:` with full BCC list exposes every unsigned user's email in browser history + referrer. Switch to the `send-email` edge function |
+| CM3 | `src/WorkAdminPayroll.js:231` | Unsanitized `file.name` stored in DB and reused for downloads |
+| CM4 | `src/WorkAdminDocs.js:80` | Same unsanitized filename pattern |
+
+### LOW
+
+| # | Location | Bug |
+|---|----------|-----|
+| CL1 | `src/Schedule.js:3823–3865` | Debug `console.log` block dumps auth user object, role, DB error objects (with `.details`, `.hint`, `.code`) to the browser console. Strip |
+| CL2 | `src/App.js:244, 368, 587` | `alert('Error: ' + error.message)` pattern — Supabase errors can include column names + RLS policy hints. Same anti-pattern repeats across most CRUD components — single shared `formatUserError()` helper would handle it |
+| CL3 | Repo-wide | Several `useEffect` async fetches without abort flags. Lower-stakes than CH2 but worth a cleanup sweep |
+
+### Suggested fix order
+
+1. CC1 first — trivially exploitable. Gate `AdminSettings` server-side via the RLS already enforcing the underlying tables AND add a client-side `userRole !== 'admin'` guard so the shell never paints
+2. CC2 — URL allowlist on `KnowledgeBase` iframe
+3. CH1 + CH2 + CH3 — same PR, all small
+4. CM1 — verify the data still in legacy `team_id`-only form before deciding (may already be backfilled)
+5. CM2 — mailto rewrite
+6. CM3 / CM4 / CL1 in a single hygiene PR
+7. CL2 — shared error helper
+
+### Not audited
+
+- DB functions / triggers defined directly in Supabase dashboard (not in migration files)
+- Storage bucket lifecycle configs
+- Vercel env vars / secret config
+- Realtime channel subscriptions for auth-bypass tricks (separate sweep would be needed)
