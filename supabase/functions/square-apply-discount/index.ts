@@ -120,7 +120,7 @@ Deno.serve(async (req) => {
     // previously-captured state.
     const { data: priorRow } = await service
       .from("store_purchases")
-      .select("applied_discount_id, discounted_price_cents")
+      .select("applied_discount_id, discounted_price_cents, metadata")
       .eq("id", purchase.id)
       .single();
 
@@ -157,11 +157,16 @@ Deno.serve(async (req) => {
       return jsonRes(cors, 502, { error: `Square rejected the change: ${(squareErr as Error).message}. DB reverted.` });
     }
 
-    // Best-effort audit log into metadata (no separate table yet).
+    // M1: merge into prior metadata so we don't blow away the idempotency_key,
+    // payment_link_id, and other keys checkout stored on this row.
+    const priorMetadata = (priorRow?.metadata && typeof priorRow.metadata === "object")
+      ? priorRow.metadata as Record<string, unknown>
+      : {};
     await service
       .from("store_purchases")
       .update({
         metadata: {
+          ...priorMetadata,
           last_discount_change: {
             at: new Date().toISOString(),
             by: user.id,

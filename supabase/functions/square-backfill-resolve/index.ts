@@ -156,13 +156,19 @@ Deno.serve(async (req) => {
     // Has store_purchases row already?
     const { data: existing } = await service
       .from("store_purchases")
-      .select("id")
+      .select("id, metadata")
       .eq("square_subscription_id", subscription_id)
       .maybeSingle();
 
     const status = mapStatus(sub.status);
 
     if (existing) {
+      // M2: preserve prior metadata when re-resolving — losing it on the
+      // update path wiped the original checkout's idempotency_key and any
+      // prior backfill audit trail.
+      const priorMetadata = (existing.metadata && typeof existing.metadata === "object")
+        ? existing.metadata as Record<string, unknown>
+        : {};
       await service.from("store_purchases")
         .update({
           user_id,
@@ -172,6 +178,11 @@ Deno.serve(async (req) => {
           amount_cents: product.price_cents,
           status,
           square_customer_id: sub.customer_id,
+          metadata: {
+            ...priorMetadata,
+            resolved_from_backfill: true,
+            last_resolve: { at: new Date().toISOString(), run_id, plan_variation_id: planVarId, plan_id: planId },
+          },
         })
         .eq("id", existing.id);
     } else {
