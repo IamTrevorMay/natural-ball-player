@@ -53,11 +53,14 @@ export function useMainPortalCounts(userId, userRole) {
 
   useEffect(() => {
     refresh();
-    const ch1 = supabase.channel('main-notif-messages').on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, refresh).subscribe();
-    const ch2 = supabase.channel('main-notif-slots').on('postgres_changes', { event: '*', schema: 'public', table: 'slot_reservations' }, refresh).subscribe();
-    const ch3 = supabase.channel('main-notif-reads').on('postgres_changes', { event: '*', schema: 'public', table: 'message_reads' }, refresh).subscribe();
+    // Scope channel names by userId so two simultaneous mounts of the same
+    // hook (portal swap mid-flight, multi-tab) don't collide on a shared
+    // channel and trigger double-processing.
+    const ch1 = supabase.channel(`main-notif-messages-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, refresh).subscribe();
+    const ch2 = supabase.channel(`main-notif-slots-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'slot_reservations' }, refresh).subscribe();
+    const ch3 = supabase.channel(`main-notif-reads-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'message_reads' }, refresh).subscribe();
     return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); };
-  }, [refresh]);
+  }, [refresh, userId]);
 
   return { unreadMessages, pendingSlots, refresh };
 }
@@ -126,12 +129,12 @@ export function useWorkPortalCounts(userId, userRole) {
 
   useEffect(() => {
     refresh();
-    const ch1 = supabase.channel('work-notif-messages').on('postgres_changes', { event: '*', schema: 'public', table: 'work_messages' }, refresh).subscribe();
-    const ch2 = supabase.channel('work-notif-reads').on('postgres_changes', { event: '*', schema: 'public', table: 'work_message_reads' }, refresh).subscribe();
-    const ch3 = supabase.channel('work-notif-hours').on('postgres_changes', { event: '*', schema: 'public', table: 'staff_hour_entries' }, refresh).subscribe();
-    const ch4 = supabase.channel('work-notif-time-off').on('postgres_changes', { event: '*', schema: 'public', table: 'staff_time_off_requests' }, refresh).subscribe();
+    const ch1 = supabase.channel(`work-notif-messages-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'work_messages' }, refresh).subscribe();
+    const ch2 = supabase.channel(`work-notif-reads-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'work_message_reads' }, refresh).subscribe();
+    const ch3 = supabase.channel(`work-notif-hours-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'staff_hour_entries' }, refresh).subscribe();
+    const ch4 = supabase.channel(`work-notif-time-off-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'staff_time_off_requests' }, refresh).subscribe();
     return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); };
-  }, [refresh]);
+  }, [refresh, userId]);
 
   return { unreadMessages, pendingHours, pendingTimeOff, refresh };
 }
