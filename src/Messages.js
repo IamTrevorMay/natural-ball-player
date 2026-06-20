@@ -20,24 +20,34 @@ export default function Messages({ userId, userRole }) {
     fetchTeams();
     fetchUsers();
 
-    // Subscribe to real-time message updates
+    // Subscribe to real-time message updates. Debounce the refetch so a burst
+    // of inserts (e.g. someone bulk-sending) coalesces into one round trip
+    // instead of N. Use a per-userId channel name so two simultaneous mounts
+    // (portal switch) don't collide on the same subscription.
+    let refetchTimer = null;
+    const debouncedRefetch = () => {
+      if (refetchTimer) return;
+      refetchTimer = setTimeout(() => {
+        refetchTimer = null;
+        fetchConversations();
+        if (selectedConversation) {
+          fetchConversationDetail(selectedConversation.id, 'message');
+        }
+        if (selectedChat) {
+          fetchConversationDetail(selectedChat.id, 'chat');
+        }
+      }, 200);
+    };
     const subscription = supabase
-      .channel('messages')
+      .channel(`messages-${userId}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
-        () => {
-          fetchConversations();
-          if (selectedConversation) {
-            fetchConversationDetail(selectedConversation.id, 'message');
-          }
-          if (selectedChat) {
-            fetchConversationDetail(selectedChat.id, 'chat');
-          }
-        }
+        debouncedRefetch
       )
       .subscribe();
 
     return () => {
+      if (refetchTimer) clearTimeout(refetchTimer);
       subscription.unsubscribe();
     };
   }, [userId]);
