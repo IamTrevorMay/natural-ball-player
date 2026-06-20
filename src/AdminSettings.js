@@ -958,13 +958,33 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
     setLoading(true);
     setError('');
     try {
+      const isIntern = formData.role === 'intern';
+      const dbRole = isIntern ? 'coach' : formData.role;
+
+      // Guard: don't allow the last admin in the org to be demoted, or the
+      // current admin to demote themselves out of admin (lockout).
+      if (user.role === 'admin' && dbRole !== 'admin') {
+        if (user.id === userId) {
+          throw new Error('You cannot demote yourself out of admin. Ask another admin to do it.');
+        }
+        const { count } = await supabase
+          .from('users')
+          .select('id', { count: 'exact', head: true })
+          .eq('role', 'admin');
+        if ((count ?? 0) <= 1) {
+          throw new Error('Cannot demote the last admin — promote another user first.');
+        }
+      }
+
+      // Guard: secondary_role can't equal primary role.
+      if (formData.secondary_role && formData.secondary_role === dbRole) {
+        throw new Error('Secondary role must differ from the primary role.');
+      }
+
       // 0. Sync auth email if changed
       if (formData.email !== user.email) {
         await updateAuthUserEmail(user.id, formData.email);
       }
-
-      const isIntern = formData.role === 'intern';
-      const dbRole = isIntern ? 'coach' : formData.role;
 
       // 1. Update users table
       const { error: userError } = await supabase
@@ -1036,6 +1056,18 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   const handleDeleteUser = async () => {
     setDeleting(true);
     try {
+      if (user.id === userId) {
+        throw new Error('You cannot delete your own account.');
+      }
+      if (user.role === 'admin') {
+        const { count } = await supabase
+          .from('users')
+          .select('id', { count: 'exact', head: true })
+          .eq('role', 'admin');
+        if ((count ?? 0) <= 1) {
+          throw new Error('Cannot delete the last admin — promote another user first.');
+        }
+      }
       await deleteAuthUser(user.id); // Edge function deletes public.users row + auth user
       onSuccess();
     } catch (err) {
