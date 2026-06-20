@@ -201,7 +201,7 @@ export default function FacilityFinePage({ userId, onSigned }) {
             </div>
             {existing.signature_url && (
               <div className="mt-3 max-w-xs">
-                <SignedSignatureImage bucket="signatures" path={existing.signature_url} />
+                <SignedSignatureImage signatureValue={existing.signature_url} />
               </div>
             )}
           </div>
