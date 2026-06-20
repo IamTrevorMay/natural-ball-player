@@ -80,10 +80,10 @@ function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
 }
 
 export default function Schedule({ userId, userRole }) {
-  const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'team');
+  const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'facility');
   const [myScheduleEvents, setMyScheduleEvents] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState('month');
+  const [viewMode, setViewMode] = useState(userRole === 'player' ? 'month' : 'lanes');
   const [teams, setTeams] = useState([]);
   const [players, setPlayers] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
@@ -109,7 +109,7 @@ export default function Schedule({ userId, userRole }) {
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
   const [laneDate, setLaneDate] = useState(fmtLocalDate(new Date()));
-  const [coachesCollapsed, setCoachesCollapsed] = useState(false);
+  const [coachesDrawerOpen, setCoachesDrawerOpen] = useState(false);
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
   const [staffScheduleEvents, setStaffScheduleEvents] = useState([]);
   const [staffAssignments, setStaffAssignments] = useState([]);
@@ -996,34 +996,44 @@ export default function Schedule({ userId, userRole }) {
 
       {/* Facility View */}
       {view === 'facility' && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="flex">
-            {/* Coach Sidebar */}
-            <div className={`border-r border-gray-200 bg-gray-50 flex-shrink-0 transition-all ${coachesCollapsed ? 'w-12' : 'w-72'}`}>
-              <button
-                onClick={() => setCoachesCollapsed(!coachesCollapsed)}
-                className="w-full p-4 border-b border-gray-200 flex items-center justify-between hover:bg-gray-100 transition"
-                title={coachesCollapsed ? 'Expand coaches' : 'Collapse coaches'}
+        <div className="bg-white rounded-lg shadow relative">
+          {/* Coach Drawer (pop-out) */}
+          {coachesDrawerOpen && (
+            <div className="fixed inset-0 z-40" onClick={() => setCoachesDrawerOpen(false)}>
+              <div className="absolute inset-0 bg-black bg-opacity-40" />
+              <aside
+                className="absolute top-0 left-0 h-full w-80 max-w-[90vw] bg-white shadow-xl flex flex-col"
+                onClick={(e) => e.stopPropagation()}
               >
-                {!coachesCollapsed ? (
-                  <div className="text-left">
+                <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                  <div>
                     <h3 className="font-semibold text-gray-900 text-sm">Coaches</h3>
                     <p className="text-xs text-gray-500 mt-1">Select a coach to view training slots</p>
                   </div>
-                ) : <Users size={18} className="text-gray-600 mx-auto" />}
-                {!coachesCollapsed && <ChevronLeft size={18} className="text-gray-500 flex-shrink-0" />}
-              </button>
-              {!coachesCollapsed && (
-                <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 400px)' }}>
+                  <button
+                    onClick={() => setCoachesDrawerOpen(false)}
+                    className="p-1 text-gray-500 hover:text-gray-900"
+                    aria-label="Close coaches drawer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
                   {selectedCoach && (
-                    <button onClick={() => setSelectedCoach(null)} className="w-full px-4 py-3 text-left text-sm text-teal-600 hover:bg-teal-50 border-b border-gray-200 font-medium">
+                    <button
+                      onClick={() => { setSelectedCoach(null); setCoachesDrawerOpen(false); }}
+                      className="w-full px-4 py-3 text-left text-sm text-teal-600 hover:bg-teal-50 border-b border-gray-200 font-medium"
+                    >
                       &larr; Back to Facility Events
                     </button>
                   )}
                   {coaches.map(coach => (
                     <button
                       key={coach.id}
-                      onClick={() => setSelectedCoach(selectedCoach?.id === coach.id ? null : coach)}
+                      onClick={() => {
+                        setSelectedCoach(selectedCoach?.id === coach.id ? null : coach);
+                        setCoachesDrawerOpen(false);
+                      }}
                       className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition border-b border-gray-100 ${selectedCoach?.id === coach.id ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
                     >
                       <div className="flex items-center space-x-3">
@@ -1036,13 +1046,23 @@ export default function Schedule({ userId, userRole }) {
                     </button>
                   ))}
                 </div>
-              )}
+              </aside>
             </div>
+          )}
+
+          <div className="flex">
             {/* Main Calendar Area */}
             <div className="flex-1 min-w-0">
               <div className="border-b border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-4">
+                    <button
+                      onClick={() => setCoachesDrawerOpen(true)}
+                      className="flex items-center space-x-1 bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium transition"
+                    >
+                      <Users size={16} />
+                      <span>Coaches</span>
+                    </button>
                     <h3 className="text-lg font-semibold text-gray-900">
                       {selectedCoach ? `${selectedCoach.full_name}'s Training Slots` : 'Facility Calendar'}
                     </h3>

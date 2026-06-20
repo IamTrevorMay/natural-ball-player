@@ -30,7 +30,7 @@ export default function App() {
   const [secondaryRole, setSecondaryRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [currentView, setCurrentView] = useState(() => {
-    try { return localStorage.getItem('nbp_current_view') || 'dashboard'; } catch { return 'dashboard'; }
+    try { return localStorage.getItem('nbp_current_view') || ''; } catch { return ''; }
   });
   const [workPortalView, setWorkPortalView] = useState(() => {
     try { return localStorage.getItem('nbp_work_view') || 'work-home'; } catch { return 'work-home'; }
@@ -55,8 +55,14 @@ export default function App() {
   }, [currentPortal]);
 
   useEffect(() => {
+    if (!currentView) return;
     try { localStorage.setItem('nbp_current_view', currentView); } catch {}
   }, [currentView]);
+
+  useEffect(() => {
+    if (currentView || !userRole) return;
+    setCurrentView(userRole === 'player' ? 'dashboard' : 'schedule');
+  }, [userRole, currentView]);
 
   useEffect(() => {
     try { localStorage.setItem('nbp_work_view', workPortalView); } catch {}
