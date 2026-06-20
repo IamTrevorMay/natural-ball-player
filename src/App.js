@@ -170,7 +170,7 @@ export default function App() {
               checkContractStatus(session.user.id);
               checkLoiStatus(session.user.id);
             }
-          });
+          }).catch((e) => console.error('auth fallback getSession failed:', e));
         }
         return false;
       });

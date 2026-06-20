@@ -49,7 +49,7 @@ export function useStatusOptions(category) {
     let cancelled = false;
     fetchCustomOptions(category).then((opts) => {
       if (!cancelled) setCustomOptions(opts);
-    });
+    }).catch((e) => console.error('custom status fetch failed:', e));
     return () => { cancelled = true; };
   }, [category]);
 

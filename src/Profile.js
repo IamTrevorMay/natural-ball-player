@@ -260,7 +260,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchCommunicationLogs();
     supabase.from('users').select('id, full_name').in('role', ['coach', 'admin']).order('full_name').then(({ data }) => {
       if (!cancelled) setAllCoaches(data || []);
-    });
+    }).catch((e) => console.error('coach list fetch failed:', e));
     return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
@@ -275,7 +275,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     if (trainerId) {
       supabase.from('users').select('full_name').eq('id', trainerId).single().then(({ data }) => {
         if (!cancelled && data) setTrainerName(data.full_name);
-      });
+      }).catch((e) => console.error('trainer name fetch failed:', e));
     } else {
       setTrainerName(null);
     }
@@ -291,7 +291,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         .maybeSingle()
         .then(({ data }) => {
           if (!cancelled) setSubscriptionRow(data || null);
-        });
+        })
+        .catch((e) => console.error('subscription fetch failed:', e));
     }
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
