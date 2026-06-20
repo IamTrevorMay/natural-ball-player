@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
@@ -18,6 +18,7 @@ import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { formatUserError } from './errorMessage';
+import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
 import './App.css';
@@ -64,6 +65,33 @@ export default function App() {
     if (currentView || !userRole) return;
     setCurrentView(userRole === 'player' ? 'dashboard' : 'schedule');
   }, [userRole, currentView]);
+
+  // V2 research experiment: anonymous usage tracking, gated on
+  // REACT_APP_USAGE_TRACKING=1. No PII collected — see src/usage.js.
+  useEffect(() => {
+    if (!userRole) return;
+    initUsage({ role: userRole, secondary_role: secondaryRole, portal: currentPortal });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole]);
+
+  useEffect(() => {
+    if (!userRole) return;
+    setUsageContext({ secondary_role: secondaryRole, portal: currentPortal });
+  }, [userRole, secondaryRole, currentPortal]);
+
+  const prevTrackedViewRef = useRef(null);
+  useEffect(() => {
+    if (!userRole) return;
+    const activeView = currentPortal === 'work' ? workPortalView : currentView;
+    if (!activeView) return;
+    if (prevTrackedViewRef.current && prevTrackedViewRef.current !== activeView) {
+      trackViewExit(prevTrackedViewRef.current);
+    }
+    if (prevTrackedViewRef.current !== activeView) {
+      trackView(activeView, { portal: currentPortal });
+      prevTrackedViewRef.current = activeView;
+    }
+  }, [currentView, workPortalView, currentPortal, userRole]);
 
   useEffect(() => {
     try { localStorage.setItem('nbp_work_view', workPortalView); } catch {}
