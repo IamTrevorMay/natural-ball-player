@@ -201,6 +201,8 @@ export default function ContractPage({ userId, userRole, onSigned }) {
     if (!parentSigFirst.trim() || !parentSigLast.trim()) return alert('Please enter the parent/guardian\'s printed name for the signature.');
 
     setSubmitting(true);
+    // Track uploaded paths so we can clean up on any downstream failure.
+    const uploadedPaths = [];
     try {
       const timestamp = Date.now();
 
@@ -211,6 +213,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(playerPath, playerBlob, { contentType: 'image/png', upsert: true });
       if (pErr) throw pErr;
+      uploadedPaths.push(playerPath);
 
       // Upload parent signature
       const parentBlob = await canvasToBlob(parentCanvasRef);
@@ -219,6 +222,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(parentPath, parentBlob, { contentType: 'image/png', upsert: true });
       if (gErr) throw gErr;
+      uploadedPaths.push(parentPath);
 
       const { error: insertErr } = await supabase
         .from('player_contracts')
@@ -269,6 +273,11 @@ export default function ContractPage({ userId, userRole, onSigned }) {
       alert('Contract signed successfully!');
     } catch (error) {
       console.error('Error submitting contract:', error);
+      // Roll back any orphaned signature uploads so they don't sit in storage
+      // unreferenced after a downstream failure.
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from('signatures').remove(uploadedPaths).catch(() => {});
+      }
       alert('Error submitting contract: ' + formatUserError(error));
     } finally {
       setSubmitting(false);

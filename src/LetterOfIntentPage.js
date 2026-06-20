@@ -137,6 +137,7 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
     if (!parentSigFirst.trim() || !parentSigLast.trim()) return alert('Please enter the parent/guardian\'s printed name.');
 
     setSubmitting(true);
+    const uploadedPaths = [];
     try {
       const timestamp = Date.now();
 
@@ -146,6 +147,7 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(playerPath, playerBlob, { contentType: 'image/png', upsert: true });
       if (pErr) throw pErr;
+      uploadedPaths.push(playerPath);
 
       const parentBlob = await canvasToBlob(parentCanvasRef);
       const parentPath = `${userId}/loi-parent-${timestamp}.png`;
@@ -153,6 +155,7 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(parentPath, parentBlob, { contentType: 'image/png', upsert: true });
       if (gErr) throw gErr;
+      uploadedPaths.push(parentPath);
 
       const { error: insertErr } = await supabase
         .from('player_letters_of_intent')
@@ -182,6 +185,9 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
       alert('Letter of Intent signed successfully!');
     } catch (error) {
       console.error('Error submitting LOI:', error);
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from('signatures').remove(uploadedPaths).catch(() => {});
+      }
       alert('Error submitting Letter of Intent: ' + formatUserError(error));
     } finally {
       setSubmitting(false);

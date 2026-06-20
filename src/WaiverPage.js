@@ -191,6 +191,7 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
     if (isMinor && !guardianHasSignature) return alert('Please provide the guardian signature.');
 
     setSubmitting(true);
+    const uploadedPaths = [];
     try {
       const timestamp = Date.now();
 
@@ -201,6 +202,7 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
         .from('signatures')
         .upload(participantPath, participantBlob, { contentType: 'image/png', upsert: true });
       if (pUploadErr) throw pUploadErr;
+      uploadedPaths.push(participantPath);
 
       let guardianPathValue = null;
       if (isMinor) {
@@ -210,6 +212,7 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
           .from('signatures')
           .upload(guardianPath, guardianBlob, { contentType: 'image/png', upsert: true });
         if (gUploadErr) throw gUploadErr;
+        uploadedPaths.push(guardianPath);
         guardianPathValue = guardianPath;
       }
 
@@ -233,6 +236,9 @@ export default function WaiverPage({ userId, userRole, onSigned }) {
       alert('Waiver signed successfully!');
     } catch (error) {
       console.error('Error submitting waiver:', error);
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from('signatures').remove(uploadedPaths).catch(() => {});
+      }
       alert('Error submitting waiver: ' + formatUserError(error));
     } finally {
       setSubmitting(false);
