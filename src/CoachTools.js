@@ -672,11 +672,13 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
     const profileId = player?.player_profiles?.[0]?.id;
     if (!profileId) return;
     const { error } = await supabase.from('player_profiles').update({ [field]: value }).eq('id', profileId);
-    if (!error) {
-      setRosterPlayers(prev => prev.map(p =>
-        p.id === playerId ? { ...p, player_profiles: [{ ...p.player_profiles[0], [field]: value }] } : p
-      ));
+    if (error) {
+      alert('Update failed: ' + formatUserError(error));
+      return;
     }
+    setRosterPlayers(prev => prev.map(p =>
+      p.id === playerId ? { ...p, player_profiles: [{ ...p.player_profiles[0], [field]: value }] } : p
+    ));
   };
 
   const handleRemoveFromTeam = async (playerId, teamId) => {
