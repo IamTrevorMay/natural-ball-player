@@ -46,7 +46,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { user_id, new_email } = await req.json();
+    const { user_id, new_email: rawEmail } = await req.json();
+    const new_email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
     if (!user_id || !new_email) {
       return new Response(
         JSON.stringify({ error: "Missing user_id or new_email" }),
@@ -65,6 +66,31 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: updateError.message }),
         { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
       );
+    }
+
+    // C2: keep public.users.email in lockstep with auth.users.email — otherwise
+    // RLS checks that join on users.email and login flows that look up the row
+    // by email diverge from the auth identity on next sign-in.
+    const { error: profileError } = await serviceClient
+      .from("users")
+      .update({ email: new_email })
+      .eq("id", user_id);
+
+    if (profileError) {
+      return new Response(
+        JSON.stringify({ error: `Auth email updated but profile sync failed: ${profileError.message}` }),
+        { status: 500, headers: { ...cors, "Content-Type": "application/json" } }
+      );
+    }
+
+    // H1: revoke any active session for the user so the old credential can't
+    // keep transacting after an admin email rotation (e.g. takeover recovery).
+    // Best-effort — don't fail the request if revoke errors.
+    try {
+      // @ts-ignore: signOut accepts an optional scope string in supabase-js v2
+      await serviceClient.auth.admin.signOut(user_id, "global");
+    } catch (_) {
+      // ignore
     }
 
     return new Response(

@@ -11,6 +11,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const encoder = new TextEncoder();
 
+function timingSafeEqual(a: string, b: string): boolean {
+  // Length difference is not a secret — return false fast, but still walk a
+  // fixed-length comparison on equal-length inputs to avoid leaking the prefix.
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 async function verifySignature(
   body: string,
   signatureHeader: string | null,
@@ -27,7 +38,7 @@ async function verifySignature(
   );
   const sig = await crypto.subtle.sign("HMAC", keyData, encoder.encode(notificationUrl + body));
   const b64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-  return b64 === signatureHeader;
+  return timingSafeEqual(b64, signatureHeader);
 }
 
 Deno.serve(async (req) => {
@@ -93,10 +104,15 @@ Deno.serve(async (req) => {
       };
       if (purchaseStatus === "paid") patch.paid_at = now;
 
+      // Square does not guarantee order_id on every payment (manual / POS
+      // ad-hoc payments arrive with order_id null). Match the row by
+      // payment_id when order_id is missing so we don't silently no-op.
+      let q = orderId
+        ? service.from("store_purchases").update(patch).eq("square_order_id", orderId)
+        : service.from("store_purchases").update(patch).eq("square_payment_id", paymentId);
       // Out-of-order safety: never overwrite a terminal state with a softer
       // one. If the row is already paid, only allow refunded/failed updates.
-      // If the row is paid_at, never flip it back to pending.
-      let q = service.from("store_purchases").update(patch).eq("square_order_id", orderId);
+      // If paid_at is set, never flip it back to pending.
       if (purchaseStatus === "pending") {
         q = q.is("paid_at", null);
       } else if (purchaseStatus === "failed") {
