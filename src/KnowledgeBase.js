@@ -2,6 +2,41 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft } from 'lucide-react';
 
+const EMBED_HOST_ALLOWLIST = new Set([
+  'www.youtube.com',
+  'youtube.com',
+  'www.youtube-nocookie.com',
+  'youtube-nocookie.com',
+  'player.vimeo.com',
+  'vimeo.com',
+  'www.loom.com',
+  'loom.com',
+]);
+
+function toSafeEmbedUrl(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const u = new URL(raw.trim());
+    if (u.protocol !== 'https:') return null;
+    if (!EMBED_HOST_ALLOWLIST.has(u.host.toLowerCase())) return null;
+    // Coerce common share URLs into their embed equivalents
+    if (u.host.endsWith('youtube.com') && u.pathname === '/watch') {
+      const id = u.searchParams.get('v');
+      if (!id || !/^[\w-]{6,20}$/.test(id)) return null;
+      return `https://www.youtube-nocookie.com/embed/${id}`;
+    }
+    if (u.host === 'youtu.be') return null;
+    if (u.host.endsWith('vimeo.com') && u.host !== 'player.vimeo.com') {
+      const id = u.pathname.replace(/^\/+/, '').split('/')[0];
+      if (!/^\d{5,12}$/.test(id)) return null;
+      return `https://player.vimeo.com/video/${id}`;
+    }
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 export default function KnowledgeBase({ userId, userRole }) {
   const [activeView, setActiveView] = useState('browse'); // browse, article, ai-assistant
   const [categories, setCategories] = useState([]);
@@ -325,20 +360,41 @@ function ArticleView({ article, onBack }) {
           <div className="whitespace-pre-wrap">{article.content}</div>
         </div>
 
-        {article.video_url && (
-          <div className="mb-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-3">Video Tutorial</h3>
-            <div className="aspect-w-16 aspect-h-9 bg-gray-100 rounded-lg overflow-hidden">
-              <iframe
-                src={article.video_url}
-                title={article.title}
-                className="w-full h-96"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
+        {(() => {
+          const safeEmbed = toSafeEmbedUrl(article.video_url);
+          if (!safeEmbed) {
+            if (article.video_url) {
+              return (
+                <div className="mb-8 text-sm text-gray-500">
+                  Video link is not from a supported host — open it manually:{' '}
+                  <a
+                    href={article.video_url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-blue-600 underline break-all"
+                  >
+                    {article.video_url}
+                  </a>
+                </div>
+              );
+            }
+            return null;
+          }
+          return (
+            <div className="mb-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-3">Video Tutorial</h3>
+              <div className="aspect-w-16 aspect-h-9 bg-gray-100 rounded-lg overflow-hidden">
+                <iframe
+                  src={safeEmbed}
+                  title={article.title}
+                  className="w-full h-96"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {article.tags && article.tags.length > 0 && (
           <div className="pt-6 border-t border-gray-200">
