@@ -343,13 +343,17 @@ function Thread({ kind, id, userId, userRole, channel, dmOther, onBack, onSent }
   const fetchMessages = useCallback(async () => {
     setLoading(true);
     const col = kind === 'channel' ? 'channel_id' : 'dm_thread_id';
+    // Cap at the most recent 200 — older history can be paged in later
+    // (issue follow-up). Fetch DESC then reverse so the order/limit work
+    // together.
     const { data, error } = await supabase
       .from('work_messages')
       .select('id, body, attachment_path, attachment_name, attachment_size, attachment_type, sender_id, created_at, edited_at, sender:sender_id(full_name, avatar_url)')
       .eq(col, id)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .limit(200);
     if (error) console.error(error);
-    else setMessages(data || []);
+    else setMessages((data || []).reverse());
     setLoading(false);
   }, [kind, id]);
 

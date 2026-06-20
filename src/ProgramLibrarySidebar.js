@@ -84,10 +84,10 @@ export default function ProgramLibrarySidebar({ collapsed, onToggle }) {
     (async () => {
       setLoading(true);
       const [tplRes, progRes, mpRes, mealRes] = await Promise.all([
-        supabase.from('workout_templates').select('id, name, folder, program, notes, created_at').order('created_at'),
-        supabase.from('training_programs').select('id, name, description, duration_weeks').order('created_at'), // build order, not alphabetical (#158)
-        supabase.from('meal_plans').select('id, name, description').order('name'),
-        supabase.from('meals').select('id, name, meal_type, calories').order('name'),
+        supabase.from('workout_templates').select('id, name, folder, program, notes, created_at').order('created_at').limit(2000),
+        supabase.from('training_programs').select('id, name, description, duration_weeks').order('created_at').limit(500),
+        supabase.from('meal_plans').select('id, name, description').order('name').limit(200),
+        supabase.from('meals').select('id, name, meal_type, calories').order('name').limit(500),
       ]);
       if (cancelled) return;
       setTemplates(tplRes.data || []);
