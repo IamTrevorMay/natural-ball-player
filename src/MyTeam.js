@@ -180,11 +180,12 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
         setRoster(playerRows);
       }
 
-      // Get upcoming events
+      // CM1: also include legacy rows that only set the scalar team_id and
+      // never populated the team_ids array.
       const { data: events } = await supabase
         .from('schedule_events')
         .select('*')
-        .contains('team_ids', [teamId])
+        .or(`team_id.eq.${teamId},team_ids.cs.{${teamId}}`)
         .gte('event_date', fmtLocalDate(new Date()))
         .order('event_date', { ascending: true })
         .limit(5);
