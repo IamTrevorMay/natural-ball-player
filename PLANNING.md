@@ -253,3 +253,147 @@ Round-3 sweep of dashboard-defined DB objects, Supabase Storage configs, Realtim
 - `pg_policies` for `storage.objects` (25 policies) for missing folder/auth checks
 - `pg_publication_tables` for `supabase_realtime` vs client `supabase.channel(...).on('postgres_changes', ...)` calls in `src/`
 - Vercel project metadata via `get_project` (env vars not enumerable via current MCP)
+
+## Version 2 Reorganization
+
+Spec drawn from a deep IA/UX analysis (4 parallel readers: nav map, modal/interaction catalog, density audit, cross-portal experience). The goal: shrink mental model, unify visual system, and make state shareable. Today: 53 files, ~36k LOC, dual portal, 4 roles, **18 Profile tabs, 38+ modals, 201 `alert()`s, 49 `window.confirm()`s, 0 routes**.
+
+### What works today (preserve)
+
+- Role-gated sidebar (predictable per-role surface)
+- Documents collapsible w/ red-dot for unsigned compliance
+- Cross-portal notification bell aggregation
+- Lanes view + drag/drop calendaring
+- AdminSettings tab consistency (search/filter/card pattern)
+
+### Six structural problems
+
+#### P1. No URL = no deep links, no shareable state
+- All routing is `currentView` state in `App.js`. `localStorage` is the persistence layer.
+- Can't share a profile, bookmark Schedule, browser-back is no-op, can't open two profiles in tabs, can't email "review this assessment".
+- **Fix:** Add React Router. Minimal route table: `/`, `/profile/:userId`, `/team/:teamId`, `/schedule/team`, `/schedule/facility`, `/schedule/my`, `/coach-tools/*`, `/admin/*`, `/work/*`. Map existing `currentView` to URLs. Cross-portal jump becomes a normal `<Link>`. ~2 days, highest leverage change in the codebase.
+
+#### P2. Profile.js — 18 tabs, 67 color tokens, ~5400 lines
+Merge the duplicates. Target: **18 → 8 tabs**.
+
+| Today | After |
+|---|---|
+| Athletes / Recruitment | **Recruitment** (athletes-on-teams already lives in MyTeam) |
+| Trackman / Hittrax / Practice Stats / Marek | **Hitting** (one tab; vendor as sub-filter; Practice Stats becomes a section) |
+| Assessment / Arm Care / PT | **Health** parent (Assessment, Arm Care, PT as sections) |
+| Documents / Codes | Codes pairs with the existing Store button → new **Billing** tab |
+| Notes / Goals | **Notes & Goals** |
+
+Final 8: Overview, Schedule, Hitting, Whoop, Health, Notes & Goals, Documents, Recruitment.
+
+Also:
+- Mobile tab overflow → `overflow-x-auto` is unfindable. Use a "More" dropdown for >5 tabs OR switch to a left-rail of section labels on wide screens.
+- Add sticky sub-nav for multi-screen tabs (General is 4 screens tall today).
+- Declare a 12-token palette in `tailwind.config.js`. Map existing 67 → 12. Action color = ONE blue. Danger = ONE red. Success = ONE green. Today blue/teal/indigo/purple/green all mean "primary."
+
+#### P3. Schedule.js — 7 layouts in one screen
+`view ∈ {team, player, my-schedule, facility}` × `viewMode ∈ {month, week, lanes}` × `selectedCoach ∈ {null, X}` = ~10 distinct rendered states under one component.
+
+**Fix:**
+- Split into 3 routes: `/schedule/team`, `/schedule/facility`, `/schedule/my`. Each owns its own `viewMode` toggle.
+- Move `view` tab into URL.
+- Coach drawer (recently added) is the right pattern — keep it on `/schedule/facility`, hide on others.
+
+#### P4. Modal nesting + 201 `alert()`s + 49 `confirm()`s
+- "Create program → add day → add exercise" stacks 3 modal layers.
+- Every save success is silent. Every error is a blocking browser `alert()`.
+
+**Fix:**
+- Add a toast library (Sonner or a ~30-line custom). Replace `alert()` for non-blocking feedback.
+- Replace `window.confirm()` with shared `<ConfirmDialog>` (extend `RecurrenceDecisionModal` pattern).
+- Convert deep modal flows to routed editors (`/coach-tools/programs/new`, `/coach-tools/programs/:id/days/:dayId`). Cleaner back-button story.
+
+#### P5. Cross-portal + role-switch gaps
+
+| Bug | Today's behavior |
+|---|---|
+| `manage-athletes` gate uses `userRole === 'admin'` not `effectiveRole` | Admin toggles "view as player" → lands on blank Manage Athletes |
+| `localStorage.nbp_current_view` not cleared on role toggle | Coach → player retains 'schedule', player default 'dashboard' ignored |
+| No work-portal → player-profile jump | Notifications can only jump to work views |
+| `effectiveRole` for UI, `userRole` for gates (mixed) | Inconsistent signals across components |
+| Scroll position lost on portal switch | Common workflow loses context |
+
+**Fix:**
+- On role toggle, reset `currentView` to the role's default and clear stored view.
+- One rule: gates use `effectiveRole`. Sweep `userRole ===` → `effectiveRole ===` for UI gating. Keep `userRole` only for irreversible actions where the actual permission matters.
+- One shared `<PlayerLink playerId>` that knows to swap portals when followed from Work.
+
+#### P6. No global search, no command palette
+850 players, hundreds of teams, dozens of templates. Finding anything = drilling. Add `⌘K`:
+- Players, teams, templates, recent events
+- Recent / pinned
+- Cross-portal jumps ("Open Hours Review")
+- Use `cmdk`; 1–2 days
+
+### 12 quick wins (under 30 min each)
+
+| # | Change | File |
+|---|---|---|
+| Q1 | Standardize primary action color (blue-600 only) | `tailwind.config.js` + sweep |
+| Q2 | One `<Button variant="primary\|danger\|ghost">` | new `src/ui/Button.js` |
+| Q3 | One `<Section title>` wrapper | new `src/ui/Section.js` |
+| Q4 | Replace status `<select>` with existing `<StatusBadgeSelect>` | `Profile.js` etc |
+| Q5 | One `<Skeleton>` / `<Spinner>` for every `'Loading...'` | sweep |
+| Q6 | Replace `alert(error...)` with `<Toast>` | sweep |
+| Q7 | Sticky "Today" jump on Month/Week views | `Schedule.js` |
+| Q8 | Trim Profile tabs 18 → 8 (per merge table above) | `Profile.js` |
+| Q9 | Replace `window.confirm` with `<ConfirmDialog>` | sweep |
+| Q10 | Shared `<EmptyState icon title cta>` | sweep |
+| Q11 | Drop in-modal sidebars in CoachTools nested modals; route them | `CoachTools.js` |
+| Q12 | Every modal closes on Escape + click-outside | sweep |
+
+### Mobile arc
+
+Today: Profile 40%, Schedule 20%, AdminSettings 60%, CoachTools 50% responsive. The reverted shell on `mobile-v1` branch is the right pattern. Once P1 lands, the mobile shell mounts on any route via viewport detection — same as `mobile-v1` did, but cleaner with URLs.
+
+### Phased roadmap
+
+| Phase | Scope | Effort |
+|---|---|---|
+| **V2.P1 — Foundations** | Router + URL state; primary-color sweep; `<Button>` / `<Section>` / `<EmptyState>` / `<Toast>` shared components | 5 days |
+| **V2.P2 — Hot screens** | Profile tab merge (18 → 8) + sticky sub-nav; Schedule split into 3 routes; replace alerts + confirms project-wide | 5 days |
+| **V2.P3 — Discoverability** | `⌘K` command palette; recent items; cross-portal `<PlayerLink>` | 3 days |
+| **V2.P4 — Role-switch correctness** | `effectiveRole` rule enforcement; view reset on toggle; localStorage cleanup | 1 day |
+| **V2.P5 — Mobile resurrection** | Re-merge `mobile-v1` on top of routing foundation; PWA manifest; offline cache for read-only views | 2 weeks |
+
+### Acceptance criteria per phase
+
+**V2.P1**
+- Every navigation event changes the URL
+- Browser back / forward works on every screen
+- All primary actions use `blue-600` only (grep should show no `bg-teal-600` / `bg-indigo-600` / `bg-green-600` outside semantic uses)
+- All "Loading..." text replaced with `<Skeleton>` or `<Spinner>`
+- All `alert(error...)` calls replaced with `<Toast>`
+
+**V2.P2**
+- Profile renders 8 tabs not 18
+- Schedule splits into 3 routes
+- 0 `window.alert` calls, 0 `window.confirm` calls outside `RecurrenceDecisionModal`
+- Modal-in-modal count drops from 6+ to 0
+
+**V2.P3**
+- `⌘K` opens command palette from anywhere
+- Player profile links from Work Portal jump to Main + open the profile
+
+**V2.P4**
+- Coach toggling "view as player" lands on dashboard, not the stale coach view
+- `effectiveRole` is used for every UI gate; `userRole` only for irreversible action checks
+- Search of `src/` for `userRole ===` returns only the 2-3 known irreversible-action sites
+
+**V2.P5**
+- `mobile-v1` re-merged
+- PWA manifest + service worker shipped
+- iOS install prompt fires
+
+### Open V2 decisions
+
+- Router library — React Router v6 (familiar) vs TanStack Router (typed, newer). Recommend React Router v6.
+- Toast library — Sonner (40 LOC dep) vs custom (~30 LOC, zero deps). Recommend Sonner.
+- Color migration — single PR (high-risk) vs gradual sweep behind a feature flag. Recommend gradual.
+- Profile tab merge — phased (4 → 8 → 12 → 18 collapsed) vs single PR. Recommend single PR with feature flag.
+- Confirm dialog — modal vs inline popover. Recommend modal for consistency with `RecurrenceDecisionModal`.
