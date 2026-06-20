@@ -19,6 +19,7 @@ import WorkPortalShell from './WorkPortal';
 import NotificationBell from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
+import UsageDashboard from './UsageDashboard';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
 import './App.css';
@@ -837,6 +838,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
             {currentView === 'facility-fine' && <FacilityFinePage userId={userId} onSigned={() => setFacilityFineSigned(true)} />}
             {currentView === 'settings' && (userRole === 'admin' || userRole === 'coach') && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'usage' && userRole === 'admin' && <UsageDashboard />}
           </div>
         </div>
       </div>
@@ -1108,6 +1110,18 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <Settings size={18} />
               <span>Settings</span>
             </button>
+
+            {userRole === 'admin' && (
+              <button
+                onClick={() => setCurrentView('usage')}
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                  currentView === 'usage' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                }`}
+              >
+                <BarChart3 size={18} />
+                <span>Usage (V2 research)</span>
+              </button>
+            )}
           </>
         )}
       </nav>
