@@ -3253,11 +3253,38 @@ function DocumentStatusTable({ players, completionMap, docLabel, reminderSubject
     setTimeout(() => setCopyFeedback(false), 2000);
   };
 
-  const handleEmailAll = () => {
-    const bcc = unsignedEmails.join(',');
-    const subject = encodeURIComponent(reminderSubject);
-    const body = encodeURIComponent(`Hi,\n\nThis is a reminder to please complete your ${docLabel} at your earliest convenience.\n\nLog in at https://www.thenatural-app.com\n\nThank you!`);
-    window.open(`mailto:?bcc=${bcc}&subject=${subject}&body=${body}`);
+  const [emailAllSending, setEmailAllSending] = React.useState(false);
+
+  const handleEmailAll = async () => {
+    // CM2: mailto leaked every unsigned email into the browser history +
+    // referrer + URL bar. Send through the existing send-email edge function
+    // so each recipient gets their own message and the list never leaves
+    // server-side.
+    const targets = players.filter(p => !completionMap[p.id] && p.email);
+    if (targets.length === 0) return;
+    const confirmMsg = `Send a ${docLabel} reminder to ${targets.length} ${targets.length === 1 ? 'person' : 'people'}?`;
+    if (!window.confirm(confirmMsg)) return;
+    setEmailAllSending(true);
+    const subject = reminderSubject;
+    const body = `Hi {{NAME}},\n\nThis is a reminder to please complete your ${docLabel} at your earliest convenience.\n\nLog in at https://www.thenatural-app.com\n\nThank you!`;
+    let ok = 0, failed = 0;
+    for (const p of targets) {
+      try {
+        const personalized = body.replace('{{NAME}}', (p.full_name || '').split(' ')[0] || 'there');
+        const { error } = await supabase.functions.invoke('send-email', {
+          body: {
+            recipientEmail: p.email,
+            recipientName: p.full_name || p.email,
+            subject,
+            body: personalized,
+            playerId: p.id,
+          },
+        });
+        if (error) failed++; else ok++;
+      } catch { failed++; }
+    }
+    setEmailAllSending(false);
+    alert(`Sent ${ok} of ${targets.length}${failed ? ` (${failed} failed)` : ''}.`);
   };
 
   return (
@@ -3287,10 +3314,11 @@ function DocumentStatusTable({ players, completionMap, docLabel, reminderSubject
           </button>
           <button
             onClick={handleEmailAll}
-            className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
+            disabled={emailAllSending}
+            className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-60"
           >
             <Mail size={13} />
-            <span>Email All Incomplete</span>
+            <span>{emailAllSending ? 'Sending…' : 'Email All Incomplete'}</span>
           </button>
         </div>
       )}
