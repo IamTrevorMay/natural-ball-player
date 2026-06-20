@@ -4,6 +4,38 @@ import { corsHeaders, preflight } from "../_shared/cors.ts";
 const NEW_USER_TEAM_NAME = "New Users";
 const MIN_PASSWORD_LENGTH = 12;
 
+// H5: Per-IP signup rate limit. Best-effort, per-isolate (Supabase reuses an
+// isolate for a few minutes idle, so a sustained attacker on one IP hits the
+// same map). Survives long enough to throttle scripted enumeration.
+const SIGNUP_WINDOW_MS = 5 * 60 * 1000;
+const SIGNUP_MAX_ATTEMPTS = 5;
+const signupAttemptsByIp = new Map<string, number[]>();
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const list = (signupAttemptsByIp.get(ip) || []).filter((t) => now - t < SIGNUP_WINDOW_MS);
+  if (list.length >= SIGNUP_MAX_ATTEMPTS) {
+    signupAttemptsByIp.set(ip, list);
+    return true;
+  }
+  list.push(now);
+  signupAttemptsByIp.set(ip, list);
+  // Cheap eviction so the map doesn't grow forever in a long-lived isolate.
+  if (signupAttemptsByIp.size > 1000) {
+    for (const [k, v] of signupAttemptsByIp) {
+      if (v.every((t) => now - t >= SIGNUP_WINDOW_MS)) signupAttemptsByIp.delete(k);
+    }
+  }
+  return false;
+}
+
+function clientIp(req: Request): string {
+  const fwd = req.headers.get("x-forwarded-for") || "";
+  const first = fwd.split(",")[0]?.trim();
+  if (first) return first;
+  return req.headers.get("x-real-ip") || req.headers.get("cf-connecting-ip") || "unknown";
+}
+
 // Public self-signup (#151). No auth required — always creates a `player`.
 // New athletes are auto-added to the "New Users" team so coaches are notified.
 // Email confirmation is enforced by the project's Auth settings; signUp triggers
@@ -25,7 +57,17 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const appUrl = Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app";
 
-    const { email, password, full_name, phone } = await req.json();
+    if (rateLimited(clientIp(req))) {
+      // Generic message — don't echo the limit details to a scraper.
+      return json({ error: "Too many signup attempts. Try again in a few minutes." }, 429);
+    }
+
+    const { email: rawEmail, password, full_name: rawFullName, phone } = await req.json();
+    // H4: normalize email before any auth call so case/whitespace variants don't
+    // create duplicate accounts and the orphan-recovery dedup in create-user
+    // matches consistently.
+    const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+    const full_name = typeof rawFullName === "string" ? rawFullName.trim() : "";
 
     if (!email || !password || !full_name) {
       return json({ error: "Please provide your name, email, and a password." }, 400);

@@ -46,7 +46,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { email, password, full_name, role } = await req.json();
+    const { email: rawEmail, password, full_name: rawFullName, role } = await req.json();
+    // H3: normalize email so case/whitespace variants don't bypass the
+    // orphan-recovery dedup further down and don't produce duplicate accounts.
+    const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+    const full_name = typeof rawFullName === "string" ? rawFullName.trim() : "";
+
     if (!email || !password || !full_name || !role) {
       return new Response(
         JSON.stringify({ error: "Missing required fields: email, password, full_name, role" }),
