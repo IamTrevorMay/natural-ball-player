@@ -708,6 +708,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   const [searchQuery, setSearchQuery] = useState('');
   const [filterRole, setFilterRole] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [sortBy, setSortBy] = useState('name');
 
   const getUserStatus = (u) => {
     if (u.role === 'player') {
@@ -729,6 +730,16 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
       if (filterStatus === 'Archived' && status !== 'Archived') return false;
     }
     return true;
+  });
+
+  const sortedUsers = [...filteredUsers].sort((a, b) => {
+    if (sortBy === 'name') return 0;
+    const da = a.date_of_birth ? new Date(a.date_of_birth) : null;
+    const db = b.date_of_birth ? new Date(b.date_of_birth) : null;
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return sortBy === 'age_asc' ? da - db : db - da;
   });
 
   const statusCounts = { Active: 0, Inactive: 0, Archived: 0 };
@@ -784,6 +795,15 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
           <option value="Inactive">Inactive ({statusCounts.Inactive})</option>
           <option value="Archived">Archived ({statusCounts.Archived})</option>
         </select>
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="name">Sort: Name A–Z</option>
+          <option value="age_asc">Sort: Oldest First</option>
+          <option value="age_desc">Sort: Youngest First</option>
+        </select>
       </div>
 
       <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -794,7 +814,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
       </div>
 
       <div className="grid grid-cols-1 gap-4">
-        {filteredUsers.map(user => (
+        {sortedUsers.map(user => (
           <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
         ))}
       </div>
