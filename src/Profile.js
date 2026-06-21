@@ -1832,6 +1832,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 // Players can connect their OWN WHOOP on their own profile (#154); the
                 // edge function scopes them to self-access only.
                 if (tab.key === 'whoop' && userRole === 'player') return loggedInUserId === userId;
+                // Players can view their OWN recruitment entries (#216).
+                if (tab.key === 'recruitment' && userRole === 'player') return loggedInUserId === userId;
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
                 return true;
@@ -2763,13 +2765,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     <h4 className="text-sm font-semibold text-gray-700">
                       {team.organization_name || 'New Team'}
                     </h4>
-                    <button
-                      onClick={() => deleteRecruitmentTeam(team.id)}
-                      className="text-red-400 hover:text-red-600 transition"
-                      title="Delete"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    {(userRole === 'admin' || userRole === 'coach') && (
+                      <button
+                        onClick={() => deleteRecruitmentTeam(team.id)}
+                        className="text-red-400 hover:text-red-600 transition"
+                        title="Delete"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
@@ -2861,13 +2865,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   </div>
                 </div>
               ))}
-              <button
-                onClick={addRecruitmentTeam}
-                className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
-              >
-                <Plus size={18} />
-                <span>Add a Team</span>
-              </button>
+              {(userRole === 'admin' || userRole === 'coach') && (
+                <button
+                  onClick={addRecruitmentTeam}
+                  className="mt-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+                >
+                  <Plus size={18} />
+                  <span>Add a Team</span>
+                </button>
+              )}
             </div>
           )}
 
