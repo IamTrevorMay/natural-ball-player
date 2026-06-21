@@ -2257,6 +2257,17 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
   const [programWeekdays, setProgramWeekdays] = useState([false, true, true, true, true, true, false]); // Mon-Fri default
   const [loading, setLoading] = useState(false);
 
+  // Lesson / assessment booking (#214)
+  const [lessonData, setLessonData] = useState({
+    lesson_type: 'lesson', // 'lesson' or 'assessment'
+    coach_id: '',
+    event_time: '',
+    event_end_time: '',
+    location: '',
+    notes: '',
+  });
+  const [coaches, setCoaches] = useState([]);
+
   useEffect(() => {
     if (eventType === 'workout') {
       fetchTrainingPrograms();
@@ -2264,8 +2275,19 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
     } else if (eventType === 'meal') {
       fetchMeals();
       fetchMealPlans();
+    } else if (eventType === 'lesson') {
+      fetchCoaches();
     }
   }, [eventType]);
+
+  const fetchCoaches = async () => {
+    const { data } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .in('role', ['admin', 'coach'])
+      .order('full_name');
+    setCoaches(data || []);
+  };
 
   const fetchWorkoutTemplates = async () => {
     const { data } = await supabase
@@ -2353,7 +2375,28 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
         throw new Error('No player selected. Please select a player first.');
       }
 
-      if (eventType === 'team-event') {
+      if (eventType === 'lesson') {
+        // Book a lesson or assessment for the selected player(s) (#214)
+        if (playerIds.length === 0) {
+          throw new Error('No player selected. Please select a player first.');
+        }
+        const coach = coaches.find(c => c.id === lessonData.coach_id);
+        const typeLabel = lessonData.lesson_type === 'assessment' ? 'Assessment' : 'Lesson';
+        const title = coach ? `${typeLabel} with ${coach.full_name}` : typeLabel;
+        const rows = playerIds.map(pid => ({
+          player_id: pid,
+          event_type: lessonData.lesson_type, // 'lesson' or 'assessment'
+          event_date: dateStr,
+          event_time: timeTBD ? null : (lessonData.event_time || null),
+          event_end_time: lessonData.event_end_time || null,
+          title,
+          location: lessonData.location || null,
+          notes: lessonData.notes || null,
+        }));
+        const { error } = await supabase.from('schedule_events').insert(rows);
+        if (error) throw error;
+
+      } else if (eventType === 'team-event') {
         // Create team event
         const { error } = await supabase
           .from('schedule_events')
@@ -2616,6 +2659,19 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
 
               {view === 'player' && (
                 <>
+                  <button
+                    onClick={() => setEventType('lesson')}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <UserCheck className="text-blue-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Lesson / Assessment</div>
+                        <div className="text-sm text-gray-600">Book a lesson or assessment with a coach</div>
+                      </div>
+                    </div>
+                  </button>
+
                   <button
                     onClick={() => setEventType('workout')}
                     className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition text-left"
@@ -3413,6 +3469,98 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
               </div>
             </div>
           )}
+
+          {/* Lesson / Assessment Form (#214) */}
+          {eventType === 'lesson' && (
+            <div className="space-y-4">
+              <button
+                onClick={() => setEventType(null)}
+                className="text-sm text-blue-600 hover:text-blue-800 flex items-center space-x-1"
+              >
+                <ChevronLeft size={16} />
+                <span>Back</span>
+              </button>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Type *</label>
+                  <select
+                    value={lessonData.lesson_type}
+                    onChange={(e) => setLessonData({ ...lessonData, lesson_type: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="lesson">Lesson</option>
+                    <option value="assessment">Assessment</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Coach *</label>
+                  <select
+                    value={lessonData.coach_id}
+                    onChange={(e) => setLessonData({ ...lessonData, coach_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select a coach…</option>
+                    {coaches.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Start Time {!timeTBD && '*'}</label>
+                  <input
+                    type="time"
+                    disabled={timeTBD}
+                    value={timeTBD ? '' : lessonData.event_time}
+                    onChange={(e) => setLessonData({ ...lessonData, event_time: e.target.value })}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
+                  />
+                  <label className="flex items-center space-x-2 mt-2">
+                    <input
+                      type="checkbox"
+                      checked={timeTBD}
+                      onChange={(e) => setTimeTBD(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-gray-600">TBD (set later)</span>
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">End Time</label>
+                  <input
+                    type="time"
+                    disabled={timeTBD}
+                    value={timeTBD ? '' : lessonData.event_end_time}
+                    onChange={(e) => setLessonData({ ...lessonData, event_end_time: e.target.value })}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${timeTBD ? 'bg-gray-100 text-gray-400' : ''}`}
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Cage 2, Main Field"
+                    value={lessonData.location}
+                    onChange={(e) => setLessonData({ ...lessonData, location: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Focus areas, what to bring, etc."
+                    value={lessonData.notes}
+                    onChange={(e) => setLessonData({ ...lessonData, notes: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Action Buttons */}
@@ -3436,11 +3584,12 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
               (eventType === 'meal' && mealType === 'single-meal' && !mealSelectionMode) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'existing' && !selectedMealId) ||
               (eventType === 'meal' && mealType === 'single-meal' && mealSelectionMode === 'create' && !newMealData.name) ||
-              (eventType === 'meal' && mealType === 'plan' && !selectedMealPlanId)
+              (eventType === 'meal' && mealType === 'plan' && !selectedMealPlanId) ||
+              (eventType === 'lesson' && (!lessonData.coach_id || (!timeTBD && !lessonData.event_time)))
             }
             className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
           >
-            {loading ? 'Saving...' : eventType === 'workout' ? 'Save Programming' : 'Add Event'}
+            {loading ? 'Saving...' : eventType === 'workout' ? 'Save Programming' : eventType === 'lesson' ? 'Book' : 'Add Event'}
           </button>
         </div>
       </div>

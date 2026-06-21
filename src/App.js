@@ -705,6 +705,12 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const [profileIncomplete, setProfileIncomplete] = useState([]);
   const [showProfileReminder, setShowProfileReminder] = useState(false);
 
+  // Birthday popup (#210): the logged-in user sees a greeting on their own
+  // birthday; staff additionally see which players are celebrating today.
+  const [showBirthday, setShowBirthday] = useState(false);
+  const [birthdaySelf, setBirthdaySelf] = useState(false);
+  const [birthdayPlayers, setBirthdayPlayers] = useState([]);
+
   useEffect(() => {
     if (effectiveRole !== 'player' || !userId) return;
     let cancelled = false;
@@ -746,6 +752,46 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     })();
     return () => { cancelled = true; };
   }, [userId, effectiveRole]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Birthday check (#210) — runs for every role; shows at most once per day.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      const now = new Date();
+      const mmdd = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const seenKey = `birthday_popup_${userId}_${now.getFullYear()}-${mmdd}`;
+      if (sessionStorage.getItem(seenKey)) return;
+
+      // Own birthday (date_of_birth is 'YYYY-MM-DD'; compare the MM-DD portion)
+      const { data: me } = await supabase.from('users').select('date_of_birth').eq('id', userId).single();
+      if (cancelled) return;
+      const self = !!(me?.date_of_birth && me.date_of_birth.slice(5) === mmdd);
+
+      // Staff also see players whose birthday is today
+      let players = [];
+      if (userRole === 'admin' || userRole === 'coach') {
+        const { data: rows } = await supabase
+          .from('users')
+          .select('id, full_name, date_of_birth')
+          .eq('role', 'player')
+          .not('date_of_birth', 'is', null);
+        if (cancelled) return;
+        players = (rows || [])
+          .filter(r => r.id !== userId && r.date_of_birth && r.date_of_birth.slice(5) === mmdd)
+          .map(r => ({ id: r.id, full_name: r.full_name }));
+      }
+
+      if (cancelled) return;
+      if (self || players.length > 0) {
+        setBirthdaySelf(self);
+        setBirthdayPlayers(players);
+        setShowBirthday(true);
+        sessionStorage.setItem(seenKey, '1');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId, userRole]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mainCounts = useMainPortalCounts(userId, effectiveRole);
   const workCounts = useWorkPortalCounts(userId, effectiveRole);
@@ -879,6 +925,59 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                   Dismiss
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Birthday popup (#210) */}
+      {showBirthday && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-pink-100 rounded-full flex items-center justify-center text-2xl">🎂</div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {birthdaySelf ? 'Happy Birthday!' : 'Birthdays Today'}
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    {birthdaySelf
+                      ? `Wishing you a great day, ${(userName || '').split(' ')[0] || 'champ'}! 🎉`
+                      : 'From everyone at Naturals 🎉'}
+                  </p>
+                </div>
+              </div>
+              {birthdaySelf && (
+                <p className="text-sm text-gray-700 mb-4">
+                  🎉 Everyone at Naturals Baseball wishes you a fantastic birthday. Have a great one!
+                </p>
+              )}
+              {birthdayPlayers.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-gray-700 mb-2">Players celebrating today:</p>
+                  <ul className="space-y-1">
+                    {birthdayPlayers.map(p => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          onClick={() => { setShowBirthday(false); setViewProfileUserId(p.id); setCurrentView('profile-view'); }}
+                          className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                        >
+                          🎉 {p.full_name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowBirthday(false)}
+                className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+              >
+                {birthdaySelf ? 'Thanks!' : 'Close'}
+              </button>
             </div>
           </div>
         </div>

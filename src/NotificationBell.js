@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard } from 'lucide-react';
+
+function fmtMoney(cents) {
+  return `$${((cents || 0) / 100).toFixed(2)}`;
+}
 
 function fmtSlotTime(t) {
   if (!t) return '';
@@ -24,6 +28,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
   const total =
     (mainCounts?.unreadMessages || 0)
     + (mainCounts?.pendingSlots?.length || 0)
+    + (mainCounts?.pendingPayments?.length || 0)
     + (workCounts?.unreadMessages || 0)
     + (workCounts?.pendingHours?.length || 0)
     + (workCounts?.pendingTimeOff?.length || 0);
@@ -80,6 +85,30 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                   {currentPortal !== 'main' && <PortalTag kind="main" />}
                 </div>
               </button>
+            ))}
+
+            {(mainCounts?.pendingPayments || []).map(pay => (
+              <a
+                key={`main-pay-${pay.id}`}
+                href={pay.checkout_url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setOpen(false)}
+                className="block w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <div className="flex items-start space-x-3">
+                  <div className="mt-0.5"><CreditCard size={16} className="text-green-600" /></div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-900">
+                      Payment due: <span className="font-medium">{pay.product_name_snapshot}</span>
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {fmtMoney(pay.amount_cents)} · tap to complete payment
+                    </p>
+                  </div>
+                  {currentPortal !== 'main' && <PortalTag kind="main" />}
+                </div>
+              </a>
             ))}
 
             {(mainCounts?.unreadMessages > 0) && (

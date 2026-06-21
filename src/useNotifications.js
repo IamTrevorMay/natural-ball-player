@@ -14,9 +14,24 @@ async function fetchWorkDmThreadIdsForUser(userId) {
 export function useMainPortalCounts(userId, userRole) {
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [pendingSlots, setPendingSlots] = useState([]);
+  const [pendingPayments, setPendingPayments] = useState([]);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
+
+    // Pending payments assigned to / started by this user (#213). Surfaces a
+    // "complete your payment" nudge that links straight to Square checkout.
+    try {
+      const { data: pays } = await supabase
+        .from('store_purchases')
+        .select('id, product_name_snapshot, amount_cents, checkout_url, created_at')
+        .eq('user_id', userId)
+        .eq('status', 'pending')
+        .not('checkout_url', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      setPendingPayments(pays || []);
+    } catch (e) { console.error('Pending payments error:', e); }
 
     try {
       const { data: pRows } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', userId);
@@ -59,10 +74,11 @@ export function useMainPortalCounts(userId, userRole) {
     const ch1 = supabase.channel(`main-notif-messages-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, refresh).subscribe();
     const ch2 = supabase.channel(`main-notif-slots-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'slot_reservations' }, refresh).subscribe();
     const ch3 = supabase.channel(`main-notif-reads-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'message_reads' }, refresh).subscribe();
-    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); };
+    const ch4 = supabase.channel(`main-notif-payments-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'store_purchases' }, refresh).subscribe();
+    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); };
   }, [refresh, userId]);
 
-  return { unreadMessages, pendingSlots, refresh };
+  return { unreadMessages, pendingSlots, pendingPayments, refresh };
 }
 
 // Counts and details for the Work Portal: unread work messages + (admin) pending hours + pending time off.

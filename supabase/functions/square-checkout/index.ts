@@ -72,8 +72,23 @@ Deno.serve(async (req) => {
 
     const service = createClient(supabaseUrl, serviceKey);
 
-    const { product_id, return_url } = await req.json().catch(() => ({}));
+    const { product_id, return_url, target_user_id } = await req.json().catch(() => ({}));
     if (!product_id) return jsonRes(cors, 400, { error: "product_id required" });
+
+    // Staff can create a purchase on behalf of a player (#213). Otherwise the
+    // buyer is always the authenticated caller.
+    let buyerId = user.id;
+    if (target_user_id && target_user_id !== user.id) {
+      const { data: caller } = await service
+        .from("users")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+      if (!caller || (caller.role !== "admin" && caller.role !== "coach")) {
+        return jsonRes(cors, 403, { error: "Only staff can assign a purchase to another user" });
+      }
+      buyerId = target_user_id;
+    }
 
     const { data: product, error: prodErr } = await service
       .from("store_products")
@@ -86,7 +101,7 @@ Deno.serve(async (req) => {
     const { data: userRow } = await service
       .from("users")
       .select("id, email, full_name")
-      .eq("id", user.id)
+      .eq("id", buyerId)
       .single();
     if (!userRow) return jsonRes(cors, 404, { error: "User row missing" });
 
@@ -131,7 +146,7 @@ Deno.serve(async (req) => {
       const { data: purchase, error: insErr } = await service
         .from("store_purchases")
         .insert({
-          user_id: user.id,
+          user_id: buyerId,
           product_id: product.id,
           product_kind: product.kind,
           product_name_snapshot: product.name,
@@ -175,7 +190,7 @@ Deno.serve(async (req) => {
           given_name: userRow.full_name?.split(" ")[0] || userRow.full_name,
           family_name: userRow.full_name?.split(" ").slice(1).join(" ") || "",
           email_address: userRow.email,
-          reference_id: user.id,
+          reference_id: buyerId,
         }),
       });
       squareCustomerId = created?.customer?.id || null;
@@ -210,7 +225,7 @@ Deno.serve(async (req) => {
     const { data: purchase, error: insErr } = await service
       .from("store_purchases")
       .insert({
-        user_id: user.id,
+        user_id: buyerId,
         product_id: product.id,
         product_kind: product.kind,
         product_name_snapshot: product.name,

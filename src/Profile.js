@@ -10,7 +10,8 @@ import { fmtLocalDate } from './scheduleUtils';
 import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
-import { BadgePercent } from 'lucide-react';
+import AssignPackageModal from './AssignPackageModal';
+import { BadgePercent, CreditCard } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 
@@ -235,6 +236,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [showStore, setShowStore] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
+  const [showAssignPackage, setShowAssignPackage] = useState(false);
   const [subscriptionRow, setSubscriptionRow] = useState(null);
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
@@ -1724,6 +1726,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   </span>
                 );
               })()}
+              {onBack && (userRole === 'admin' || userRole === 'coach') && userData.role === 'player' && (
+                <button
+                  onClick={() => setShowAssignPackage(true)}
+                  className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700 transition flex items-center space-x-1"
+                >
+                  <CreditCard size={14} />
+                  <span>Assign Payment</span>
+                </button>
+              )}
               {onBack && userRole === 'admin' && userData.role === 'player' && (
                 <button
                   onClick={() => setShowDiscount(true)}
@@ -1840,8 +1851,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               }).map(tab => (
                 <button
                   key={tab.key}
+                  type="button"
                   onClick={() => setActiveProfileTab(tab.key)}
-                  className={`py-2 px-3 rounded-lg font-medium text-xs text-center transition whitespace-nowrap ${
+                  className={`min-h-[40px] py-2.5 px-3.5 rounded-lg font-medium text-sm md:text-xs md:py-2 md:px-3 text-center transition whitespace-nowrap touch-manipulation ${
                     activeProfileTab === tab.key
                       ? 'bg-blue-100 text-blue-700'
                       : 'bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900'
@@ -2143,8 +2155,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="text-lg font-semibold text-gray-900">{label}</h4>
                       <button
+                        type="button"
                         onClick={() => addGoal(type)}
-                        className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
+                        className="bg-blue-600 text-white px-3 py-2 min-h-[40px] rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm touch-manipulation"
                       >
                         <Plus size={14} />
                         <span>Add</span>
@@ -2160,8 +2173,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                         />
                         <div className="flex justify-end space-x-2 mt-2">
-                          <button onClick={cancelEditGoal} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
-                          <button onClick={saveGoal} disabled={savingGoal || !goalDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                          <button type="button" onClick={cancelEditGoal} className="px-3 py-2 min-h-[40px] border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm touch-manipulation">Cancel</button>
+                          <button type="button" onClick={saveGoal} disabled={savingGoal || !goalDraft.content.trim()} className="px-3 py-2 min-h-[40px] bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm touch-manipulation">
                             {savingGoal ? 'Saving...' : 'Save'}
                           </button>
                         </div>
@@ -2182,8 +2195,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                               />
                               <div className="flex justify-end space-x-2 mt-2">
-                                <button onClick={cancelEditGoal} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
-                                <button onClick={saveGoal} disabled={savingGoal || !goalDraft.content.trim()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                                <button type="button" onClick={cancelEditGoal} className="px-3 py-2 min-h-[40px] border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm touch-manipulation">Cancel</button>
+                                <button type="button" onClick={saveGoal} disabled={savingGoal || !goalDraft.content.trim()} className="px-3 py-2 min-h-[40px] bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm touch-manipulation">
                                   {savingGoal ? 'Saving...' : 'Save'}
                                 </button>
                               </div>
@@ -3225,7 +3238,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition"
                       >
                         <Plus size={14} />
-                        <span>Assign Workout</span>
+                        <span>Add to Schedule</span>
                       </button>
                     )}
                     <button
@@ -3285,9 +3298,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 {/* Selected Day Events */}
                 {scheduleSelectedDay && (
                   <div className="space-y-2">
-                    <h5 className="text-sm font-semibold text-gray-700">
-                      {new Date(year, month, scheduleSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-                    </h5>
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-sm font-semibold text-gray-700">
+                        {new Date(year, month, scheduleSelectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                      </h5>
+                      {canEditProfile && (
+                        <button
+                          onClick={() => setShowAddWorkout(true)}
+                          className="flex items-center space-x-1 px-2.5 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition"
+                        >
+                          <Plus size={12} />
+                          <span>Add</span>
+                        </button>
+                      )}
+                    </div>
                     {(eventsByDay[scheduleSelectedDay] || []).length === 0 ? (
                       <p className="text-sm text-gray-400 py-4 text-center">No events scheduled</p>
                     ) : (
@@ -3300,9 +3324,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               <span className="font-medium text-sm text-gray-900">{ev.title || ev.opponent || ev.event_type}</span>
                               <span className="text-xs text-gray-400 capitalize">{ev.event_type}</span>
                             </div>
-                            {ev.start_time && (
+                            {ev.event_time && (
                               <div className="text-xs text-gray-500">
-                                {ev.start_time}{ev.end_time ? ` – ${ev.end_time}` : ''}
+                                {ev.event_time.slice(0, 5)}{ev.event_end_time ? ` – ${ev.event_end_time.slice(0, 5)}` : ''}
                               </div>
                             )}
                             {general && (
@@ -3914,6 +3938,25 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       {showStore && (
         <StoreModal userId={userData.id} onClose={() => setShowStore(false)} />
+      )}
+
+      {showAssignPackage && (
+        <AssignPackageModal
+          playerId={userData.id}
+          playerName={userData.full_name}
+          onClose={() => setShowAssignPackage(false)}
+          onAssigned={() => {
+            supabase
+              .from('store_purchases')
+              .select('status, paid_at, created_at')
+              .eq('user_id', userData.id)
+              .eq('product_kind', 'package')
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+              .then(({ data }) => setSubscriptionRow(data || null));
+          }}
+        />
       )}
 
       {showDiscount && (
