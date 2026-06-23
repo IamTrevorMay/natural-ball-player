@@ -1017,7 +1017,7 @@ export default function Schedule({ userId, userRole }) {
         <div className="bg-white rounded-lg shadow relative">
           {/* Coach Drawer (pop-out) */}
           {coachesDrawerOpen && (
-            <div className="fixed inset-0 z-40" onClick={() => setCoachesDrawerOpen(false)}>
+            <div className="fixed inset-0 z-[60]" onClick={() => setCoachesDrawerOpen(false)}>
               <div className="absolute inset-0 bg-black bg-opacity-40" />
               <aside
                 className="absolute top-0 left-0 h-full w-80 max-w-[90vw] bg-white shadow-xl flex flex-col"
