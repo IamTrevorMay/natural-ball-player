@@ -372,7 +372,7 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
 
         <div className="p-6">
           {activeTab === 'roster' && <RosterTab roster={roster} coaches={coaches} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} onNavigateToProfile={onNavigateToProfile} />}
-          {activeTab === 'coaches' && <CoachesTab coaches={coaches} />}
+          {activeTab === 'coaches' && <CoachesTab coaches={coaches} onNavigateToProfile={onNavigateToProfile} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
           {activeTab === 'prospects' && (
@@ -567,7 +567,7 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
           <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Coaches</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[...coaches].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '')).map(coach => (
-              <CoachCard key={coach.id} coach={coach} />
+              <CoachCard key={coach.id} coach={coach} onNavigateToProfile={onNavigateToProfile} />
             ))}
           </div>
         </div>
@@ -671,11 +671,11 @@ function PlayerCard({ player, isProspect, canManageProspects, onToggleProspect, 
 // COACHES TAB
 // ============================================
 
-function CoachesTab({ coaches }) {
+function CoachesTab({ coaches, onNavigateToProfile }) {
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-900">Coaching Staff</h3>
-      
+
       {coaches.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <User size={40} className="mx-auto mb-3 text-gray-300" />
@@ -684,7 +684,7 @@ function CoachesTab({ coaches }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {coaches.map(coach => (
-            <CoachCard key={coach.id} coach={coach} />
+            <CoachCard key={coach.id} coach={coach} onNavigateToProfile={onNavigateToProfile} />
           ))}
         </div>
       )}
@@ -692,9 +692,16 @@ function CoachesTab({ coaches }) {
   );
 }
 
-function CoachCard({ coach }) {
+function CoachCard({ coach, onNavigateToProfile }) {
+  const clickable = !!onNavigateToProfile;
   return (
-    <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-6 border border-gray-200">
+    <div
+      onClick={clickable ? () => onNavigateToProfile(coach.id) : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigateToProfile(coach.id); } } : undefined}
+      className={`bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-6 border border-gray-200 ${clickable ? 'cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition' : ''}`}
+    >
       <div className="flex items-start space-x-4">
         <div className="w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
           <User size={24} />
