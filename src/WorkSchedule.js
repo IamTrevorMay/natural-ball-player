@@ -91,6 +91,8 @@ export default function WorkSchedule({ userId, userRole }) {
   const [staffEvents, setStaffEvents] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [facilityEvents, setFacilityEvents] = useState([]);
+  const [trainingSlots, setTrainingSlots] = useState([]);
+  const [slotReservations, setSlotReservations] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -136,6 +138,33 @@ export default function WorkSchedule({ userId, userRole }) {
 
     const expandedFac = expandRecurringEvents(facMasters.data || [], facEx.data || [], weekStart, addDays(weekStart, 6));
     setFacilityEvents([...(facNonRec.data || []), ...expandedFac]);
+
+    const weekEnd = addDays(weekStart, 6);
+    const slotsRes = await supabase.from('training_slots').select('*, coach:coach_id(full_name)');
+    const allSlots = slotsRes.data || [];
+    const expandedTrainingSlots = [];
+    allSlots.forEach(slot => {
+      if (slot.repeat_weekly) {
+        let current = new Date(slot.slot_date + 'T00:00:00');
+        while (current < weekStart) current.setDate(current.getDate() + 7);
+        while (current <= weekEnd) {
+          if (!slot.repeat_end_date || current <= new Date(slot.repeat_end_date + 'T00:00:00')) {
+            expandedTrainingSlots.push({ ...slot, slot_date: fmtLocalDate(current) });
+          }
+          current.setDate(current.getDate() + 7);
+        }
+      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
+        expandedTrainingSlots.push(slot);
+      }
+    });
+    setTrainingSlots(expandedTrainingSlots);
+    const slotIds = allSlots.map(s => s.id);
+    if (slotIds.length > 0) {
+      const { data: resData } = await supabase.from('slot_reservations').select('*, users:player_id(full_name)').in('slot_id', slotIds).gte('slot_date', startStr).lte('slot_date', endStr).neq('status', 'cancelled');
+      setSlotReservations(resData || []);
+    } else {
+      setSlotReservations([]);
+    }
 
     setLoading(false);
   }, [weekStart]);
@@ -342,6 +371,9 @@ export default function WorkSchedule({ userId, userRole }) {
     facilityEvents
       .filter(f => f.event_date === dayStr)
       .forEach(f => items.push({ kind: 'facility', e: f, time: f.start_time || '00:00' }));
+    trainingSlots
+      .filter(s => s.slot_date === dayStr)
+      .forEach(s => items.push({ kind: 'slot', e: s, time: s.start_time || '00:00' }));
     items.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     return items;
   };
@@ -402,6 +434,7 @@ export default function WorkSchedule({ userId, userRole }) {
           <div className="hidden md:flex items-center space-x-3 text-xs text-gray-600">
             <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-indigo-500 inline-block" /><span>Staff</span></span>
             <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /><span>Facility</span></span>
+            <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-teal-500 inline-block" /><span>Training Slots</span></span>
             <span className="flex items-center space-x-1"><UserCheck size={12} className="text-indigo-600" /><span>Assigned to you</span></span>
           </div>
           {canManage && (
@@ -498,6 +531,29 @@ export default function WorkSchedule({ userId, userRole }) {
                             </p>
                           )}
                           {it.e.location && <p className="text-gray-600 truncate">{it.e.location}</p>}
+                        </div>
+                      );
+                    }
+                    if (it.kind === 'slot') {
+                      const res = slotReservations.filter(r => r.slot_id === it.e.id && r.slot_date === dayStr);
+                      return (
+                        <div key={`sl-${it.e.id}-${i}`} className="rounded-md p-2 bg-teal-50 border-l-2 border-teal-400 text-xs cursor-default">
+                          <p className="text-teal-700 font-medium truncate">{it.e.coach?.full_name || 'Training'}</p>
+                          {it.e.start_time && (
+                            <p className="text-teal-600 mt-0.5">
+                              {formatTimeFromHHMM(it.e.start_time)}{it.e.duration_minutes ? ` · ${it.e.duration_minutes}min` : ''}
+                            </p>
+                          )}
+                          {it.e.notes && <p className="text-gray-500 truncate">{it.e.notes}</p>}
+                          {res.length > 0 ? (
+                            <div className="mt-1 space-y-0.5">
+                              {res.map(r => (
+                                <div key={r.id} className="text-gray-700 truncate">{r.users?.full_name}</div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-gray-400 mt-0.5">No signups</p>
+                          )}
                         </div>
                       );
                     }
