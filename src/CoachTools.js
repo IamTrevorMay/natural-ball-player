@@ -2766,7 +2766,28 @@ function TrainingSlotsTab({ userId }) {
       .eq('coach_id', userId)
       .order('slot_date', { ascending: true });
     if (error) { console.error(error); setLoading(false); return; }
-    setSlots(slotData || []);
+
+    // Expand recurring slots into individual occurrence dates within a 90-day window
+    // so the coach sees sessions listed under the actual booked date, not just the
+    // master creation date.
+    const today = new Date();
+    const windowStart = new Date(today); windowStart.setDate(today.getDate() - 30);
+    const windowEnd = new Date(today); windowEnd.setDate(today.getDate() + 60);
+    const expanded = [];
+    (slotData || []).forEach(slot => {
+      if (slot.repeat_weekly && !slot.recurrence_parent_id) {
+        const slotStart = new Date(slot.slot_date + 'T00:00:00');
+        const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : windowEnd;
+        let current = new Date(slotStart);
+        while (current <= endDate && current <= windowEnd) {
+          if (current >= windowStart) expanded.push({ ...slot, slot_date: fmtLocalDate(current) });
+          current.setDate(current.getDate() + 7);
+        }
+      } else if (!slot.recurrence_parent_id) {
+        expanded.push(slot);
+      }
+    });
+    setSlots(expanded);
 
     const slotIds = (slotData || []).map(s => s.id);
     if (slotIds.length > 0) {
@@ -2848,9 +2869,9 @@ function TrainingSlotsTab({ userId }) {
               </h4>
               <div className="space-y-3">
                 {dateSlots.map(slot => {
-                  const slotReservations = reservations.filter(r => r.slot_id === slot.id);
+                  const slotReservations = reservations.filter(r => r.slot_id === slot.id && r.slot_date === slot.slot_date);
                   return (
-                    <div key={slot.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <div key={`${slot.id}-${slot.slot_date}`} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                       <div className="flex justify-between items-start">
                         <div>
                           <div className="flex items-center space-x-3">
