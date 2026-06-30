@@ -7,6 +7,7 @@ import Profile from './Profile';
 import Schedule from './Schedule';
 import Messages from './Messages';
 import MyTeam from './MyTeam';
+import TrainingGroups from './TrainingGroups';
 import KnowledgeBase from './KnowledgeBase';
 import Fields from './Fields';
 import ManageAthletes from './ManageAthletes';
@@ -21,7 +22,7 @@ import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import UsageDashboard from './UsageDashboard';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -914,6 +915,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
@@ -1200,6 +1202,16 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
 
         {(userRole === 'admin' || userRole === 'coach') && (
           <>
+            <button
+              onClick={() => setCurrentView('training-groups')}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                currentView === 'training-groups' ? 'bg-blue-600' : 'hover:bg-gray-800'
+              }`}
+            >
+              <Layers size={18} />
+              <span>Training Groups</span>
+            </button>
+
             <button
               onClick={() => setCurrentView('manage-athletes')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
