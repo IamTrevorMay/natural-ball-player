@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft } from 'lucide-react';
+import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin } from 'lucide-react';
 
 const EMBED_HOST_ALLOWLIST = new Set([
   'www.youtube.com',
@@ -38,7 +38,7 @@ function toSafeEmbedUrl(raw) {
 }
 
 export default function KnowledgeBase({ userId, userRole }) {
-  const [activeView, setActiveView] = useState('browse'); // browse, article, ai-assistant
+  const [activeView, setActiveView] = useState('browse'); // browse, article, ai-assistant, situational
   const [categories, setCategories] = useState([]);
   const [articles, setArticles] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -156,6 +156,17 @@ export default function KnowledgeBase({ userId, userRole }) {
               <Sparkles size={18} />
               <span>AI Coach Assistant</span>
             </button>
+            <button
+              onClick={() => setActiveView('situational')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition flex items-center space-x-2 ${
+                activeView === 'situational'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <MapPin size={18} />
+              <span>Situational</span>
+            </button>
           </nav>
         </div>
 
@@ -180,6 +191,108 @@ export default function KnowledgeBase({ userId, userRole }) {
           {activeView === 'ai-assistant' && (
             <AIAssistant userId={userId} />
           )}
+          {activeView === 'situational' && (
+            <SituationalView />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// SITUATIONAL VIEW (#225)
+// ============================================
+// Athletes pick their position and see common in-game situations and where to
+// go / what to do. Content lives in the situational_plays table (seeded with
+// standard baseball content; staff can edit the rows).
+
+function SituationalView() {
+  const [plays, setPlays] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activePosition, setActivePosition] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('situational_plays')
+        .select('*')
+        .order('position_order')
+        .order('sort_order');
+      if (cancelled) return;
+      const rows = data || [];
+      setPlays(rows);
+      if (rows.length) setActivePosition(rows[0].position_code);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Distinct positions in picker order.
+  const positions = [];
+  const seen = new Set();
+  plays.forEach(p => {
+    if (!seen.has(p.position_code)) {
+      seen.add(p.position_code);
+      positions.push({ code: p.position_code, label: p.position_label });
+    }
+  });
+
+  const activePlays = plays.filter(p => p.position_code === activePosition);
+  const activeLabel = positions.find(p => p.code === activePosition)?.label;
+
+  if (loading) {
+    return <p className="text-gray-500">Loading situational guide…</p>;
+  }
+  if (plays.length === 0) {
+    return <p className="text-gray-500">No situational content yet.</p>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900">Situational Guide</h3>
+        <p className="text-sm text-gray-600 mt-1">
+          Pick your position to see common game situations and exactly where to go and what to do.
+        </p>
+      </div>
+
+      {/* Position picker */}
+      <div className="flex flex-wrap gap-2">
+        {positions.map(pos => (
+          <button
+            key={pos.code}
+            onClick={() => setActivePosition(pos.code)}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition border ${
+              activePosition === pos.code
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            <span className="font-semibold">{pos.code}</span>
+            <span className="hidden sm:inline"> · {pos.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Situations for the selected position */}
+      <div>
+        <h4 className="text-base font-bold text-gray-900 mb-3">{activeLabel}</h4>
+        <div className="space-y-3">
+          {activePlays.map(play => (
+            <div key={play.id} className="bg-white border border-gray-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
+                  {play.sort_order}
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-gray-900">{play.situation}</div>
+                  <div className="text-sm text-gray-600 mt-1">{play.responsibility}</div>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
