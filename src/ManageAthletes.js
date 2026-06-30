@@ -78,7 +78,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id, offer_status), team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name))')
       .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
@@ -461,6 +461,14 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                       >
                         {firstName}
                       </button>
+                      {(profile.signup_intent === 'team' || profile.signup_intent === 'both') && (
+                        <span
+                          className="block mt-0.5 w-fit bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                          title="Signed up wanting a Naturals team — place them on the right team"
+                        >
+                          Wants team{profile.signup_intent === 'both' ? ' + training' : ''}
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-3 font-semibold text-gray-900">{lastName}</td>
                     <td className="py-3 px-3 text-gray-600 text-xs">

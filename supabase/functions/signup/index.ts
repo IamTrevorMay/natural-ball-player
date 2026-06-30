@@ -3,6 +3,47 @@ import { corsHeaders, preflight } from "../_shared/cors.ts";
 
 const NEW_USER_TEAM_NAME = "New Users";
 const MIN_PASSWORD_LENGTH = 12;
+const VALID_INTENTS = ["team", "training", "both"];
+
+// Validate a 'YYYY-MM-DD' date string (string ops, no regex).
+function isIsoDate(s: string): boolean {
+  const parts = (s || "").split("-");
+  if (parts.length !== 3) return false;
+  const [y, mo, d] = parts;
+  if (y.length !== 4 || mo.length !== 2 || d.length !== 2) return false;
+  const yi = Number(y), mi = Number(mo), di = Number(d);
+  if (!Number.isInteger(yi) || !Number.isInteger(mi) || !Number.isInteger(di)) return false;
+  return mi >= 1 && mi <= 12 && di >= 1 && di <= 31;
+}
+
+// Baseball "U" age division from a date of birth (#200). NBP uses a May 1
+// cutoff: a player's division for the season is the age they reach during the
+// season's calendar year, and the season rolls over on May 1. So from May 1
+// onward we use the current year, before that the previous year.
+//   e.g. born 2013-06-28, evaluated June 2026 -> seasonYear 2026 -> 13U.
+function computeAgeDivision(dob: string, today: Date): number | null {
+  const parts = (dob || "").split("-");
+  if (parts.length !== 3) return null;
+  const birthYear = Number(parts[0]);
+  if (!Number.isInteger(birthYear)) return null;
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth() + 1; // 1-12
+  const seasonYear = month >= 5 ? year : year - 1;
+  const division = seasonYear - birthYear;
+  return Number.isFinite(division) ? division : null;
+}
+
+// Resolve the "NBP {N}u Training Group" team for a division. Names carry the
+// age (the age_group column is unpopulated), so we match on the name. Youngest
+// signups clamp to the 8u group; 19+ returns null (recorded only, placed by a
+// coach).
+function findTrainingGroup(teams: Array<{ id: string; name: string }>, division: number): string | null {
+  if (division >= 19) return null;
+  const targetU = Math.max(8, division);
+  const needle = `nbp ${targetU}u training group`;
+  const match = teams.find((t) => (t.name || "").trim().toLowerCase().startsWith(needle));
+  return match?.id ?? null;
+}
 
 // H5: Per-IP signup rate limit. Best-effort, per-isolate (Supabase reuses an
 // isolate for a few minutes idle, so a sustained attacker on one IP hits the
@@ -62,7 +103,14 @@ Deno.serve(async (req) => {
       return json({ error: "Too many signup attempts. Try again in a few minutes." }, 429);
     }
 
-    const { email: rawEmail, password, full_name: rawFullName, phone } = await req.json();
+    const {
+      email: rawEmail,
+      password,
+      full_name: rawFullName,
+      phone,
+      date_of_birth: rawDob,
+      signup_intent: rawIntent,
+    } = await req.json();
     // H4: normalize email before any auth call so case/whitespace variants don't
     // create duplicate accounts and the orphan-recovery dedup in create-user
     // matches consistently.
@@ -71,6 +119,17 @@ Deno.serve(async (req) => {
 
     if (!email || !password || !full_name) {
       return json({ error: "Please provide your name, email, and a password." }, 400);
+    }
+
+    // #200: date of birth (drives age-group auto-sort) and intent are required.
+    const dobTrimmed = typeof rawDob === "string" ? rawDob.trim() : "";
+    const date_of_birth = isIsoDate(dobTrimmed) ? dobTrimmed : "";
+    if (!date_of_birth) {
+      return json({ error: "Please provide a valid date of birth." }, 400);
+    }
+    const signup_intent = typeof rawIntent === "string" && VALID_INTENTS.includes(rawIntent) ? rawIntent : "";
+    if (!signup_intent) {
+      return json({ error: "Please choose whether you want a Naturals team, training only, or both." }, 400);
     }
     if (String(password).length < MIN_PASSWORD_LENGTH) {
       return json(
@@ -115,6 +174,7 @@ Deno.serve(async (req) => {
       full_name,
       role: "player",
       phone: phone || null,
+      date_of_birth,
     });
     if (userError) {
       // Roll back the orphaned auth user so the email can be reused.
@@ -135,7 +195,7 @@ Deno.serve(async (req) => {
     // 3. Create the player profile.
     const { error: profileError } = await serviceClient
       .from("player_profiles")
-      .insert({ user_id: newUserId });
+      .insert({ user_id: newUserId, signup_intent });
     if (profileError) {
       console.error("player_profiles insert failed:", profileError.message);
       return await rollback(`Could not create player profile: ${profileError.message}`);
@@ -168,6 +228,22 @@ Deno.serve(async (req) => {
       if (teamError) {
         console.error("team_members insert failed:", teamError.message);
         return await rollback(`Could not add to team: ${teamError.message}`);
+      }
+    }
+
+    // 5. Auto-sort into the age-group Training Group (#200). Best-effort: a
+    // missing group or failed insert must not fail an otherwise-good signup —
+    // the athlete is still in "New Users" for a coach to place. 19+ and ages
+    // with no matching group are intentionally left for coach placement.
+    const division = computeAgeDivision(date_of_birth, new Date());
+    if (division != null && teamId !== null) {
+      const { data: allTeams } = await serviceClient.from("teams").select("id, name");
+      const trainingTeamId = findTrainingGroup(allTeams || [], division);
+      if (trainingTeamId && trainingTeamId !== teamId) {
+        const { error: tgErr } = await serviceClient
+          .from("team_members")
+          .insert({ team_id: trainingTeamId, user_id: newUserId, role: "player" });
+        if (tgErr) console.error("training group auto-add failed:", tgErr.message);
       }
     }
 

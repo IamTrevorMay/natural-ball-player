@@ -346,7 +346,7 @@ function LoginPage({ onLogin }) {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
-  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '' });
+  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '' });
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupSent, setSignupSent] = useState(false);
   const [signupError, setSignupError] = useState('');
@@ -384,7 +384,7 @@ function LoginPage({ onLogin }) {
     setShowSignup(false);
     setSignupSent(false);
     setSignupError('');
-    setSignup({ full_name: '', email: '', phone: '', password: '' });
+    setSignup({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '' });
   };
 
   const handleForgotPassword = async (e) => {
@@ -464,6 +464,49 @@ function LoginPage({ onLogin }) {
                   onChange={(e) => setSignup(s => ({ ...s, phone: e.target.value }))}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Date of Birth</label>
+                <input
+                  type="date"
+                  value={signup.date_of_birth}
+                  onChange={(e) => setSignup(s => ({ ...s, date_of_birth: e.target.value }))}
+                  max={new Date().toISOString().split('T')[0]}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+                <p className="text-xs text-gray-400 mt-1">Used to place you in the right age group.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">What are you looking for?</label>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    { value: 'team', label: 'Naturals Team', desc: 'I want to play on a Naturals team' },
+                    { value: 'training', label: 'Just Training', desc: 'Training only, no team' },
+                    { value: 'both', label: 'Both', desc: 'Naturals team and training' },
+                  ].map(opt => (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-3 border rounded-lg px-3 py-2 cursor-pointer transition ${
+                        signup.signup_intent === opt.value ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="signup_intent"
+                        value={opt.value}
+                        checked={signup.signup_intent === opt.value}
+                        onChange={(e) => setSignup(s => ({ ...s, signup_intent: e.target.value }))}
+                        className="mt-1 text-blue-600 focus:ring-blue-500"
+                        required
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-gray-900">{opt.label}</span>
+                        <span className="block text-xs text-gray-500">{opt.desc}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
