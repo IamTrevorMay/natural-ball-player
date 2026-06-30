@@ -34,7 +34,8 @@ const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
 const PROFILE_TABS = [
   { key: 'general', label: 'General' },
   { key: 'athletes', label: 'Athletes', viewedRoles: ['coach', 'admin'] },
-  { key: 'programming', label: 'Programming', roles: ['admin', 'coach'] },
+  // #226: Programming was merged into Schedule (they function the same). The
+  // Schedule tab now renders the calendar followed by the programming list.
   { key: 'schedule', label: 'Schedule', roles: ['admin', 'coach'] },
   { key: 'trackman', label: 'Trackman' },
   { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
@@ -52,6 +53,18 @@ const PROFILE_TABS = [
   { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
   { key: 'marek', label: 'Marek', roles: ['admin', 'coach'] },
 ];
+
+// #226: whole-years age from a 'YYYY-MM-DD' DOB, or null if absent/invalid.
+function ageFromDob(dob) {
+  if (!dob) return null;
+  const age = Math.floor((new Date() - new Date(dob + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000));
+  return Number.isFinite(age) ? age : null;
+}
+// Fail-closed age gate: true only when DOB is present AND the athlete is at least `min`.
+function meetsAge(dob, min) {
+  const age = ageFromDob(dob);
+  return age != null && age >= min;
+}
 
 const PT_STATUS_OPTIONS = ['Active', 'Pending Eval', 'In Treatment', 'Maintenance', 'Discharged'];
 const PT_STATUS_COLORS = {
@@ -1072,8 +1085,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   };
 
   useEffect(() => {
-    if (activeProfileTab === 'schedule') fetchScheduleEvents();
-    if (activeProfileTab === 'programming') fetchProgrammingData();
+    // #226: Schedule tab now also renders the programming list, so fetch both.
+    if (activeProfileTab === 'schedule') { fetchScheduleEvents(); fetchProgrammingData(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProfileTab, scheduleDate, userId]);
 
@@ -1837,13 +1850,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           <div className="border-b border-gray-200 mb-6 -mx-2 px-2">
             <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
               {PROFILE_TABS.filter(tab => {
-                // Players get a read-only Programming tab on their OWN profile so they can
-                // see what's programmed for them (#153). Staff keep it via tab.roles below.
-                if (tab.key === 'programming' && userRole === 'player') return loggedInUserId === userId;
+                // #226: age-gate sensitive tabs, fail-closed — hidden when the viewed
+                // athlete's DOB is missing or under the threshold, for everyone
+                // (including the athlete's own view): Marek bloodwork 18+, Recruitment 15+.
+                if (tab.key === 'marek' && !meetsAge(userData?.date_of_birth, 18)) return false;
+                if (tab.key === 'recruitment' && !meetsAge(userData?.date_of_birth, 15)) return false;
+                // Players get a read-only Schedule tab (calendar + their programming,
+                // merged per #226) on their OWN profile so they can see what's
+                // programmed for them (#153). Staff keep it via tab.roles below.
+                if (tab.key === 'schedule' && userRole === 'player') return loggedInUserId === userId;
                 // Players can connect their OWN WHOOP on their own profile (#154); the
                 // edge function scopes them to self-access only.
                 if (tab.key === 'whoop' && userRole === 'player') return loggedInUserId === userId;
-                // Players can view their OWN recruitment entries (#216).
+                // Players can view their OWN recruitment entries (#216) — subject to the 15+ gate above.
                 if (tab.key === 'recruitment' && userRole === 'player') return loggedInUserId === userId;
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
@@ -3385,7 +3404,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'programming' && (() => {
+          {/* #226: Programming merged into the Schedule tab — renders below the calendar. */}
+          {activeProfileTab === 'schedule' && (() => {
             const today = fmtLocalDate(new Date());
             const isActive = (a) => {
               if (!a.start_date && !a.end_date) return true;
@@ -3399,7 +3419,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             const fmtDate = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
             return (
-              <div className="space-y-6">
+              <div className="space-y-6 mt-6 pt-6 border-t border-gray-200">
+                <h3 className="text-base font-bold text-gray-900 flex items-center">
+                  <ClipboardList size={18} className="mr-2 text-gray-500" />
+                  Programming
+                </h3>
                 {programmingData.loading && (
                   <p className="text-sm text-gray-500">Loading programming...</p>
                 )}
