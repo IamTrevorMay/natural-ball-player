@@ -357,7 +357,57 @@ export default function Schedule({ userId, userRole }) {
 
     const allMpa = [...directMpa, ...teamMpa];
     const mealEvents = expandMealPlanAssignments(allMpa, rangeStart, rangeEnd);
-    setMyScheduleEvents([...data, ...teamEvents, ...mealEvents]);
+
+    // Show training slots in My Schedule:
+    // coaches see slots where they are the coach; players see their confirmed reservations.
+    const slotEvents = [];
+    if (isCoach) {
+      const { data: rawSlots } = await supabase.from('training_slots').select('*').eq('coach_id', userId);
+      (rawSlots || []).forEach(slot => {
+        if (slot.repeat_weekly && !slot.recurrence_parent_id) {
+          const slotStart = new Date(slot.slot_date + 'T00:00:00');
+          const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : rangeEnd;
+          let current = new Date(slotStart);
+          let index = 0;
+          while (current <= rangeEnd && current <= endDate) {
+            const occStr = fmtLocalDate(current);
+            if (occStr >= startStr && occStr <= endStr) {
+              slotEvents.push({ ...slot, event_date: occStr, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true, _occurrence_index: index, _is_virtual: index > 0 });
+            }
+            current.setDate(current.getDate() + 7);
+            index++;
+            if (index > 500) break;
+          }
+        } else if (!slot.recurrence_parent_id && slot.slot_date >= startStr && slot.slot_date <= endStr) {
+          slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true });
+        }
+      });
+    } else {
+      const { data: myRes } = await supabase.from('slot_reservations').select('*, training_slots(*)').eq('player_id', userId).eq('status', 'confirmed');
+      (myRes || []).forEach(r => {
+        const slot = r.training_slots;
+        if (!slot) return;
+        if (slot.repeat_weekly && !slot.recurrence_parent_id) {
+          const slotStart = new Date(slot.slot_date + 'T00:00:00');
+          const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : rangeEnd;
+          let current = new Date(slotStart);
+          let index = 0;
+          while (current <= rangeEnd && current <= endDate) {
+            const occStr = fmtLocalDate(current);
+            if (occStr >= startStr && occStr <= endStr) {
+              slotEvents.push({ ...slot, event_date: occStr, event_type: 'training_slot', title: slot.notes || 'Training Session', _is_slot: true, _occurrence_index: index, _is_virtual: index > 0 });
+            }
+            current.setDate(current.getDate() + 7);
+            index++;
+            if (index > 500) break;
+          }
+        } else if (!slot.recurrence_parent_id && slot.slot_date >= startStr && slot.slot_date <= endStr) {
+          slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Session', _is_slot: true });
+        }
+      });
+    }
+
+    setMyScheduleEvents([...data, ...teamEvents, ...mealEvents, ...slotEvents]);
   };
 
   const fetchFacilityEvents = async () => {
@@ -1645,6 +1695,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
       case 'practice': return 'bg-green-500 text-white border-green-600';
       case 'tryout': return 'bg-amber-500 text-white border-amber-600';
       case 'meal': return 'bg-yellow-400 text-yellow-900 border-yellow-500';
+      case 'training_slot': return 'bg-teal-500 text-white border-teal-600';
       default: return 'bg-gray-500 text-white border-gray-600';
     }
   };
@@ -1897,6 +1948,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
       case 'practice': return 'border-l-4 border-green-600 bg-green-100';
       case 'tryout': return 'border-l-4 border-amber-600 bg-amber-100';
       case 'meal': return 'border-l-4 border-yellow-600 bg-yellow-100';
+      case 'training_slot': return 'border-l-4 border-teal-600 bg-teal-100';
       default: return 'border-l-4 border-gray-600 bg-gray-100';
     }
   };
