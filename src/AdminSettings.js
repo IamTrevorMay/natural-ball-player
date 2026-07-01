@@ -186,7 +186,7 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              Teams ({teams.length})
+              Teams ({teams.filter(t => (t.team_type || 'team') !== 'training').length})
             </button>
             <button
               onClick={() => setActiveTab('coaches')}
@@ -1740,6 +1740,7 @@ function TeamsTab({ teams, users, showCreateTeam, setShowCreateTeam, refreshTeam
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredTeams = teams.filter(t => {
+    if ((t.team_type || 'team') === 'training') return false;
     const q = searchQuery.toLowerCase();
     return t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
   });
