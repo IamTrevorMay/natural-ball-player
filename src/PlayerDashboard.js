@@ -226,7 +226,7 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
           id: r.id,
           type: 'pending',
           text: 'Training slot request pending',
-          detail: r.training_slots?.start_time ? `${new Date(r.training_slots.slot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${formatTime(r.training_slots.start_time)}` : '',
+          detail: r.training_slots?.start_time ? `${new Date((r.slot_date || r.training_slots.slot_date) + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at ${formatTime(r.training_slots.start_time)}` : '',
           time: r.created_at,
         });
       });

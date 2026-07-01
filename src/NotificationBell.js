@@ -78,7 +78,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                       <span className="font-medium">{req.users?.full_name || 'A player'}</span> requested a training session
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {req.slot?.slot_date && fmtDate(req.slot.slot_date)}
+                      {(req.slot_date || req.slot?.slot_date) && fmtDate(req.slot_date || req.slot.slot_date)}
                       {req.slot?.start_time && ` at ${fmtSlotTime(req.slot.start_time)}`}
                     </p>
                   </div>
