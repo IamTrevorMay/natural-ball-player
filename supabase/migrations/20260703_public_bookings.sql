@@ -20,6 +20,14 @@ alter table training_slots
   add column if not exists is_public boolean not null default false,
   add column if not exists public_price_cents integer;
 
+-- The public edge functions read these older tables via service_role, which
+-- needs explicit table GRANTs (it does NOT inherit them, and RLS bypass alone
+-- is not enough). These tables predate the store and were only granted to
+-- `authenticated`. Without this the functions return "permission denied".
+grant all on facility_events to service_role;
+grant all on training_slots to service_role;
+grant all on slot_reservations to service_role;
+
 -- 2. Guest bookings ----------------------------------------------------------
 
 create table if not exists public_bookings (
