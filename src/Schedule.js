@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
@@ -2206,6 +2206,21 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
 
   const SLOT_WIDTH = 48; // px per 15-min slot
 
+  // Mirror a horizontal scrollbar above the grid so staff can scroll time
+  // without dragging to the bottom of a tall table. The two scroll containers
+  // stay in sync; the top one just holds a spacer the width of the table.
+  const topScrollRef = useRef(null);
+  const bodyScrollRef = useRef(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
+  useEffect(() => {
+    const measure = () => { if (bodyScrollRef.current) setScrollWidth(bodyScrollRef.current.scrollWidth); };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+  const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
+  const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
+
   return (
     <div>
       <div className="flex items-center justify-center space-x-4 mb-4">
@@ -2218,7 +2233,14 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
         </div>
         <button onClick={nextDay} className="p-1 hover:bg-gray-100 rounded transition"><ChevronRight size={18} /></button>
       </div>
-      <div className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+      <div
+        ref={topScrollRef}
+        onScroll={syncFromTop}
+        className="overflow-x-auto overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
+      >
+        <div style={{ width: scrollWidth, height: 1 }} />
+      </div>
+      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-hidden overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
