@@ -71,7 +71,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
     const teamNames = (c.team_members || []).map(tm => tm.teams?.name).filter(Boolean);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      if (!c.full_name.toLowerCase().includes(q)) return false;
+      if (!(c.full_name || '').toLowerCase().includes(q)) return false;
     }
     if (filterTeam !== 'All' && !teamNames.includes(filterTeam)) return false;
     if (filterStatus !== 'All' && (c.coach_status || '') !== filterStatus) return false;

@@ -64,8 +64,19 @@ export default function App() {
   }, [currentView]);
 
   useEffect(() => {
-    if (currentView || !userRole) return;
-    setCurrentView(userRole === 'player' ? 'dashboard' : 'schedule');
+    if (!userRole) return;
+    const defaultView = userRole === 'player' ? 'dashboard' : 'schedule';
+    if (!currentView) { setCurrentView(defaultView); return; }
+    // A persisted view (localStorage) may be invalid for the current role — e.g. a
+    // player landing on manage-athletes/settings, or a coach on a usage/manage-coaches
+    // view. Those render blocks fail their gates and show a blank page with no
+    // redirect, so reset to the role's default instead.
+    const adminOnly = ['manage-coaches', 'manage-interns', 'usage'];
+    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'settings'];
+    const forbidden =
+      (userRole !== 'admin' && adminOnly.includes(currentView)) ||
+      (userRole === 'player' && staffOnly.includes(currentView));
+    if (forbidden) setCurrentView(defaultView);
   }, [userRole, currentView]);
 
   // V2 research experiment: anonymous usage tracking, gated on
@@ -199,6 +210,7 @@ export default function App() {
               checkWaiverStatus(session.user.id);
               checkContractStatus(session.user.id);
               checkLoiStatus(session.user.id);
+              checkFacilityFineStatus(session.user.id);
             }
           }).catch((e) => console.error('auth fallback getSession failed:', e));
         }
@@ -795,7 +807,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
       }
     })();
     return () => { cancelled = true; };
-  }, [userId, effectiveRole]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId, effectiveRole, waiverSigned]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Birthday check (#210) — runs for every role; shows at most once per day.
   useEffect(() => {
@@ -920,7 +932,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
-            {currentView === 'manage-athletes' && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}

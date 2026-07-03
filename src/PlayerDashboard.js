@@ -55,7 +55,9 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
           ? supabase
               .from('schedule_events')
               .select('*')
-              .overlaps('team_ids', playerTeamIds)
+              // Union the multi-team array with the legacy scalar team_id, so rows
+              // that never got backfilled into team_ids still appear (mirrors MyTeam).
+              .or(`team_id.in.(${playerTeamIds.join(',')}),team_ids.ov.{${playerTeamIds.join(',')}}`)
               .eq('event_date', today)
           : Promise.resolve({ data: [] }),
       ]);
@@ -299,7 +301,7 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
       {/* Welcome Header */}
       <div>
         <h2 className="text-3xl font-bold text-gray-900">
-          Welcome back, {playerData.full_name.split(' ')[0]}!
+          Welcome back, {(playerData.full_name || '').split(' ')[0]}!
         </h2>
         <p className="text-gray-600 mt-1">Here's your overview for today</p>
       </div>

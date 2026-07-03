@@ -308,7 +308,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     const trainerNames = getTrainerNames(p);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      if (!p.full_name.toLowerCase().includes(q)) return false;
+      if (!(p.full_name || '').toLowerCase().includes(q)) return false;
     }
     if (filterTeam !== 'All' && !teamNames.includes(filterTeam)) return false;
     if (filterTrainer !== 'All' && !trainerNames.includes(filterTrainer)) return false;

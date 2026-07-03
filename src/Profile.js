@@ -261,6 +261,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   useEffect(() => {
     let cancelled = false;
+    // Reset to a safe tab whenever the viewed user changes. Profile stays mounted
+    // across navigation (parent only swaps userId), so without this a tab that's
+    // age-gated for the new user (e.g. Marek bloodwork) would keep rendering.
+    setActiveProfileTab('general');
     fetchUserData();
     fetchRecruitmentTeams();
     fetchSchools();
@@ -1655,7 +1659,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 <img src={userData.avatar_url} alt="Avatar" className="w-24 h-24 rounded-full object-cover" />
               ) : (
                 <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
-                  {userData.full_name.charAt(0)}
+                  {userData.full_name?.charAt(0) || '?'}
                 </div>
               )}
               <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">

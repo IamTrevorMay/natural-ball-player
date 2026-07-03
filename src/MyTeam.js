@@ -461,7 +461,7 @@ function RosterTab({ roster, coaches = [], prospectPlayerIds, userRole, onProspe
   // Sort
   sortedRoster.sort((a, b) => {
     if (sortBy === 'name') {
-      return a.full_name.localeCompare(b.full_name);
+      return (a.full_name || '').localeCompare(b.full_name || '');
     } else if (sortBy === 'number') {
       const numA = parseInt(a.player_profile?.jersey_number) || 999;
       const numB = parseInt(b.player_profile?.jersey_number) || 999;
