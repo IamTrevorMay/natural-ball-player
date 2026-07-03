@@ -17,6 +17,7 @@ import ContractPage from './ContractPage';
 import FacilityFinePage from './FacilityFinePage';
 import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
+import PublicBookingPage from './PublicBookingPage';
 import NotificationBell from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
@@ -297,6 +298,12 @@ export default function App() {
     setCurrentView('dashboard');
     setWorkPortalView('work-home');
   };
+
+  // Public, unauthenticated booking route (#229). Rendered before the auth /
+  // loading gates so outside customers reach /book without ever seeing login.
+  if (window.location.pathname.startsWith('/book')) {
+    return <PublicBookingPage />;
+  }
 
   if (loading) {
     return (

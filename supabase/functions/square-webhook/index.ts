@@ -121,12 +121,33 @@ Deno.serve(async (req) => {
         }
         const { data: updated, error } = await q.select("id");
         if (error) throw error;
+
+        // Public facility bookings (#229) live in a separate table, matched by
+        // the same Square order_id. Confirm on completion; mark failed/refunded
+        // otherwise. A guest payment never matches store_purchases, so update
+        // both tables independently rather than branching on `updated`.
+        if (orderId) {
+          const bookingStatus = purchaseStatus === "paid" ? "confirmed"
+            : purchaseStatus === "failed" ? "canceled"
+            : null;
+          if (bookingStatus) {
+            // Only act on a still-pending booking so a late/duplicate event
+            // can't revive one a staffer already refunded or canceled.
+            const { error: bErr } = await service
+              .from("public_bookings")
+              .update({ status: bookingStatus, square_payment_id: paymentId })
+              .eq("square_order_id", orderId)
+              .eq("status", "pending_payment");
+            if (bErr) throw bErr;
+          }
+        }
+
         // A COMPLETED payment that matched no purchase row (webhook landed before
         // checkout inserted the pending row, or an ad-hoc POS payment) needs
         // reconciliation. The full event payload is persisted below, so
         // square-backfill-resolve can pick it up; surface it in logs meanwhile.
         if (purchaseStatus === "paid" && (!updated || updated.length === 0)) {
-          console.warn(`square-webhook: COMPLETED payment ${paymentId} (order ${orderId}) matched no purchase row — needs reconciliation`);
+          console.warn(`square-webhook: COMPLETED payment ${paymentId} (order ${orderId}) matched no purchase row — checking public_bookings / needs reconciliation`);
         }
       }
     } else if (

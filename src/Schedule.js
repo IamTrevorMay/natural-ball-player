@@ -4616,6 +4616,10 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
   const [coachIds, setCoachIds] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [coaches, setCoaches] = useState([]);
+  // Public booking (#229): expose this event on the public /book page.
+  const [isPublic, setIsPublic] = useState(false);
+  const [publicPrice, setPublicPrice] = useState('');
+  const [publicCapacity, setPublicCapacity] = useState(1);
 
   useEffect(() => {
     (async () => {
@@ -4630,6 +4634,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 
   const handleSave = async () => {
     if (!title.trim()) return alert('Title is required');
+    if (isPublic && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -4655,6 +4660,9 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
         athlete_id: athleteId || null,
         coach_id: coachIds[0] || null,
         coach_ids: coachIds.length > 0 ? coachIds : null,
+        is_public: isPublic,
+        public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
+        public_capacity: isPublic ? (parseInt(publicCapacity) || 1) : 1,
       });
       if (error) throw error;
       onSuccess();
@@ -4769,6 +4777,28 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
               ))}
             </div>
           </div>
+          <div className="mb-6 border border-gray-200 rounded-lg p-3">
+            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
+              <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+              <span>Available for public booking</span>
+            </label>
+            {isPublic && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Price (USD)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input type="number" min="0" step="0.01" value={publicPrice} onChange={(e) => setPublicPrice(e.target.value)} placeholder="0.00" className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Capacity</label>
+                  <input type="number" min="1" value={publicCapacity} onChange={(e) => setPublicCapacity(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                </div>
+                <p className="col-span-2 text-xs text-gray-400">Outside customers can book & pay for this on the public /book page. Each occurrence of a recurring event is separately bookable.</p>
+              </div>
+            )}
+          </div>
           <div className="flex justify-end space-x-3">
             <button onClick={onClose} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition text-sm font-medium">Cancel</button>
             <button onClick={handleSave} disabled={loading} className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition text-sm font-medium disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
@@ -4786,12 +4816,44 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete, coaches = [] }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal' });
+  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal', is_public: !!event.is_public, public_price: event.public_price_cents != null ? (event.public_price_cents / 100).toFixed(2) : '', public_capacity: event.public_capacity || 1 });
 
   const isStaff = userRole === 'admin' || userRole === 'coach';
   const isPlayer = userRole === 'player';
   const eventMasterId = event._master_id || event.id;
   const occurrenceDate = event.event_date;
+
+  // Public guest bookings (#229) for this specific occurrence.
+  const [guestBookings, setGuestBookings] = useState([]);
+  const [refundingId, setRefundingId] = useState(null);
+
+  const fetchGuestBookings = async () => {
+    if (!isStaff || !event.is_public) return;
+    const { data } = await supabase
+      .from('public_bookings')
+      .select('id, guest_name, guest_email, guest_phone, notes, status, amount_cents, created_at')
+      .eq('source_type', 'facility_event')
+      .eq('source_id', eventMasterId)
+      .eq('occurrence_date', occurrenceDate)
+      .in('status', ['pending_payment', 'confirmed'])
+      .order('created_at', { ascending: true });
+    setGuestBookings(data || []);
+  };
+
+  const handleRefund = async (bookingId) => {
+    if (!window.confirm('Cancel this booking and refund the customer?')) return;
+    setRefundingId(bookingId);
+    try {
+      const { data, error } = await supabase.functions.invoke('public-booking-refund', { body: { booking_id: bookingId } });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      await fetchGuestBookings();
+    } catch (err) {
+      alert('Refund failed: ' + formatUserError(err));
+    } finally {
+      setRefundingId(null);
+    }
+  };
 
   const [signups, setSignups] = useState([]);
   const [mySignup, setMySignup] = useState(null);
@@ -4826,6 +4888,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 
   useEffect(() => {
     fetchSignups();
+    fetchGuestBookings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventMasterId, occurrenceDate]);
 
@@ -4863,9 +4926,17 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   };
 
   const handleSave = async () => {
+    if (formData.is_public && !(parseFloat(formData.public_price) > 0)) return alert('Enter a price for public booking');
     setLoading(true);
     try {
-      const { error } = await supabase.from('facility_events').update({ title: formData.title, description: formData.description || null, start_time: formData.start_time || null, end_time: formData.end_time || null, location: formData.location || null, color: formData.color || null }).eq('id', eventMasterId);
+      const { error } = await supabase.from('facility_events').update({
+        title: formData.title, description: formData.description || null,
+        start_time: formData.start_time || null, end_time: formData.end_time || null,
+        location: formData.location || null, color: formData.color || null,
+        is_public: formData.is_public,
+        public_price_cents: formData.is_public ? Math.round(parseFloat(formData.public_price) * 100) : null,
+        public_capacity: formData.is_public ? (parseInt(formData.public_capacity) || 1) : 1,
+      }).eq('id', eventMasterId);
       if (error) throw error;
       onUpdate();
     } catch (err) { alert('Error: ' + formatUserError(err)); } finally { setLoading(false); }
@@ -4923,6 +4994,27 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                   ))}
                 </div>
               </div>
+              <div className="border border-gray-200 rounded-lg p-3">
+                <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
+                  <input type="checkbox" checked={formData.is_public} onChange={(e) => setFormData({ ...formData, is_public: e.target.checked })} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                  <span>Available for public booking</span>
+                </label>
+                {formData.is_public && (
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Price (USD)</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                        <input type="number" min="0" step="0.01" value={formData.public_price} onChange={(e) => setFormData({ ...formData, public_price: e.target.value })} placeholder="0.00" className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Capacity</label>
+                      <input type="number" min="1" value={formData.public_capacity} onChange={(e) => setFormData({ ...formData, public_capacity: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="flex space-x-3 pt-2">
                 <button onClick={() => setEditing(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
                 <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
@@ -4934,6 +5026,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               {(event.start_time || event.end_time) && <div className="flex items-center space-x-3 text-sm"><Clock size={16} className="text-gray-400" /><span>{formatTimeDisplay(event.start_time)}{event.end_time ? ` - ${formatTimeDisplay(event.end_time)}` : ''}</span></div>}
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
+              {event.is_public && <div className="flex items-center space-x-3 text-sm"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Public booking</span>{event.public_price_cents != null && <span className="text-gray-500">${(event.public_price_cents / 100).toFixed(2)} · capacity {event.public_capacity || 1}</span>}</div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
               {(() => {
                 const coachNames = (event.coach_ids || []).map(cid => coaches.find(c => c.id === cid)?.full_name).filter(Boolean);
@@ -5018,6 +5111,40 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">{s.users?.full_name || 'Unknown'}</p>
                             {s.notes && <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{s.notes}</p>}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {isStaff && event.is_public && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                    Public bookings {guestBookings.length > 0 && <span className="ml-1 text-gray-700">({guestBookings.length})</span>}
+                  </h4>
+                  {guestBookings.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic">No public bookings yet.</p>
+                  ) : (
+                    <ul className="space-y-2 max-h-48 overflow-y-auto">
+                      {guestBookings.map(b => (
+                        <li key={b.id} className="bg-gray-50 rounded-lg p-2.5">
+                          <div className="flex items-start justify-between">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{b.guest_name}</p>
+                              <p className="text-xs text-gray-500 truncate">{b.guest_email}{b.guest_phone ? ` · ${b.guest_phone}` : ''}</p>
+                              {b.notes && <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{b.notes}</p>}
+                            </div>
+                            <span className={`ml-2 flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${b.status === 'confirmed' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                              {b.status === 'confirmed' ? 'Paid' : 'Pending'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between mt-1.5">
+                            <span className="text-xs text-gray-500">${(b.amount_cents / 100).toFixed(2)}</span>
+                            <button onClick={() => handleRefund(b.id)} disabled={refundingId === b.id} className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50">
+                              {refundingId === b.id ? 'Processing…' : (b.status === 'confirmed' ? 'Cancel & refund' : 'Cancel')}
+                            </button>
                           </div>
                         </li>
                       ))}
@@ -5178,6 +5305,9 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   const [maxPlayers, setMaxPlayers] = useState(existingSlot?.max_players || 1);
   const [notes, setNotes] = useState(existingSlot?.notes || '');
   const [loading, setLoading] = useState(false);
+  // Public booking (#229): let outside customers book & pay for this session.
+  const [isPublic, setIsPublic] = useState(existingSlot?.is_public || false);
+  const [publicPrice, setPublicPrice] = useState(existingSlot?.public_price_cents != null ? (existingSlot.public_price_cents / 100).toFixed(2) : '');
 
   // Keep the slot's own weekday selected when slotDate changes.
   useEffect(() => {
@@ -5202,13 +5332,19 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   };
 
   const handleSave = async () => {
+    if (isPublic && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
+    const publicFields = {
+      is_public: isPublic,
+      public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
+    };
     setLoading(true);
     try {
       if (isEdit) {
         const payload = {
           coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
           auto_confirm: autoConfirm, repeat_weekly: repeatWeekly,
-          repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
+          repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null,
+          ...publicFields,
         };
         const { error } = await supabase.from('training_slots').update(payload).eq('id', existingSlot.id);
         if (error) throw error;
@@ -5225,6 +5361,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
           repeat_end_date: repeatEndDate || null,
           max_players: maxPlayers,
           notes: notes || null,
+          ...publicFields,
         }));
         const { error } = await supabase.from('training_slots').insert(rows);
         if (error) throw error;
@@ -5232,7 +5369,8 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
         const payload = {
           coach_id: coachId, slot_date: slotDate, start_time: startTime, duration_minutes: duration,
           auto_confirm: autoConfirm, repeat_weekly: repeatWeekly,
-          repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null
+          repeat_end_date: repeatWeekly && repeatEndDate ? repeatEndDate : null, max_players: maxPlayers, notes: notes || null,
+          ...publicFields,
         };
         const { error } = await supabase.from('training_slots').insert(payload);
         if (error) throw error;
@@ -5286,6 +5424,22 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
             </>
           )}
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g., Hitting session, Pitching mechanics" rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div className="border border-gray-200 rounded-lg p-3">
+            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
+              <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+              <span>Available for public booking</span>
+            </label>
+            {isPublic && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Price per session (USD)</label>
+                <div className="relative max-w-[160px]">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                  <input type="number" min="0" step="0.01" value={publicPrice} onChange={(e) => setPublicPrice(e.target.value)} placeholder="0.00" className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">Outside customers can book & pay for this session on the public /book page (up to Max Players spots).</p>
+              </div>
+            )}
+          </div>
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
             <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
