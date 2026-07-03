@@ -31,6 +31,11 @@ function getWeekRangeLabel(date) {
   if (start.getMonth() === end.getMonth()) {
     return `${start.toLocaleDateString('en-US', opts)} – ${end.getDate()}, ${end.getFullYear()}`;
   }
+  // Across a year boundary (Dec → Jan) show the start year too.
+  if (start.getFullYear() !== end.getFullYear()) {
+    const optsY = { month: 'short', day: 'numeric', year: 'numeric' };
+    return `${start.toLocaleDateString('en-US', optsY)} – ${end.toLocaleDateString('en-US', optsY)}`;
+  }
   return `${start.toLocaleDateString('en-US', opts)} – ${end.toLocaleDateString('en-US', opts)}, ${end.getFullYear()}`;
 }
 
@@ -215,15 +220,19 @@ export default function Schedule({ userId, userRole }) {
         .eq('user_id', userId);
       
       const teamIds = coachTeams?.map(t => t.team_id) || [];
-      if (teamIds.length > 0) {
-        // Filter to only players on coach's teams
-        const { data } = await query;
-        const filteredPlayers = data?.filter(p => 
-          p.team_members?.some(tm => teamIds.includes(tm.team_id))
-        );
-        setPlayers(filteredPlayers || []);
+      // A coach only ever sees players on their own teams. With no teams, that's an
+      // empty set — never fall through to the unfiltered all-users query.
+      if (teamIds.length === 0) {
+        setPlayers([]);
         return;
       }
+      // Filter to only players on coach's teams
+      const { data } = await query;
+      const filteredPlayers = data?.filter(p =>
+        p.team_members?.some(tm => teamIds.includes(tm.team_id))
+      );
+      setPlayers(filteredPlayers || []);
+      return;
     }
 
     const { data } = await query;
@@ -555,11 +564,15 @@ export default function Schedule({ userId, userRole }) {
         is_exception: true,
         is_recurring: false,
         title: event.title,
+        description: event.description,
         start_time: event.start_time,
         end_time: event.end_time,
         location: event.location,
         color: event.color,
         lanes: event.lanes || [],
+        athlete_id: event.athlete_id,
+        coach_id: event.coach_id,
+        coach_ids: event.coach_ids || null,
       });
       return error;
     }
@@ -580,10 +593,11 @@ export default function Schedule({ userId, userRole }) {
       return error;
     }
     if (source === 'slot') {
+      // Slots have no per-occurrence exception model, so a single virtual occurrence
+      // can't be tombstoned — we only clear its reservations. (This path is currently
+      // unreachable: slots pass allowOne:false. Kept honest rather than a no-op update.)
       const { error } = await supabase.from('slot_reservations').delete().eq('slot_id', event.id).eq('slot_date', event.slot_date);
-      if (error) return error;
-      const { error: e2 } = await supabase.from('training_slots').update({}).eq('id', event.id);
-      return e2;
+      return error;
     }
   };
 
@@ -793,25 +807,34 @@ export default function Schedule({ userId, userRole }) {
     if (view === 'team' || view === 'player') source = 'team';
     if (view === 'facility' && selectedCoach) source = 'slot';
     let failed = 0;
+    let skipped = 0;
+    let deleted = 0;
     for (const ev of selectedEvents) {
       const id = ev._master_id || ev.id;
       try {
         if (ev._is_virtual && source === 'facility') {
-          await deleteVirtualOccurrence(ev, source);
+          const error = await deleteVirtualOccurrence(ev, source);
+          if (error) throw error;
+          deleted++;
         } else if (ev._is_virtual && source === 'slot') {
           // Bulk delete of virtual training slot occurrences: skip — would need exception support
+          skipped++;
           continue;
         } else {
           const { error } = await supabase.from(tableForSource(source)).delete().eq('id', id);
           if (error) throw error;
+          deleted++;
         }
       } catch (err) {
         failed++;
         console.error('Bulk delete failed for event', id, err);
       }
     }
-    if (failed > 0) {
-      alert(`${selectedEvents.length - failed} deleted, ${failed} failed. Refresh to see current state.`);
+    if (failed > 0 || skipped > 0) {
+      const parts = [`${deleted} deleted`];
+      if (skipped > 0) parts.push(`${skipped} skipped (recurring slots)`);
+      if (failed > 0) parts.push(`${failed} failed`);
+      alert(`${parts.join(', ')}. Refresh to see current state.`);
     }
     exitSelectMode();
     refetchForSource(source);
@@ -1763,7 +1786,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                 {dayEvents.map(event => (
                   <div
                     key={event.id}
-                    draggable={canManage && !selecting && !event._is_virtual && !!onEventDrop}
+                    draggable={canManage && !selecting && !event._is_virtual && !event._isMealPlan && !!onEventDrop}
                     onDragStart={(e) => {
                       e.stopPropagation();
                       e.dataTransfer.setData('application/x-event-id', String(event.id));
@@ -1901,7 +1924,7 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
                       if ((canManage || allowEventClick) && onEventClick) onEventClick(ev);
                     }}
                     onContextMenu={onEventContextMenu}
-                    draggable={canManage && !selecting && !event._is_virtual && !!onEventDrop}
+                    draggable={canManage && !selecting && !event._is_virtual && !event._isMealPlan && !!onEventDrop}
                     selected={selecting && selectedIds && selectedIds.has(String(event.id))}
                   />
                 ))}

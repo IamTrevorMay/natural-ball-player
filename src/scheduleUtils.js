@@ -74,7 +74,10 @@ export function expandRecurringEvents(masters, exceptions, rangeStart, rangeEnd)
       const exKey = `${master.id}_${dateStr}`;
       if (exceptionMap[exKey]) {
         const ex = exceptionMap[exKey];
-        if (!ex.is_exception) return;
+        // A cancelled/deleted occurrence is a tombstone row — hide it.
+        // (facility_events uses is_exception; staff_schedule_events uses is_cancelled)
+        if (ex.is_cancelled || ex.is_exception) return;
+        // Otherwise it's a modified occurrence — render the replacement row.
         expanded.push(ex);
       } else {
         expanded.push({ ...master, id: `${master.id}_${index}`, event_date: dateStr, _is_virtual: true, _master_id: master.id, _occurrence_index: index });
