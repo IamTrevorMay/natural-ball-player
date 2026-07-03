@@ -37,6 +37,25 @@ const dateDisplay = (d) =>
 const MONTH_LABEL = (d) => d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Saturated bar backgrounds keyed by the event's color (facility_events.color /
+// the booking Type color). Used for the month-grid event bars.
+const TYPE_BAR = {
+  teal: 'bg-teal-600', blue: 'bg-blue-700', purple: 'bg-purple-700', pink: 'bg-pink-600',
+  red: 'bg-red-700', orange: 'bg-orange-600', yellow: 'bg-yellow-600', green: 'bg-green-600', gray: 'bg-gray-700',
+};
+const barColor = (c) => TYPE_BAR[c] || TYPE_BAR.teal;
+
+// Compact time like "11a", "4:45p".
+const shortTime = (t) => {
+  if (!t) return '';
+  let [h, m] = t.split(':').map(Number);
+  const ap = h >= 12 ? 'p' : 'a';
+  h = h % 12 || 12;
+  return m ? `${h}:${String(m).padStart(2, '0')}${ap}` : `${h}${ap}`;
+};
+
+const MONTH_MAX_PER_DAY = 7; // events shown per day before "View More"
+
 // Weeks (arrays of Date) covering the calendar month of `anchor`, padded to
 // full Sun–Sat weeks.
 function buildMonthGrid(anchor) {
@@ -73,6 +92,7 @@ export default function PublicBookingPage() {
   const [view, setView] = useState('month'); // month | week | today | list
   const [viewDate, setViewDate] = useState(() => new Date()); // month/week anchor
   const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [dayModal, setDayModal] = useState(null); // date string when a day's overflow is expanded
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({ name: '', email: '', phone: '', notes: '' });
   const [submitting, setSubmitting] = useState(false);
@@ -234,49 +254,42 @@ export default function PublicBookingPage() {
       );
     }
 
-    // Month (default)
+    // Month (default) — full grid with each day's events listed as colored bars.
     const weeks = buildMonthGrid(viewDate);
     const curMonth = viewDate.getMonth();
     return (
       <div>
         <CalNav label={MONTH_LABEL(viewDate)} onPrev={() => shiftMonth(-1)} onNext={() => shiftMonth(1)} />
-        <div className="grid grid-cols-7 text-center text-xs font-semibold text-gray-400 mb-1">
-          {DOW.map((d) => <div key={d} className="py-1">{d}</div>)}
+        <div className="grid grid-cols-7 text-center text-xs font-semibold text-gray-500 border-b border-gray-200">
+          {DOW.map((d) => <div key={d} className="py-1.5">{d}</div>)}
         </div>
-        <div className="grid grid-cols-7 gap-1.5 mb-5">
+        <div className="grid grid-cols-7 border-l border-t border-gray-200">
           {weeks.flat().map((d) => {
             const ds = fmtLocal(d);
-            const count = (byDate[ds] || []).length;
+            const items = byDate[ds] || [];
             const inMonth = d.getMonth() === curMonth;
             return (
-              <button
-                key={ds}
-                onClick={() => count > 0 && setSelectedDate(ds)}
-                disabled={count === 0}
-                className={`aspect-square rounded-lg flex flex-col items-center justify-center text-sm transition relative ${
-                  ds === selectedDate ? 'bg-teal-600 text-white'
-                    : count > 0 ? 'bg-teal-50 text-gray-900 hover:bg-teal-100 cursor-pointer'
-                    : 'text-gray-300 cursor-default'
-                } ${!inMonth && ds !== selectedDate ? 'opacity-40' : ''}`}
-              >
-                <span className={`${ds === todayStr && ds !== selectedDate ? 'font-bold text-teal-600' : ''}`}>{d.getDate()}</span>
-                {count > 0 && (
-                  <span className={`text-[10px] leading-none mt-0.5 ${ds === selectedDate ? 'text-teal-100' : 'text-teal-600'}`}>
-                    {count} open
-                  </span>
-                )}
-              </button>
+              <div key={ds} className={`border-r border-b border-gray-200 min-h-[128px] p-1 align-top ${!inMonth ? 'bg-gray-50' : ds === todayStr ? 'bg-amber-50' : 'bg-white'}`}>
+                <div className={`text-right text-sm px-1 mb-0.5 ${inMonth ? 'text-gray-500' : 'text-gray-300'} ${ds === todayStr ? 'font-bold text-amber-700' : ''}`}>{d.getDate()}</div>
+                <div className="space-y-0.5">
+                  {items.slice(0, MONTH_MAX_PER_DAY).map((s) => <EventBar key={s.key} s={s} onClick={() => openBooking(s)} />)}
+                  {items.length > MONTH_MAX_PER_DAY && (
+                    <button onClick={() => setDayModal(ds)} className="w-full text-center text-[11px] text-gray-500 hover:text-gray-800 py-0.5">
+                      View More
+                    </button>
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
-        <DayPanel date={selectedDate} daySlots={byDate[selectedDate] || []} onOpen={openBooking} />
       </div>
     );
   };
 
   return (
-    <Shell>
-      <div className="max-w-3xl mx-auto">
+    <Shell wide={view === 'month'}>
+      <div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>
         <h1 className="text-3xl font-bold text-gray-900 mb-1">Book Facility Time</h1>
         <p className="text-gray-600 mb-5">Reserve a resource or a session with one of our coaches.</p>
 
@@ -322,6 +335,25 @@ export default function PublicBookingPage() {
 
         {renderBody()}
       </div>
+
+      {/* Day overflow modal (from month "View More") */}
+      {dayModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40 p-4" onClick={() => setDayModal(null)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-gray-900">{dateDisplay(dayModal)}</h3>
+                <button onClick={() => setDayModal(null)} className="text-gray-400 hover:text-gray-600"><ArrowLeft size={18} /></button>
+              </div>
+              <div className="space-y-2">
+                {(byDate[dayModal] || []).map((s) => (
+                  <SlotCard key={s.key} s={s} onClick={() => { setDayModal(null); openBooking(s); }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Booking form modal */}
       {selected && (
@@ -400,6 +432,20 @@ function SlotCard({ s, onClick }) {
   );
 }
 
+// A colored event bar in the month grid: dark time chip + tinted title.
+function EventBar({ s, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${s.title} · ${timeDisplay(s.start_time)} · ${money(s.price_cents)}`}
+      className={`flex w-full rounded overflow-hidden text-white text-[11px] leading-tight ${barColor(s.color)} hover:opacity-90 transition`}
+    >
+      <span className="px-1 py-0.5 bg-black/30 font-semibold whitespace-nowrap">{shortTime(s.start_time)}</span>
+      <span className="px-1 py-0.5 flex-1 truncate text-left">{s.title}</span>
+    </button>
+  );
+}
+
 // The list of slots for a single selected day (used by Week + Month views).
 function DayPanel({ date, daySlots, onOpen }) {
   return (
@@ -450,11 +496,11 @@ function EmptyState({ label = 'No open times right now. Please check back soon.'
   );
 }
 
-function Shell({ children }) {
+function Shell({ children, wide }) {
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center space-x-2">
+        <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto px-4 py-4 flex items-center space-x-2`}>
           <span className="text-2xl">⚾</span>
           <span className="font-bold text-gray-900">Natural Ball Player</span>
         </div>

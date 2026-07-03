@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -106,6 +106,10 @@ export default function Schedule({ userId, userRole }) {
   // Facility & Training Slots state
   const [facilityEvents, setFacilityEvents] = useState([]);
   const [showAddFacilityEvent, setShowAddFacilityEvent] = useState(null);
+  // #229: choosing between an Organization Event and a Public Booking before the
+  // create panel opens. Holds the prefill (date/cell) until a type is picked.
+  const [showEventTypeChooser, setShowEventTypeChooser] = useState(null);
+  const [showAddPublicBooking, setShowAddPublicBooking] = useState(null);
   const [coaches, setCoaches] = useState([]);
   const [selectedCoach, setSelectedCoach] = useState(null);
   const [coachSlots, setCoachSlots] = useState([]);
@@ -120,6 +124,11 @@ export default function Schedule({ userId, userRole }) {
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
   const [staffScheduleEvents, setStaffScheduleEvents] = useState([]);
   const [staffAssignments, setStaffAssignments] = useState([]);
+  // #229: a coach's own training slots + public bookings for the lane day, so
+  // the Staff Schedule rows reflect sessions they're connected to even before a
+  // client books. Keyed for the single `laneDate` shown in the lanes view.
+  const [coachDaySlots, setCoachDaySlots] = useState([]);
+  const [eventPublicBookings, setEventPublicBookings] = useState({});
   // Calendar selection + context menu state (shared across views)
   const [selecting, setSelecting] = useState(false);
   const [selectedEvents, setSelectedEvents] = useState([]); // raw event objects (need event object for source context)
@@ -470,12 +479,55 @@ export default function Schedule({ userId, userRole }) {
     // Build day boundaries in UTC for the given local date
     const dayStart = new Date(dateStr + 'T00:00:00');
     const dayEnd = new Date(dateStr + 'T23:59:59');
-    const [evRes, asgRes] = await Promise.all([
+    const [evRes, asgRes, slotRes, pubRes] = await Promise.all([
       supabase.from('staff_schedule_events').select('*').gte('start_at', dayStart.toISOString()).lte('start_at', dayEnd.toISOString()).order('start_at'),
       supabase.from('staff_schedule_assignments').select('id, event_id, user_id, role, user:user_id(full_name, avatar_url)'),
+      supabase.from('training_slots').select('*'),
+      supabase.from('public_bookings').select('source_type, source_id, guest_name, status').eq('occurrence_date', dateStr).in('status', ['pending_payment', 'confirmed']),
     ]);
     setStaffScheduleEvents(evRes.data || []);
     setStaffAssignments(asgRes.data || []);
+
+    // Which training slots (across all coaches) occur on `dateStr`? Weekly
+    // masters repeat every 7 days from slot_date; non-recurring must match the
+    // exact date. Exclude per-occurrence child rows.
+    const occurringSlots = (slotRes.data || []).filter(s => {
+      if (s.recurrence_parent_id) return false;
+      if (!s.repeat_weekly) return s.slot_date === dateStr;
+      if (dateStr < s.slot_date) return false;
+      if (s.repeat_end_date && dateStr > s.repeat_end_date) return false;
+      const diffDays = Math.round((new Date(dateStr + 'T00:00:00') - new Date(s.slot_date + 'T00:00:00')) / 86400000);
+      return diffDays % 7 === 0;
+    });
+
+    // Split public bookings by what they're attached to.
+    const pubBySlot = {};
+    const pubByEvent = {};
+    (pubRes.data || []).forEach(p => {
+      const bucket = p.source_type === 'training_slot' ? pubBySlot : pubByEvent;
+      (bucket[p.source_id] = bucket[p.source_id] || []).push(p);
+    });
+
+    // Internal reservations that fall on this day.
+    const occIds = occurringSlots.map(s => s.id);
+    const resCount = {};
+    if (occIds.length > 0) {
+      const { data: resv } = await supabase.from('slot_reservations').select('slot_id').eq('slot_date', dateStr).neq('status', 'cancelled').in('slot_id', occIds);
+      (resv || []).forEach(r => { resCount[r.slot_id] = (resCount[r.slot_id] || 0) + 1; });
+    }
+
+    setCoachDaySlots(occurringSlots.map(s => ({
+      coach_id: s.coach_id,
+      slot_id: s.id,
+      start_time: s.start_time,
+      duration_minutes: s.duration_minutes,
+      title: s.notes || 'Training slot',
+      is_public: !!s.is_public,
+      capacity: s.max_players || 1,
+      reserved: resCount[s.id] || 0,
+      publicBookings: pubBySlot[s.id] || [],
+    })));
+    setEventPublicBookings(pubByEvent);
   };
 
   const fetchCoachSlots = async (coachId) => {
@@ -1158,7 +1210,7 @@ export default function Schedule({ userId, userRole }) {
                       {selectedCoach ? `${selectedCoach.full_name}'s Training Slots` : 'Facility Calendar'}
                     </h3>
                     {canManageCalendar() && !selectedCoach && (
-                      <button onClick={() => setShowAddFacilityEvent('new')} className="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-teal-700 transition flex items-center space-x-1">
+                      <button onClick={() => setShowEventTypeChooser('new')} className="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-teal-700 transition flex items-center space-x-1">
                         <Plus size={16} /><span>Add Event</span>
                       </button>
                     )}
@@ -1249,14 +1301,16 @@ export default function Schedule({ userId, userRole }) {
                     laneDate={laneDate}
                     setLaneDate={setLaneDate}
                     canManage={canManageCalendar()}
-                    onCellClick={(prefill) => canManageCalendar() && setShowAddFacilityEvent(prefill)}
+                    onCellClick={(prefill) => canManageCalendar() && setShowEventTypeChooser(prefill)}
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
                     staffEvents={staffScheduleEvents}
                     staffAssignments={staffAssignments}
+                    coachDaySlots={coachDaySlots}
+                    eventPublicBookings={eventPublicBookings}
                     coaches={coaches}
                   />
                 ) : viewMode === 'month' ? (
-                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
+                  <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
@@ -1264,7 +1318,7 @@ export default function Schedule({ userId, userRole }) {
                     fetchFacilityEvents();
                   }} />
                 ) : (
-                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowAddFacilityEvent(date)} canManage={canManageCalendar()} allowEventClick={true} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
+                  <WeekView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} canManage={canManageCalendar()} allowEventClick={true} onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'week')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
                     const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                     if (!ev || ev._is_virtual || ev.event_date === newDate) return;
                     const { error } = await supabase.from('facility_events').update({ event_date: newDate }).eq('id', eventId);
@@ -1572,11 +1626,53 @@ export default function Schedule({ userId, userRole }) {
       )}
 
       {/* Facility Event Panels */}
+      {showEventTypeChooser !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowEventTypeChooser(null)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-xl font-bold text-gray-900">Add event</h3>
+              <button onClick={() => setShowEventTypeChooser(null)} className="text-gray-400 hover:text-gray-600"><X size={22} /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-5">What would you like to create?</p>
+            <div className="space-y-3">
+              <button
+                onClick={() => { setShowAddFacilityEvent(showEventTypeChooser); setShowEventTypeChooser(null); }}
+                className="w-full flex items-start space-x-3 border border-gray-200 rounded-lg p-4 hover:border-teal-400 hover:bg-teal-50/40 transition text-left"
+              >
+                <div className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center flex-shrink-0"><CalendarIcon size={18} /></div>
+                <div>
+                  <div className="font-semibold text-gray-900">Organization Event</div>
+                  <div className="text-xs text-gray-500">Internal facility event — teams, athletes, lanes, coaches.</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setShowAddPublicBooking(showEventTypeChooser); setShowEventTypeChooser(null); }}
+                className="w-full flex items-start space-x-3 border border-gray-200 rounded-lg p-4 hover:border-emerald-400 hover:bg-emerald-50/40 transition text-left"
+              >
+                <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0"><DollarSign size={18} /></div>
+                <div>
+                  <div className="font-semibold text-gray-900">Public Booking</div>
+                  <div className="text-xs text-gray-500">Bookable & payable by outside customers on the public /book page.</div>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showAddFacilityEvent && (
         <AddFacilityEventPanel
           date={showAddFacilityEvent}
+          mode="org"
           onClose={() => setShowAddFacilityEvent(null)}
           onSuccess={() => { setShowAddFacilityEvent(null); fetchFacilityEvents(); }}
+        />
+      )}
+      {showAddPublicBooking && (
+        <AddFacilityEventPanel
+          date={showAddPublicBooking}
+          mode="public"
+          onClose={() => setShowAddPublicBooking(null)}
+          onSuccess={() => { setShowAddPublicBooking(null); fetchFacilityEvents(); }}
         />
       )}
       {showFacilityEventDetail && selectedFacilityEvent && (
@@ -2013,7 +2109,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coaches = [] }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [] }) {
   const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
   // Generate 15-minute time slots from 6:00 AM to 10:00 PM
@@ -2206,26 +2302,74 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   colSpan={timeSlots.length + 1}
                   className="bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 sticky left-0"
                 >
-                  Staff Schedule
+                  <span className="mr-3">Staff Schedule</span>
+                  <span className="inline-flex items-center gap-3 font-normal align-middle">
+                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-indigo-300 inline-block" />Shift</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-teal-300 inline-block" />Session</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-300 inline-block" />Facility event</span>
+                  </span>
                 </td>
               </tr>
             )}
             {/* Staff rows */}
             {coaches.map((coach) => {
-              // Find events assigned to this coach
-              const coachEventIds = staffAssignments
-                .filter(a => a.user_id === coach.id)
-                .map(a => a.event_id);
-              const coachStaffEvents = staffEvents.filter(ev => coachEventIds.includes(ev.id));
+              // Color/label per source so a coach's row reads at a glance.
+              const KIND_STYLES = {
+                shift: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+                slot: 'bg-teal-100 text-teal-800 border-teal-300',
+                facility: 'bg-amber-100 text-amber-800 border-amber-300',
+              };
+              const endLabel = (timeStr, mins) => {
+                const [h, m] = timeStr.split(':').map(Number);
+                const total = h * 60 + m + mins;
+                return formatTimeDisplay(`${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`);
+              };
 
-              // Convert ISO timestamps to slot indices
-              const entries = coachStaffEvents.map(ev => {
+              // 1. Work Portal shifts assigned to this coach.
+              const coachEventIds = staffAssignments.filter(a => a.user_id === coach.id).map(a => a.event_id);
+              const shiftEntries = staffEvents.filter(ev => coachEventIds.includes(ev.id)).map(ev => {
                 const start = new Date(ev.start_at);
                 const end = new Date(ev.end_at);
                 const startIdx = (start.getHours() - 6) * 4 + Math.floor(start.getMinutes() / 15);
                 const endIdx = (end.getHours() - 6) * 4 + Math.floor(end.getMinutes() / 15);
-                return { startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), event: ev };
-              }).filter(e => e.startIdx >= 0 && e.startIdx < timeSlots.length);
+                return {
+                  startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), kind: 'shift',
+                  title: ev.title,
+                  timeLabel: `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${ev.end_at ? `–${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}`,
+                  info: null, onClick: null,
+                };
+              });
+
+              // 2. The coach's own training slots occurring today — shown even
+              // when no client has booked (#229).
+              const slotEntries = coachDaySlots.filter(s => s.coach_id === coach.id).map(s => {
+                const clients = (s.reserved || 0) + (s.publicBookings ? s.publicBookings.length : 0);
+                return {
+                  startIdx: timeToIndex(s.start_time), span: Math.max(Math.round((s.duration_minutes || 60) / 15), 1), kind: 'slot',
+                  title: s.title,
+                  timeLabel: `${formatTimeDisplay(s.start_time)}–${endLabel(s.start_time, s.duration_minutes || 60)}`,
+                  info: clients > 0 ? `${clients}/${s.capacity} booked` : (s.is_public ? 'Open' : 'Unbooked'),
+                  onClick: null,
+                };
+              });
+
+              // 3. Facility events this coach is assigned to.
+              const facEntries = dayEvents.filter(ev => (ev.coach_ids || []).includes(coach.id) || ev.coach_id === coach.id).map(ev => {
+                const startTime = ev.start_time || ev.event_time;
+                const startIdx = timeToIndex(startTime);
+                const endIdx = ev.end_time ? timeToIndex(ev.end_time) : startIdx + 4;
+                const pubs = eventPublicBookings[ev._master_id || ev.id] || [];
+                return {
+                  startIdx, span: Math.max(endIdx - startIdx, 1), kind: 'facility',
+                  title: ev.title,
+                  timeLabel: `${formatTimeDisplay(startTime)}${ev.end_time ? `–${formatTimeDisplay(ev.end_time)}` : ''}`,
+                  info: pubs.length > 0 ? `${pubs.length} booked` : null,
+                  onClick: () => onEventClick && onEventClick(ev),
+                };
+              });
+
+              const entries = [...shiftEntries, ...slotEntries, ...facEntries]
+                .filter(e => e.startIdx >= 0 && e.startIdx < timeSlots.length);
 
               const tracks = assignTracks(entries);
               const renderTracks = tracks.length === 0 ? [[]] : tracks;
@@ -2244,6 +2388,13 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   {timeSlots.map((slot, slotIdx) => {
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
+                      const inner = (
+                        <>
+                          <div className="font-semibold truncate text-xs">{entry.title}</div>
+                          <div className="truncate text-[10px] opacity-80">{entry.timeLabel}</div>
+                          {entry.info && <div className="truncate text-[10px] font-medium">{entry.info}</div>}
+                        </>
+                      );
                       return (
                         <td
                           key={slot}
@@ -2251,13 +2402,11 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           className="border border-indigo-200 p-0.5 align-top"
                           style={{ width: SLOT_WIDTH * entry.span }}
                         >
-                          <div className="bg-indigo-100 text-indigo-800 border border-indigo-300 rounded px-1 py-1 h-full w-full text-left">
-                            <div className="font-semibold truncate text-xs">{entry.event.title}</div>
-                            <div className="truncate text-[10px] opacity-80">
-                              {new Date(entry.event.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                              {entry.event.end_at ? `–${new Date(entry.event.end_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
-                            </div>
-                          </div>
+                          {entry.onClick ? (
+                            <button type="button" onClick={entry.onClick} className={`${KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}>{inner}</button>
+                          ) : (
+                            <div className={`${KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left`}>{inner}</div>
+                          )}
                         </td>
                       );
                     }
@@ -4564,6 +4713,17 @@ const FACILITY_EVENT_COLORS = [
   { key: 'gray',   label: 'Gray',   month: 'bg-gray-100 text-gray-700 border-gray-200',     week: 'border-l-4 border-gray-500 bg-gray-50',     lane: 'bg-gray-100 border border-gray-300 text-gray-900',     detail: 'bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200',     dot: 'bg-gray-500' },
 ];
 
+// Public booking types (#229). Each Type maps to a fixed event color; the color
+// picker is hidden when creating a Public Booking. `value` is stored in
+// facility_events.booking_type.
+const PUBLIC_BOOKING_TYPES = [
+  { value: 'Assessment', label: 'Assessments', color: 'purple' },
+  { value: 'Hitting Session', label: 'Hitting Session', color: 'blue' },
+  { value: 'Private Lesson', label: 'Private Lesson', color: 'green' },
+  { value: 'Strength & Conditioning Session', label: 'Strength & Conditioning Session', color: 'orange' },
+];
+const bookingTypeColor = (t) => (PUBLIC_BOOKING_TYPES.find(x => x.value === t)?.color) || 'teal';
+
 function getFacilityColorClasses(colorKey, variant = 'month') {
   const c = FACILITY_EVENT_COLORS.find(x => x.key === colorKey) || FACILITY_EVENT_COLORS[0];
   return c[variant];
@@ -4584,7 +4744,8 @@ const PLAYER_OVERLAY_PALETTE = [
 // ADD FACILITY EVENT PANEL
 // ============================================
 
-function AddFacilityEventPanel({ date, onClose, onSuccess }) {
+function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
+  const isPublicMode = mode === 'public';
   const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
   const prefill = (() => {
@@ -4616,8 +4777,9 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
   const [coachIds, setCoachIds] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [coaches, setCoaches] = useState([]);
-  // Public booking (#229): expose this event on the public /book page.
-  const [isPublic, setIsPublic] = useState(false);
+  // Public booking (#229): in public mode this event is exposed on /book, its
+  // Type drives the color, and it carries a price + capacity.
+  const [bookingType, setBookingType] = useState(PUBLIC_BOOKING_TYPES[0].value);
   const [publicPrice, setPublicPrice] = useState('');
   const [publicCapacity, setPublicCapacity] = useState(1);
 
@@ -4634,7 +4796,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 
   const handleSave = async () => {
     if (!title.trim()) return alert('Title is required');
-    if (isPublic && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
+    if (isPublicMode && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -4656,13 +4818,14 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
         start_time: startTime || null, end_time: endTime || null, location: location || null,
         is_recurring: isRecurring, recurrence_rule: recurrenceRule, created_by: user?.id,
         lanes: lanes.length > 0 ? lanes : null,
-        color,
-        athlete_id: athleteId || null,
+        athlete_id: isPublicMode ? null : (athleteId || null),
         coach_id: coachIds[0] || null,
         coach_ids: coachIds.length > 0 ? coachIds : null,
-        is_public: isPublic,
-        public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
-        public_capacity: isPublic ? (parseInt(publicCapacity) || 1) : 1,
+        color: isPublicMode ? bookingTypeColor(bookingType) : color,
+        is_public: isPublicMode,
+        booking_type: isPublicMode ? bookingType : null,
+        public_price_cents: isPublicMode ? Math.round(parseFloat(publicPrice) * 100) : null,
+        public_capacity: isPublicMode ? (parseInt(publicCapacity) || 1) : 1,
       });
       if (error) throw error;
       onSuccess();
@@ -4673,8 +4836,13 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className={`text-xs font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${isPublicMode ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+              {isPublicMode ? 'Public Booking' : 'Organization Event'}
+            </span>
+          </div>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Add title" className="w-full text-2xl font-medium text-gray-900 placeholder-gray-400 border-0 border-b-2 border-gray-200 focus:border-teal-500 focus:outline-none pb-2 mb-6" autoFocus />
           <div className="flex items-center space-x-3 mb-4">
             <CalendarIcon size={20} className="text-gray-400" />
@@ -4730,13 +4898,15 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
             <AlignLeft size={20} className="text-gray-400 mt-2" />
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Add description" rows="3" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
           </div>
-          <div className="flex items-center space-x-3 mb-4">
-            <User size={20} className="text-gray-400 flex-shrink-0" />
-            <select value={athleteId} onChange={(e) => setAthleteId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
-              <option value="">Athlete (optional)</option>
-              {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
-            </select>
-          </div>
+          {!isPublicMode && (
+            <div className="flex items-center space-x-3 mb-4">
+              <User size={20} className="text-gray-400 flex-shrink-0" />
+              <select value={athleteId} onChange={(e) => setAthleteId(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                <option value="">Athlete (optional)</option>
+                {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">Coaches</label>
             <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
@@ -4763,27 +4933,35 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
               ))}
             </div>
           </div>
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Event Color</label>
-            <div className="flex flex-wrap gap-2">
-              {FACILITY_EVENT_COLORS.map(c => (
-                <button
-                  key={c.key}
-                  type="button"
-                  onClick={() => setColor(c.key)}
-                  title={c.label}
-                  className={`w-8 h-8 rounded-full ${c.dot} ${color === c.key ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
-                />
-              ))}
+          {!isPublicMode && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Event Color</label>
+              <div className="flex flex-wrap gap-2">
+                {FACILITY_EVENT_COLORS.map(c => (
+                  <button
+                    key={c.key}
+                    type="button"
+                    onClick={() => setColor(c.key)}
+                    title={c.label}
+                    className={`w-8 h-8 rounded-full ${c.dot} ${color === c.key ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="mb-6 border border-gray-200 rounded-lg p-3">
-            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
-              <input type="checkbox" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
-              <span>Available for public booking</span>
-            </label>
-            {isPublic && (
-              <div className="mt-3 grid grid-cols-2 gap-3">
+          )}
+          {isPublicMode && (
+            <div className="mb-6 border border-gray-200 rounded-lg p-3 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select value={bookingType} onChange={(e) => setBookingType(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  {PUBLIC_BOOKING_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <div className="flex items-center space-x-2 mt-1.5">
+                  <span className={`w-3.5 h-3.5 rounded-full ${(FACILITY_EVENT_COLORS.find(c => c.key === bookingTypeColor(bookingType)) || FACILITY_EVENT_COLORS[0]).dot}`} />
+                  <span className="text-xs text-gray-400">Type sets the event color</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Price (USD)</label>
                   <div className="relative">
@@ -4795,10 +4973,10 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
                   <label className="block text-xs font-medium text-gray-600 mb-1">Capacity</label>
                   <input type="number" min="1" value={publicCapacity} onChange={(e) => setPublicCapacity(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
                 </div>
-                <p className="col-span-2 text-xs text-gray-400">Outside customers can book & pay for this on the public /book page. Each occurrence of a recurring event is separately bookable.</p>
               </div>
-            )}
-          </div>
+              <p className="text-xs text-gray-400">Outside customers can book & pay for this on the public /book page. Each occurrence of a recurring event is separately bookable.</p>
+            </div>
+          )}
           <div className="flex justify-end space-x-3">
             <button onClick={onClose} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition text-sm font-medium">Cancel</button>
             <button onClick={handleSave} disabled={loading} className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition text-sm font-medium disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
@@ -4816,7 +4994,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess }) {
 function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete, coaches = [] }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal', is_public: !!event.is_public, public_price: event.public_price_cents != null ? (event.public_price_cents / 100).toFixed(2) : '', public_capacity: event.public_capacity || 1 });
+  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal', is_public: !!event.is_public, booking_type: event.booking_type || PUBLIC_BOOKING_TYPES[0].value, public_price: event.public_price_cents != null ? (event.public_price_cents / 100).toFixed(2) : '', public_capacity: event.public_capacity || 1 });
 
   const isStaff = userRole === 'admin' || userRole === 'coach';
   const isPlayer = userRole === 'player';
@@ -4932,8 +5110,10 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
       const { error } = await supabase.from('facility_events').update({
         title: formData.title, description: formData.description || null,
         start_time: formData.start_time || null, end_time: formData.end_time || null,
-        location: formData.location || null, color: formData.color || null,
+        location: formData.location || null,
+        color: formData.is_public ? bookingTypeColor(formData.booking_type) : (formData.color || null),
         is_public: formData.is_public,
+        booking_type: formData.is_public ? formData.booking_type : null,
         public_price_cents: formData.is_public ? Math.round(parseFloat(formData.public_price) * 100) : null,
         public_capacity: formData.is_public ? (parseInt(formData.public_capacity) || 1) : 1,
       }).eq('id', eventMasterId);
@@ -4980,27 +5160,36 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Location</label><input type="text" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Description</label><textarea value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
-                <div className="flex flex-wrap gap-2">
-                  {FACILITY_EVENT_COLORS.map(c => (
-                    <button
-                      key={c.key}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, color: c.key })}
-                      title={c.label}
-                      className={`w-8 h-8 rounded-full ${c.dot} ${formData.color === c.key ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
-                    />
-                  ))}
+              {!formData.is_public && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
+                  <div className="flex flex-wrap gap-2">
+                    {FACILITY_EVENT_COLORS.map(c => (
+                      <button
+                        key={c.key}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, color: c.key })}
+                        title={c.label}
+                        className={`w-8 h-8 rounded-full ${c.dot} ${formData.color === c.key ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="border border-gray-200 rounded-lg p-3">
-                <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
-                  <input type="checkbox" checked={formData.is_public} onChange={(e) => setFormData({ ...formData, is_public: e.target.checked })} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
-                  <span>Available for public booking</span>
-                </label>
-                {formData.is_public && (
-                  <div className="mt-3 grid grid-cols-2 gap-3">
+              )}
+              {formData.is_public && (
+                <div className="border border-gray-200 rounded-lg p-3 space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Public Booking</div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <select value={formData.booking_type} onChange={(e) => setFormData({ ...formData, booking_type: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                      {PUBLIC_BOOKING_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                    <div className="flex items-center space-x-2 mt-1.5">
+                      <span className={`w-3.5 h-3.5 rounded-full ${(FACILITY_EVENT_COLORS.find(c => c.key === bookingTypeColor(formData.booking_type)) || FACILITY_EVENT_COLORS[0]).dot}`} />
+                      <span className="text-xs text-gray-400">Type sets the event color</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Price (USD)</label>
                       <div className="relative">
@@ -5013,8 +5202,8 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                       <input type="number" min="1" value={formData.public_capacity} onChange={(e) => setFormData({ ...formData, public_capacity: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
               <div className="flex space-x-3 pt-2">
                 <button onClick={() => setEditing(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
                 <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
@@ -5026,7 +5215,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               {(event.start_time || event.end_time) && <div className="flex items-center space-x-3 text-sm"><Clock size={16} className="text-gray-400" /><span>{formatTimeDisplay(event.start_time)}{event.end_time ? ` - ${formatTimeDisplay(event.end_time)}` : ''}</span></div>}
               {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
-              {event.is_public && <div className="flex items-center space-x-3 text-sm"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Public booking</span>{event.public_price_cents != null && <span className="text-gray-500">${(event.public_price_cents / 100).toFixed(2)} · capacity {event.public_capacity || 1}</span>}</div>}
+              {event.is_public && <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-sm"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Public booking</span>{event.booking_type && <span className="text-gray-700 font-medium">{event.booking_type}</span>}{event.public_price_cents != null && <span className="text-gray-500">${(event.public_price_cents / 100).toFixed(2)} · capacity {event.public_capacity || 1}</span>}</div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
               {(() => {
                 const coachNames = (event.coach_ids || []).map(cid => coaches.find(c => c.id === cid)?.full_name).filter(Boolean);

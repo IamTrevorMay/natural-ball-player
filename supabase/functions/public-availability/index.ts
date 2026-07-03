@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     const [feRes, tsRes, bookingRes] = await Promise.all([
       service
         .from("facility_events")
-        .select("id, title, event_date, start_time, end_time, location, lanes, is_recurring, recurrence_rule, recurrence_parent_id, is_exception, original_date, is_public, public_price_cents, public_capacity")
+        .select("id, title, event_date, start_time, end_time, location, lanes, color, booking_type, is_recurring, recurrence_rule, recurrence_parent_id, is_exception, original_date, is_public, public_price_cents, public_capacity")
         .or("is_public.eq.true,recurrence_parent_id.not.is.null"),
       service
         .from("training_slots")
@@ -133,6 +133,8 @@ Deno.serve(async (req) => {
           source_id: ev.id,
           occurrence_date: date,
           title: ev.title,
+          booking_type: ev.booking_type || null,
+          color: ev.color || "teal",
           start_time: hm(ev.start_time),
           end_time: hm(ev.end_time),
           location: ev.location || null,
@@ -162,6 +164,7 @@ Deno.serve(async (req) => {
           source_id: slot.id,
           occurrence_date: date,
           title: slot.notes || "Training session",
+          color: "teal",
           coach_name: coachNames.get(slot.coach_id) || "Coach",
           start_time: start,
           end_time: start ? addMinutes(start, slot.duration_minutes) : "",
