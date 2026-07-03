@@ -114,18 +114,26 @@ export default function WorkMessages({ userId, userRole }) {
   useEffect(() => { if (userId) loadSidebar(); }, [userId, loadSidebar]);
   useEffect(() => { refreshUnread(); }, [refreshUnread]);
 
+  // Keep the latest callbacks in refs so the realtime subscription can be created
+  // once per userId instead of being torn down/rebuilt every time channels/dms/reads
+  // change (which re-identify refreshUnread/loadSidebar).
+  const refreshUnreadRef = useRef(refreshUnread);
+  const loadSidebarRef = useRef(loadSidebar);
+  useEffect(() => { refreshUnreadRef.current = refreshUnread; }, [refreshUnread]);
+  useEffect(() => { loadSidebarRef.current = loadSidebar; }, [loadSidebar]);
+
   // Realtime: new messages → refresh unread; sidebar might need to refresh DM order
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase.channel('work-msg-global')
+    const ch = supabase.channel(`work-msg-global-${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'work_messages' }, () => {
-        refreshUnread();
-        loadSidebar();
+        refreshUnreadRef.current();
+        loadSidebarRef.current();
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_dm_threads' }, () => loadSidebar())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_dm_threads' }, () => loadSidebarRef.current())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [userId, refreshUnread, loadSidebar]);
+  }, [userId]);
 
   const openItem = async (kind, id) => {
     setActive({ kind, id });

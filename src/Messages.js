@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
@@ -16,6 +16,13 @@ export default function Messages({ userId, userRole }) {
   const messageConvos = conversations.filter(c => c.type === 'direct' || c.type === 'team_announcement');
   const chatRooms = conversations.filter(c => c.type === 'group');
 
+  // Refs mirror the current selection so the realtime callback (bound once with
+  // [userId] deps) reads the live value instead of the mount-time null.
+  const selectedConvRef = useRef(null);
+  const selectedChatRef = useRef(null);
+  useEffect(() => { selectedConvRef.current = selectedConversation; }, [selectedConversation]);
+  useEffect(() => { selectedChatRef.current = selectedChat; }, [selectedChat]);
+
   useEffect(() => {
     fetchConversations();
     fetchTeams();
@@ -31,11 +38,11 @@ export default function Messages({ userId, userRole }) {
       refetchTimer = setTimeout(() => {
         refetchTimer = null;
         fetchConversations();
-        if (selectedConversation) {
-          fetchConversationDetail(selectedConversation.id, 'message');
+        if (selectedConvRef.current) {
+          fetchConversationDetail(selectedConvRef.current.id, 'message');
         }
-        if (selectedChat) {
-          fetchConversationDetail(selectedChat.id, 'chat');
+        if (selectedChatRef.current) {
+          fetchConversationDetail(selectedChatRef.current.id, 'chat');
         }
       }, 200);
     };
@@ -81,6 +88,35 @@ export default function Messages({ userId, userRole }) {
       return;
     }
 
+    // Step 2b: Participants (for DM peer names) and unread counts, fetched in
+    // bulk rather than hard-coded to empty/0.
+    const [{ data: parts }, { data: convMsgs }, { data: myReads }] = await Promise.all([
+      supabase
+        .from('conversation_participants')
+        .select('conversation_id, user_id, users:user_id(full_name)')
+        .in('conversation_id', conversationIds),
+      supabase
+        .from('messages')
+        .select('id, conversation_id, sender_id')
+        .in('conversation_id', conversationIds)
+        .is('deleted_at', null),
+      supabase
+        .from('message_reads')
+        .select('message_id')
+        .eq('user_id', userId),
+    ]);
+    const partsByConv = {};
+    (parts || []).forEach(p => {
+      (partsByConv[p.conversation_id] = partsByConv[p.conversation_id] || []).push(p);
+    });
+    const readSet = new Set((myReads || []).map(r => r.message_id));
+    const unreadByConv = {};
+    (convMsgs || []).forEach(m => {
+      if (m.sender_id !== userId && !readSet.has(m.id)) {
+        unreadByConv[m.conversation_id] = (unreadByConv[m.conversation_id] || 0) + 1;
+      }
+    });
+
     // Step 3: Enhance with messages and team info
     const enhanced = await Promise.all(
       convData.map(async (conv) => {
@@ -106,8 +142,8 @@ export default function Messages({ userId, userRole }) {
           messages: msgs || [],
           lastMessage: msgs?.[0],
           teams: teamName ? { name: teamName } : null,
-          unreadCount: 0,
-          conversation_participants: []
+          unreadCount: unreadByConv[conv.id] || 0,
+          conversation_participants: partsByConv[conv.id] || []
         };
       })
     );
@@ -205,20 +241,28 @@ export default function Messages({ userId, userRole }) {
       setSelectedConversation(fullConversation);
     }
 
-    // Mark messages as read
-    const unreadMessages = messagesWithSenders.filter(m =>
-      m.sender_id !== userId && !m.read
-    );
-    if (unreadMessages.length > 0) {
-      await Promise.all(
-        unreadMessages.map(msg =>
-          supabase.from('message_reads').insert({
-            message_id: msg.id,
-            user_id: userId
-          })
-        )
-      );
-      fetchConversations();
+    // Mark messages as read. Read state lives in message_reads (there's no `read`
+    // column on messages), so check against existing reads and upsert only the new
+    // ones — the previous plain insert re-ran every open and violated the
+    // (message_id, user_id) unique constraint with an unhandled rejection.
+    const receivedIds = messagesWithSenders
+      .filter(m => m.sender_id !== userId)
+      .map(m => m.id);
+    if (receivedIds.length > 0) {
+      const { data: existingReads } = await supabase
+        .from('message_reads')
+        .select('message_id')
+        .eq('user_id', userId)
+        .in('message_id', receivedIds);
+      const alreadyRead = new Set((existingReads || []).map(r => r.message_id));
+      const toInsert = receivedIds.filter(id => !alreadyRead.has(id));
+      if (toInsert.length > 0) {
+        await supabase.from('message_reads').upsert(
+          toInsert.map(id => ({ message_id: id, user_id: userId })),
+          { onConflict: 'message_id,user_id', ignoreDuplicates: true }
+        );
+        fetchConversations();
+      }
     }
   };
 
