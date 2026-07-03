@@ -113,6 +113,19 @@ Deno.serve(async (req) => {
             .eq("id", existingAuth.id)
             .maybeSingle();
           if (!existingPub) {
+            // Apply the credentials the admin just typed — otherwise the orphan
+            // auth account keeps its old password and the admin believes they set
+            // new ones. Confirm the email too, matching a fresh createUser.
+            const { error: pwErr } = await serviceClient.auth.admin.updateUserById(
+              existingAuth.id,
+              { password, email_confirm: true, user_metadata: { full_name, role } }
+            );
+            if (pwErr) {
+              return new Response(
+                JSON.stringify({ error: `Failed to set credentials for existing account: ${pwErr.message}` }),
+                { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+              );
+            }
             // Backfill public row; the downstream client INSERT will then
             // ON CONFLICT no-op and the caller treats this as a fresh create.
             return new Response(

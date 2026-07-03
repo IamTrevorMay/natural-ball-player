@@ -75,14 +75,15 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  // Idempotency: insert into store_webhook_events; on conflict bail out 200.
-  const { error: dupErr } = await service
+  // Idempotency: if this event was already processed, ack and stop. We record
+  // the event only AFTER successful processing (below), so a transient failure
+  // is retried by Square rather than being permanently swallowed as a duplicate.
+  const { data: alreadyProcessed } = await service
     .from("store_webhook_events")
-    .insert({ event_id: eventId, event_type: eventType, payload: event });
-  if (dupErr) {
-    if (dupErr.code === "23505") return new Response("ok (duplicate)", { status: 200 });
-    return new Response(`DB error: ${dupErr.message}`, { status: 500 });
-  }
+    .select("event_id")
+    .eq("event_id", eventId)
+    .maybeSingle();
+  if (alreadyProcessed) return new Response("ok (duplicate)", { status: 200 });
 
   const obj = event?.data?.object || {};
   const now = new Date().toISOString();
@@ -90,69 +91,92 @@ Deno.serve(async (req) => {
   try {
     if (eventType === "payment.created" || eventType === "payment.updated") {
       const payment = obj.payment;
-      if (!payment) return new Response("ok", { status: 200 });
-      const orderId = payment.order_id;
-      const paymentId = payment.id;
-      const squareStatus = (payment.status || "").toUpperCase();
-      const purchaseStatus = squareStatus === "COMPLETED" ? "paid"
-        : squareStatus === "FAILED" || squareStatus === "CANCELED" ? "failed"
-        : "pending";
+      if (payment) {
+        const orderId = payment.order_id;
+        const paymentId = payment.id;
+        const squareStatus = (payment.status || "").toUpperCase();
+        const purchaseStatus = squareStatus === "COMPLETED" ? "paid"
+          : squareStatus === "FAILED" || squareStatus === "CANCELED" ? "failed"
+          : "pending";
 
-      const patch: Record<string, unknown> = {
-        status: purchaseStatus,
-        square_payment_id: paymentId,
-      };
-      if (purchaseStatus === "paid") patch.paid_at = now;
+        const patch: Record<string, unknown> = {
+          status: purchaseStatus,
+          square_payment_id: paymentId,
+        };
+        if (purchaseStatus === "paid") patch.paid_at = now;
 
-      // Square does not guarantee order_id on every payment (manual / POS
-      // ad-hoc payments arrive with order_id null). Match the row by
-      // payment_id when order_id is missing so we don't silently no-op.
-      let q = orderId
-        ? service.from("store_purchases").update(patch).eq("square_order_id", orderId)
-        : service.from("store_purchases").update(patch).eq("square_payment_id", paymentId);
-      // Out-of-order safety: never overwrite a terminal state with a softer
-      // one. If the row is already paid, only allow refunded/failed updates.
-      // If paid_at is set, never flip it back to pending.
-      if (purchaseStatus === "pending") {
-        q = q.is("paid_at", null);
-      } else if (purchaseStatus === "failed") {
-        q = q.neq("status", "refunded");
+        // Square does not guarantee order_id on every payment (manual / POS
+        // ad-hoc payments arrive with order_id null). Match the row by
+        // payment_id when order_id is missing so we don't silently no-op.
+        let q = orderId
+          ? service.from("store_purchases").update(patch).eq("square_order_id", orderId)
+          : service.from("store_purchases").update(patch).eq("square_payment_id", paymentId);
+        // Out-of-order safety: never overwrite a terminal state with a softer
+        // one. If the row is already paid, only allow refunded/failed updates.
+        // If paid_at is set, never flip it back to pending.
+        if (purchaseStatus === "pending") {
+          q = q.is("paid_at", null);
+        } else if (purchaseStatus === "failed") {
+          q = q.neq("status", "refunded");
+        }
+        const { data: updated, error } = await q.select("id");
+        if (error) throw error;
+        // A COMPLETED payment that matched no purchase row (webhook landed before
+        // checkout inserted the pending row, or an ad-hoc POS payment) needs
+        // reconciliation. The full event payload is persisted below, so
+        // square-backfill-resolve can pick it up; surface it in logs meanwhile.
+        if (purchaseStatus === "paid" && (!updated || updated.length === 0)) {
+          console.warn(`square-webhook: COMPLETED payment ${paymentId} (order ${orderId}) matched no purchase row — needs reconciliation`);
+        }
       }
-      await q;
     } else if (
       eventType === "subscription.created"
       || eventType === "subscription.updated"
     ) {
       const sub = obj.subscription;
-      if (!sub) return new Response("ok", { status: 200 });
-      const subId = sub.id;
-      const squareStatus = (sub.status || "").toUpperCase();
-      const purchaseStatus = squareStatus === "ACTIVE" ? "active"
-        : squareStatus === "CANCELED" ? "canceled"
-        : squareStatus === "DEACTIVATED" ? "canceled"
-        : squareStatus === "PAUSED" ? "past_due"
-        : "pending";
+      if (sub) {
+        const subId = sub.id;
+        const squareStatus = (sub.status || "").toUpperCase();
+        const purchaseStatus = squareStatus === "ACTIVE" ? "active"
+          : squareStatus === "CANCELED" ? "canceled"
+          : squareStatus === "DEACTIVATED" ? "canceled"
+          : squareStatus === "PAUSED" ? "past_due"
+          : "pending";
 
-      // Once a subscription is canceled, do not allow webhook to revive it
-      // back to pending — Square may retry events out of order on cancel/reactivate.
-      let q = service.from("store_purchases").update({ status: purchaseStatus }).eq("square_subscription_id", subId);
-      if (purchaseStatus === "pending") {
-        q = q.in("status", ["pending"]);
+        // Once a subscription is canceled, do not allow webhook to revive it
+        // back to pending — Square may retry events out of order on cancel/reactivate.
+        let q = service.from("store_purchases").update({ status: purchaseStatus }).eq("square_subscription_id", subId);
+        if (purchaseStatus === "pending") {
+          q = q.in("status", ["pending"]);
+        }
+        const { error } = await q;
+        if (error) throw error;
       }
-      await q;
     } else if (eventType === "invoice.payment_made") {
       const invoice = obj.invoice;
-      if (!invoice) return new Response("ok", { status: 200 });
-      const subId = invoice.subscription_id;
+      const subId = invoice?.subscription_id;
       if (subId) {
-        await service
+        const { error } = await service
           .from("store_purchases")
           .update({ status: "active", paid_at: now })
           .eq("square_subscription_id", subId);
+        if (error) throw error;
       }
     }
   } catch (err) {
+    // Do NOT record idempotency — return non-200 so Square retries and we
+    // reprocess rather than losing the event forever.
     return new Response(`Handler error: ${(err as Error).message}`, { status: 500 });
+  }
+
+  // Processing succeeded — record the event so future retries are deduped.
+  const { error: recErr } = await service
+    .from("store_webhook_events")
+    .insert({ event_id: eventId, event_type: eventType, payload: event });
+  if (recErr && recErr.code !== "23505") {
+    // Idempotency bookkeeping failed but the purchase update already succeeded;
+    // ack anyway (a duplicate delivery would re-run idempotent updates).
+    console.error("square-webhook: failed to record idempotency:", recErr.message);
   }
 
   return new Response("ok", { status: 200 });

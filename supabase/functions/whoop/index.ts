@@ -251,7 +251,10 @@ async function signOAuthState(userId: string, nonce: string): Promise<string> {
 }
 
 async function handleConnect(userId: string, corsHeaders: Record<string, string>): Promise<Response> {
-  const nonce = crypto.randomUUID();
+  // Embed the issue time in the nonce (`<ms>.<uuid>`) so the callback can reject
+  // a stale/replayed state. The timestamp is inside the HMAC-signed payload, so
+  // it can't be tampered with.
+  const nonce = `${Date.now()}.${crypto.randomUUID()}`;
   const signature = await signOAuthState(userId, nonce);
 
   const callbackUrl = `${Deno.env.get("APP_URL") || "https://nbp-portal.vercel.app"}/api/whoop/callback`;
@@ -383,9 +386,10 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
         };
       })
     );
-    await adminClient
+    const { error: cyclesErr } = await adminClient
       .from("whoop_cycles")
       .upsert(rows, { onConflict: "athlete_id,whoop_cycle_id" });
+    if (cyclesErr) throw new Error(`whoop_cycles upsert failed: ${cyclesErr.message}`);
   }
 
   // Upsert sleep (skip naps)
@@ -413,9 +417,10 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
         raw_data: await encrypt(JSON.stringify(s)),
       }))
     );
-    await adminClient
+    const { error: sleepErr } = await adminClient
       .from("whoop_sleep")
       .upsert(rows, { onConflict: "athlete_id,whoop_sleep_id" });
+    if (sleepErr) throw new Error(`whoop_sleep upsert failed: ${sleepErr.message}`);
   }
 
   // Upsert workouts
@@ -439,9 +444,10 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
         };
       })
     );
-    await adminClient
+    const { error: workoutsErr } = await adminClient
       .from("whoop_workouts")
       .upsert(rows, { onConflict: "athlete_id,whoop_workout_id" });
+    if (workoutsErr) throw new Error(`whoop_workouts upsert failed: ${workoutsErr.message}`);
   }
 
   return new Response(

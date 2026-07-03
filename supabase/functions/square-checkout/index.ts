@@ -12,7 +12,7 @@
 //      so the webhook can promote it to `paid` / `active`.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders, preflight } from "../_shared/cors.ts";
+import { corsHeaders, preflight, isAllowedOrigin } from "../_shared/cors.ts";
 
 const SQUARE_ENV = Deno.env.get("SQUARE_ENV") || "production";
 const SQUARE_BASE = SQUARE_ENV === "sandbox"
@@ -108,7 +108,15 @@ Deno.serve(async (req) => {
     const locationId = Deno.env.get("SQUARE_LOCATION_ID");
     if (!locationId) return jsonRes(cors, 500, { error: "SQUARE_LOCATION_ID not configured" });
 
-    const redirectUrl = return_url || `${req.headers.get("Origin") || "https://nbp-portal.vercel.app"}/store/return`;
+    // Only honor a client-supplied return_url if it points at a trusted app
+    // origin — otherwise it's an open-redirect / phishing vector on the
+    // post-payment hop. Fall back to the request Origin's /store/return.
+    let redirectUrl = `${req.headers.get("Origin") || "https://nbp-portal.vercel.app"}/store/return`;
+    if (return_url) {
+      try {
+        if (isAllowedOrigin(new URL(return_url).origin)) redirectUrl = return_url;
+      } catch { /* invalid URL — keep the safe default */ }
+    }
 
     // One-time products: Payment Link via Checkout API. Branch on `kind` so a
     // misconfigured row with kind='package' AND recurring=false (admin saved

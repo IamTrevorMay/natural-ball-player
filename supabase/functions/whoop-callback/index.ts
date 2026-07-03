@@ -93,6 +93,13 @@ Deno.serve(async (req) => {
       if (!ok) {
         return new Response("Invalid state", { status: 403 });
       }
+      // Reject stale state (replay protection). The nonce is `<issuedMs>.<uuid>`;
+      // reject if it's missing the timestamp or older than 10 minutes.
+      const issuedMs = Number(nonce.split(".")[0]);
+      const TEN_MIN = 10 * 60 * 1000;
+      if (!Number.isFinite(issuedMs) || Date.now() - issuedMs > TEN_MIN) {
+        return new Response("State expired — please reconnect.", { status: 403 });
+      }
       userId = hmacUserId;
     } else if (parts.length === 2) {
       // H6: legacy path requires EXACTLY 2 non-empty parts. The previous

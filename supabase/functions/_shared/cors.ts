@@ -26,6 +26,12 @@ const BASE_HEADERS = {
 // attacker-controlled subdomain containing the literal "nbp-portal".
 const VERCEL_PREVIEW_RE = /^https:\/\/nbp-portal-[a-z0-9-]+\.vercel\.app$/i;
 
+// True if `origin` (scheme+host, e.g. "https://nbp-portal.vercel.app") is a
+// trusted app origin. Use to validate client-supplied redirect targets.
+export function isAllowedOrigin(origin: string): boolean {
+  return ALLOWED_ORIGINS.includes(origin) || VERCEL_PREVIEW_RE.test(origin);
+}
+
 export function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get("Origin") || "";
   const previewMatch = VERCEL_PREVIEW_RE.test(origin);

@@ -115,6 +115,40 @@ Deno.serve(async (req) => {
     };
 
     if (Array.isArray(attachments) && attachments.length > 0) {
+      // Bound attachments so a caller can't push an unbounded payload to Resend.
+      const MAX_ATTACHMENTS = 10;
+      const MAX_PER_BYTES = 10 * 1024 * 1024;   // 10 MB each
+      const MAX_TOTAL_BYTES = 25 * 1024 * 1024;  // 25 MB total
+      if (attachments.length > MAX_ATTACHMENTS) {
+        return new Response(
+          JSON.stringify({ error: `Too many attachments (max ${MAX_ATTACHMENTS}).` }),
+          { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+        );
+      }
+      let totalBytes = 0;
+      for (const a of attachments) {
+        if (!a || typeof a.filename !== "string" || !a.filename.trim() || typeof a.content !== "string") {
+          return new Response(
+            JSON.stringify({ error: "Each attachment needs a filename and base64 content." }),
+            { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+          );
+        }
+        // Approximate decoded size from base64 length (4 chars -> 3 bytes).
+        const bytes = Math.floor((a.content.length * 3) / 4);
+        totalBytes += bytes;
+        if (bytes > MAX_PER_BYTES) {
+          return new Response(
+            JSON.stringify({ error: `Attachment "${a.filename}" exceeds the 10 MB limit.` }),
+            { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+          );
+        }
+      }
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        return new Response(
+          JSON.stringify({ error: "Attachments exceed the 25 MB total limit." }),
+          { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
+        );
+      }
       resendPayload.attachments = attachments.map((a: { filename: string; content: string }) => ({
         filename: a.filename,
         content: a.content,
