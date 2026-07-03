@@ -1,0 +1,16 @@
+-- Security hardening (#229 audit, defense-in-depth). Remove ALL table access
+-- from the anon (unauthenticated) role in the public schema so RLS is a second
+-- layer rather than the sole defense against the public anon API key.
+--
+-- Verified safe: nothing reads tables as anon. The main portal only queries
+-- after login (authenticated role); every table-loading effect guards on a
+-- userId that is set post-auth. The public /book page reads exclusively through
+-- service_role edge functions. Auth (login / signup / reset) is the GoTrue API
+-- and does not depend on table grants. Authenticated / service_role grants are
+-- untouched, so logged-in usage is unaffected.
+--
+-- Supersedes 20260703c (meal tables) which is now a subset of this.
+-- No ALTER DEFAULT PRIVILEGES needed: the only anon default privileges live in
+-- the storage / graphql schemas (Supabase-managed), not public — so future
+-- public tables won't re-grant anon.
+revoke all on all tables in schema public from anon;
