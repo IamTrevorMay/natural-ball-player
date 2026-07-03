@@ -20,6 +20,10 @@ const fnHeaders = {
 
 const money = (cents) => `$${((cents || 0) / 100).toFixed(2)}`;
 
+// Prefix the event title with its booking Type when one is set (facility events
+// carry booking_type; coach sessions don't).
+const eventLabel = (s) => (s && s.booking_type ? `${s.booking_type} — ${s.title}` : (s ? s.title : ''));
+
 const fmtLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const timeDisplay = (t) => {
@@ -363,7 +367,7 @@ export default function PublicBookingPage() {
               <button onClick={() => setSelected(null)} className="flex items-center text-sm text-gray-500 hover:text-gray-700 mb-4">
                 <ArrowLeft size={16} className="mr-1" /> Back
               </button>
-              <h3 className="text-xl font-bold text-gray-900">{selected.title}</h3>
+              <h3 className="text-xl font-bold text-gray-900">{eventLabel(selected)}</h3>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600 mt-1 mb-1">
                 <span className="flex items-center"><CalendarIcon size={14} className="mr-1" />{dateDisplay(selected.occurrence_date)}</span>
                 {selected.start_time && <span className="flex items-center"><Clock size={14} className="mr-1" />{timeDisplay(selected.start_time)}{selected.end_time ? `–${timeDisplay(selected.end_time)}` : ''}</span>}
@@ -415,7 +419,7 @@ function SlotCard({ s, onClick }) {
           {s.kind === 'coach_session' ? <Dumbbell size={18} /> : <MapPin size={18} />}
         </div>
         <div className="min-w-0">
-          <div className="font-semibold text-gray-900 truncate">{s.title}</div>
+          <div className="font-semibold text-gray-900 truncate">{eventLabel(s)}</div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500 mt-0.5">
             {s.start_time && <span className="flex items-center"><Clock size={12} className="mr-1" />{timeDisplay(s.start_time)}{s.end_time ? `–${timeDisplay(s.end_time)}` : ''}</span>}
             {s.coach_name && <span className="flex items-center"><User size={12} className="mr-1" />{s.coach_name}</span>}
@@ -437,11 +441,11 @@ function EventBar({ s, onClick }) {
   return (
     <button
       onClick={onClick}
-      title={`${s.title} · ${timeDisplay(s.start_time)} · ${money(s.price_cents)}`}
+      title={`${eventLabel(s)} · ${timeDisplay(s.start_time)} · ${money(s.price_cents)}`}
       className={`flex w-full rounded overflow-hidden text-white text-[11px] leading-tight ${barColor(s.color)} hover:opacity-90 transition`}
     >
       <span className="px-1 py-0.5 bg-black/30 font-semibold whitespace-nowrap">{shortTime(s.start_time)}</span>
-      <span className="px-1 py-0.5 flex-1 truncate text-left">{s.title}</span>
+      <span className="px-1 py-0.5 flex-1 truncate text-left">{eventLabel(s)}</span>
     </button>
   );
 }
