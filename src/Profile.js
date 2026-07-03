@@ -6,6 +6,7 @@ import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
 import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
+import TrackmanTab from './TrackmanTab';
 import { fmtLocalDate } from './scheduleUtils';
 import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
@@ -1942,6 +1943,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
           {activeProfileTab === 'whoop' && (
             <WhoopTab userId={userId} userRole={userRole} />
+          )}
+
+          {activeProfileTab === 'trackman' && (
+            <TrackmanTab userId={userId} />
           )}
 
           {activeProfileTab === 'attendance' && (

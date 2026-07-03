@@ -258,6 +258,16 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
             >
               Duplicates
             </button>
+            <button
+              onClick={() => setActiveTab('trackman')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
+                activeTab === 'trackman'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Trackman
+            </button>
           </nav>
         </div>
 
@@ -317,7 +327,142 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
           {activeTab === 'duplicates' && (
             <DuplicatesTab users={users} refreshUsers={fetchUsers} onNavigateToProfile={onNavigateToProfile} />
           )}
+          {activeTab === 'trackman' && (
+            <TrackmanAdminTab users={users} userId={userId} />
+          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// TRACKMAN ADMIN TAB (#44) — sync + name→athlete mapping
+// ============================================
+
+function TrackmanAdminTab({ users, userId }) {
+  const [directory, setDirectory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
+  const [sessionCount, setSessionCount] = useState(null);
+
+  const athletes = (users || []).slice().sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+
+  const fetchDirectory = async () => {
+    setLoading(true);
+    const [{ data: dir }, { count }] = await Promise.all([
+      supabase.rpc('trackman_name_directory'),
+      supabase.from('trackman_sessions').select('id', { count: 'exact', head: true }),
+    ]);
+    setDirectory(dir || []);
+    setSessionCount(count ?? null);
+    setLoading(false);
+  };
+  useEffect(() => { fetchDirectory(); }, []);
+
+  // Assign (or clear) a Trackman name -> athlete, and backfill existing pitches.
+  const assignName = async (name, uid) => {
+    setSaving(name);
+    try {
+      if (uid) {
+        await supabase.from('trackman_player_map').upsert(
+          { trackman_name: name, user_id: uid, created_by: userId, updated_at: new Date().toISOString() },
+          { onConflict: 'trackman_name' }
+        );
+        await supabase.from('trackman_pitches').update({ pitcher_user_id: uid }).eq('pitcher_name', name);
+        await supabase.from('trackman_pitches').update({ batter_user_id: uid }).eq('batter_name', name);
+      } else {
+        await supabase.from('trackman_player_map').delete().eq('trackman_name', name);
+        await supabase.from('trackman_pitches').update({ pitcher_user_id: null }).eq('pitcher_name', name);
+        await supabase.from('trackman_pitches').update({ batter_user_id: null }).eq('batter_name', name);
+      }
+      await fetchDirectory();
+    } catch (e) {
+      alert('Error: ' + formatUserError(e));
+    } finally { setSaving(null); }
+  };
+
+  const runSync = async () => {
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/trackman-sync', { method: 'POST', headers: { Authorization: `Bearer ${session?.access_token || ''}` } });
+      const text = await res.text();
+      let data = null; try { data = JSON.parse(text); } catch { /* non-JSON (e.g. 404 on local dev) */ }
+      if (!res.ok || !data) {
+        setSyncMsg({ ok: false, text: data?.error || `Sync unavailable (HTTP ${res.status}). It runs on the deployed site, not local dev.` });
+      } else {
+        setSyncMsg({ ok: true, text: `Imported ${data.files_imported} file(s), ${data.pitches_upserted} pitch rows.${data.remaining ? ` ${data.remaining} file(s) remain for the next run.` : ''}` });
+        await fetchDirectory();
+      }
+    } catch (e) {
+      setSyncMsg({ ok: false, text: String(e.message || e) });
+    } finally { setSyncing(false); }
+  };
+
+  const unmapped = directory.filter(d => !d.mapped_user_id);
+  const mapped = directory.filter(d => d.mapped_user_id);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">Trackman</h3>
+          <p className="text-sm text-gray-500">
+            {sessionCount != null ? `${sessionCount} session file(s) imported. ` : ''}
+            Map each Trackman player name to an athlete so their stats appear on their profile.
+          </p>
+        </div>
+        <button onClick={runSync} disabled={syncing} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </button>
+      </div>
+      {syncMsg && (
+        <div className={`text-sm rounded-lg p-3 flex items-start gap-2 ${syncMsg.ok ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          {syncMsg.ok ? <CheckCircle size={16} className="mt-0.5 flex-shrink-0" /> : <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />}
+          <span>{syncMsg.text}</span>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : directory.length === 0 ? (
+        <p className="text-sm text-gray-500 italic">No Trackman data yet. Run a sync to import session files.</p>
+      ) : (
+        <>
+          <TrackmanNameSection title={`Needs mapping (${unmapped.length})`} rows={unmapped} athletes={athletes} onAssign={assignName} saving={saving} highlight />
+          <TrackmanNameSection title={`Mapped (${mapped.length})`} rows={mapped} athletes={athletes} onAssign={assignName} saving={saving} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function TrackmanNameSection({ title, rows, athletes, onAssign, saving, highlight }) {
+  if (!rows.length) return null;
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">{title}</h4>
+      <div className="space-y-1.5">
+        {rows.map(r => (
+          <div key={r.trackman_name} className={`flex items-center justify-between gap-3 p-2.5 rounded-lg border ${highlight ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200'}`}>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-900 truncate">{r.trackman_name}</div>
+              <div className="text-xs text-gray-400">{r.appearances} pitch{Number(r.appearances) === 1 ? '' : 'es'}</div>
+            </div>
+            <select
+              value={r.mapped_user_id || ''}
+              disabled={saving === r.trackman_name}
+              onChange={(e) => onAssign(r.trackman_name, e.target.value || null)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[220px] disabled:opacity-50"
+            >
+              <option value="">— Unassigned —</option>
+              {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+            </select>
+          </div>
+        ))}
       </div>
     </div>
   );
