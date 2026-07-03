@@ -195,12 +195,12 @@ export default function ContractPage({ userId, userRole, onSigned }) {
   const handleSubmit = async () => {
     if (!playerName.trim()) return alert('Please enter the player name.');
     if (!playerHasSignature) return alert('Please provide the player signature.');
-    trackAction('submit_contract');
     if (!parentHasSignature) return alert('Please provide the parent/guardian signature.');
     if (!consentParentFirst.trim() || !consentParentLast.trim()) return alert('Please fill in parent/guardian name in the medical consent section.');
     if (!playerFirst.trim() || !playerLast.trim()) return alert('Please fill in player name in the medical consent section.');
     if (!playerSigFirst.trim() || !playerSigLast.trim()) return alert('Please enter the player\'s printed name for the signature.');
     if (!parentSigFirst.trim() || !parentSigLast.trim()) return alert('Please enter the parent/guardian\'s printed name for the signature.');
+    trackAction('submit_contract');
 
     setSubmitting(true);
     // Track uploaded paths so we can clean up on any downstream failure.

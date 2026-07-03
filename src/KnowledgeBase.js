@@ -13,6 +13,24 @@ const EMBED_HOST_ALLOWLIST = new Set([
   'loom.com',
 ]);
 
+// Tailwind only keeps class names it can see as complete literal strings, so
+// interpolating `bg-${color}-600` gets purged and renders colorless. Map each
+// category color to full static class strings instead.
+const CATEGORY_COLORS = {
+  red: { solid: 'bg-red-600 text-white', soft: 'bg-red-100 text-red-700' },
+  orange: { solid: 'bg-orange-600 text-white', soft: 'bg-orange-100 text-orange-700' },
+  amber: { solid: 'bg-amber-600 text-white', soft: 'bg-amber-100 text-amber-700' },
+  yellow: { solid: 'bg-yellow-600 text-white', soft: 'bg-yellow-100 text-yellow-700' },
+  green: { solid: 'bg-green-600 text-white', soft: 'bg-green-100 text-green-700' },
+  teal: { solid: 'bg-teal-600 text-white', soft: 'bg-teal-100 text-teal-700' },
+  blue: { solid: 'bg-blue-600 text-white', soft: 'bg-blue-100 text-blue-700' },
+  indigo: { solid: 'bg-indigo-600 text-white', soft: 'bg-indigo-100 text-indigo-700' },
+  purple: { solid: 'bg-purple-600 text-white', soft: 'bg-purple-100 text-purple-700' },
+  pink: { solid: 'bg-pink-600 text-white', soft: 'bg-pink-100 text-pink-700' },
+  gray: { solid: 'bg-gray-600 text-white', soft: 'bg-gray-100 text-gray-700' },
+};
+const catColor = (color) => CATEGORY_COLORS[color] || CATEGORY_COLORS.gray;
+
 function toSafeEmbedUrl(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   try {
@@ -88,7 +106,7 @@ export default function KnowledgeBase({ userId, userRole }) {
     // Increment view count
     await supabase
       .from('knowledge_articles')
-      .update({ view_count: article.view_count + 1 })
+      .update({ view_count: (article.view_count || 0) + 1 })
       .eq('id', article.id);
   };
 
@@ -338,7 +356,7 @@ function BrowseView({ categories, articles, selectedCategory, setSelectedCategor
               onClick={() => setSelectedCategory(category.id)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
                 selectedCategory === category.id
-                  ? `bg-${category.color}-600 text-white`
+                  ? catColor(category.color).solid
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
@@ -382,7 +400,7 @@ function ArticleCard({ article, onClick }) {
       )}
       <div className="p-4">
         {article.category && (
-          <span className={`inline-block px-2 py-1 bg-${article.category.color}-100 text-${article.category.color}-700 rounded text-xs font-medium mb-2`}>
+          <span className={`inline-block px-2 py-1 ${catColor(article.category.color).soft} rounded text-xs font-medium mb-2`}>
             {article.category.name}
           </span>
         )}
@@ -440,7 +458,7 @@ function ArticleView({ article, onBack }) {
 
       <div className="bg-white rounded-lg shadow-lg p-8">
         {article.category && (
-          <span className={`inline-block px-3 py-1 bg-${article.category.color}-100 text-${article.category.color}-700 rounded-full text-sm font-medium mb-4`}>
+          <span className={`inline-block px-3 py-1 ${catColor(article.category.color).soft} rounded-full text-sm font-medium mb-4`}>
             {article.category.name}
           </span>
         )}
@@ -600,18 +618,19 @@ function AIAssistant({ userId }) {
       // Create conversation if needed
       let convId = activeConversation;
       if (!convId) {
-        const { data } = await supabase
+        const { data, error: convErr } = await supabase
           .from('ai_conversations')
           .insert({ user_id: userId })
           .select()
           .single();
+        if (convErr || !data) throw convErr || new Error('Failed to start conversation');
         convId = data.id;
         setActiveConversation(convId);
         setConversations([data, ...conversations]);
       }
 
       // Save user message
-      const { data: userMsg } = await supabase
+      const { data: userMsg, error: userMsgErr } = await supabase
         .from('ai_messages')
         .insert({
           conversation_id: convId,
@@ -620,6 +639,7 @@ function AIAssistant({ userId }) {
         })
         .select()
         .single();
+      if (userMsgErr || !userMsg) throw userMsgErr || new Error('Failed to save message');
 
       setMessages([...messages, userMsg]);
 
@@ -633,10 +653,12 @@ function AIAssistant({ userId }) {
         })
       });
 
+      if (!response.ok) throw new Error(`AI assistant returned ${response.status}`);
       const { reply } = await response.json();
+      if (!reply) throw new Error('AI assistant returned an empty reply');
 
       // Save assistant message
-      const { data: assistantMsg } = await supabase
+      const { data: assistantMsg, error: assistantErr } = await supabase
         .from('ai_messages')
         .insert({
           conversation_id: convId,
@@ -645,6 +667,7 @@ function AIAssistant({ userId }) {
         })
         .select()
         .single();
+      if (assistantErr || !assistantMsg) throw assistantErr || new Error('Failed to save reply');
 
       setMessages(prev => [...prev, assistantMsg]);
 

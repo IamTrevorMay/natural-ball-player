@@ -1474,8 +1474,6 @@ function ExerciseRow({ exercise, onRefresh }) {
 function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
   useModalTracking('CreateTrainingProgramModal');
   const [name, setName] = useState(editingProgram?.name || '');
-  const [program, setProgram] = useState('Pitching');
-  const [folder, setFolder] = useState('No Folder');
   const [notes, setNotes] = useState(editingProgram?.description || '');
   const [tabs, setTabs] = useState(() => {
     if (editingProgram?.training_days?.length > 0) {
@@ -1667,18 +1665,6 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
             <div>
               <label className="block text-sm font-bold text-gray-900 mb-1">Workout Name</label>
               <input type="text" placeholder="Workout Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-900 mb-1">Program:</label>
-              <select value={program} onChange={(e) => setProgram(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                {PROGRAM_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-900 mb-1">Folder</label>
-              <select value={folder} onChange={(e) => setFolder(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                {FOLDER_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
             </div>
             <div>
               <label className="block text-sm font-bold text-gray-900 mb-1">Workout Notes</label>
@@ -3217,7 +3203,7 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
   };
 
   const handleSave = async () => {
-    trackAction('save_workout_template');
+    trackAction('save_assessment_template');
     if (!name.trim()) { setError('Name is required'); return; }
     setLoading(true);
     setError('');
@@ -3403,7 +3389,7 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
   };
 
   const handleSave = async () => {
-    trackAction('save_workout_template');
+    trackAction('submit_assessment');
     if (!playerId) { setError('Please select a player'); return; }
     setLoading(true);
     setError('');
@@ -3465,7 +3451,7 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
           </div>
 
           {/* Render schema elements */}
-          {schema.sort((a, b) => a.sort_order - b.sort_order).map(el => (
+          {[...schema].sort((a, b) => a.sort_order - b.sort_order).map(el => (
             <div key={el.id} className="space-y-1">
               <label className="block text-sm font-semibold text-gray-800">{el.label || el.type}</label>
 
@@ -3579,7 +3565,7 @@ function ViewAssessmentModal({ submission, onClose }) {
             <div className="text-gray-600">Loading...</div>
           ) : (
             <>
-              {schema.sort((a, b) => a.sort_order - b.sort_order).map(el => (
+              {[...schema].sort((a, b) => a.sort_order - b.sort_order).map(el => (
                 <div key={el.id} className="space-y-1">
                   <label className="block text-sm font-semibold text-gray-800">{el.label || el.type}</label>
 

@@ -133,10 +133,10 @@ export default function LetterOfIntentPage({ userId, userRole, onSigned }) {
     if (!playerName.trim()) return alert('Please enter the player name.');
     if (!commitmentChecks.every(Boolean)) return alert('Please agree to all commitment items.');
     if (!playerHasSignature) return alert('Please provide the player signature.');
-    trackAction('submit_loi');
     if (!parentHasSignature) return alert('Please provide the parent/guardian signature.');
     if (!playerSigFirst.trim() || !playerSigLast.trim()) return alert('Please enter the player\'s printed name.');
     if (!parentSigFirst.trim() || !parentSigLast.trim()) return alert('Please enter the parent/guardian\'s printed name.');
+    trackAction('submit_loi');
 
     setSubmitting(true);
     const uploadedPaths = [];

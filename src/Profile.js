@@ -1827,7 +1827,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       disabled={!canEditProfile}
                       className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
                     >
-                      <option value="">Active</option>
+                      <option value="">No Status</option>
                       {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
                   </div>
@@ -4181,7 +4181,7 @@ function SubmissionView({ submission, ageGroupData }) {
 
   return (
     <div className="space-y-3">
-      {schema.sort((a, b) => a.sort_order - b.sort_order).map(el => (
+      {[...schema].sort((a, b) => a.sort_order - b.sort_order).map(el => (
         <div key={el.id} className="space-y-1">
           <label className="block text-xs font-semibold text-gray-700">{el.label || el.type}</label>
           {(el.type === 'text_field' || el.type === 'text_area' || el.type === 'notes') && (
@@ -4245,7 +4245,7 @@ function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
   const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
   const [saving, setSaving] = useState(false);
 
-  const schema = (template.schema || []).sort((a, b) => a.sort_order - b.sort_order);
+  const schema = [...(template.schema || [])].sort((a, b) => a.sort_order - b.sort_order);
 
   const updateResponse = (elId, value) => {
     setResponses(prev => ({ ...prev, [elId]: value }));

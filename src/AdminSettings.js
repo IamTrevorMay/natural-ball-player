@@ -343,7 +343,7 @@ function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refresh
 
   const filteredCoaches = coaches.filter(c => {
     const q = searchQuery.toLowerCase();
-    if (!c.full_name.toLowerCase().includes(q) && !c.email.toLowerCase().includes(q)) return false;
+    if (!(c.full_name || '').toLowerCase().includes(q) && !(c.email || '').toLowerCase().includes(q)) return false;
     if (filterStatus !== 'all') {
       const status = getCoachStatus(c);
       if (filterStatus === 'Active' && status !== 'Active') return false;
@@ -721,7 +721,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
 
   const filteredUsers = users.filter(u => {
     const q = searchQuery.toLowerCase();
-    if (!u.full_name.toLowerCase().includes(q) && !u.email.toLowerCase().includes(q)) return false;
+    if (!(u.full_name || '').toLowerCase().includes(q) && !(u.email || '').toLowerCase().includes(q)) return false;
     if (filterRole !== 'all' && u.role !== filterRole) return false;
     if (filterStatus !== 'all') {
       const status = getUserStatus(u);
@@ -1069,7 +1069,9 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
           supabase.from('team_members').insert({
             team_id: teamId,
             user_id: user.id,
-            role: formData.role === 'admin' ? 'coach' : formData.role,
+            // team_members role vocabulary is player/coach only. dbRole already
+            // maps intern->coach; also fold admin->coach here.
+            role: dbRole === 'admin' ? 'coach' : dbRole,
           })
         )
       );
@@ -1988,8 +1990,10 @@ function TeamDetailModal({ team, users, onClose, onRefresh }) {
   const handleDeleteTeam = async () => {
     trackAction('delete_team');
     setSaving(true);
-    // Delete team members first, then team
+    // Delete child rows first (team_members + team_prospects), then the team, so
+    // a non-cascading FK on team_prospects doesn't block the delete or orphan rows.
     await supabase.from('team_members').delete().eq('team_id', team.id);
+    await supabase.from('team_prospects').delete().eq('team_id', team.id);
     const { error: deleteError } = await supabase
       .from('teams')
       .delete()
@@ -3064,7 +3068,7 @@ function InventoryTab() {
   const fetchInventory = async () => {
     const [{ data: itemData }, { data: settingsData }] = await Promise.all([
       supabase.from('inventory_items').select('*').order('category').order('item').order('color').order('size'),
-      supabase.from('inventory_settings').select('*').limit(1).single(),
+      supabase.from('inventory_settings').select('*').limit(1).maybeSingle(),
     ]);
     setItems(itemData || []);
     if (settingsData) {

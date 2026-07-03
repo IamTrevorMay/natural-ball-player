@@ -13,14 +13,16 @@ const STATUS_COLORS = {
   'Archived': 'bg-red-500 text-white',
 };
 
-// Cache for custom options so we don't refetch on every render
+// Cache for custom options so we don't refetch on every render.
+// Timestamp is per-category — a shared timestamp let one category's fetch make
+// another category serve stale data for up to ~2x the TTL.
 let optionsCache = {};
-let cacheTimestamp = 0;
+let cacheTimestamps = {};
 const CACHE_TTL = 30000; // 30s
 
 async function fetchCustomOptions(category) {
   const now = Date.now();
-  if (optionsCache[category] && now - cacheTimestamp < CACHE_TTL) {
+  if (optionsCache[category] && now - (cacheTimestamps[category] || 0) < CACHE_TTL) {
     return optionsCache[category];
   }
   const { data } = await supabase
@@ -30,13 +32,13 @@ async function fetchCustomOptions(category) {
     .order('value');
   const values = (data || []).map(d => d.value);
   optionsCache[category] = values;
-  cacheTimestamp = now;
+  cacheTimestamps[category] = now;
   return values;
 }
 
 function invalidateCache() {
   optionsCache = {};
-  cacheTimestamp = 0;
+  cacheTimestamps = {};
 }
 
 export function useStatusOptions(category) {
