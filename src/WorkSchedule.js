@@ -253,6 +253,7 @@ export default function WorkSchedule({ userId, userRole }) {
     setCopyToPicker({ options: opts, title: 'Assign copy of event to staff', actionLabel: 'Create + assign', onPick: async (ids) => {
       const masterId = event._master_id || event.id;
       const { data: src } = await supabase.from('staff_schedule_events').select('*').eq('id', masterId).single();
+      if (!src) { alert('Could not load the event to copy.'); setCopyToPicker(null); return; }
       const clone = { ...src };
       delete clone.id; delete clone.created_at; delete clone.updated_at;
       clone.is_recurring = false;
@@ -989,7 +990,15 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
 
   const buildRecurrenceRule = () => {
     if (recurrence === 'none') return null;
-    if (recurrence === 'custom') return customRule;
+    if (recurrence === 'custom') {
+      // Strip the fields that don't apply to the chosen end type, so a "Never"/"On date"
+      // rule doesn't carry a stale count:10 that caps expansion at 10 occurrences.
+      const r = { ...customRule };
+      if (r.endType === 'never') { delete r.count; delete r.until; }
+      else if (r.endType === 'count') { delete r.until; }
+      else if (r.endType === 'until') { delete r.count; }
+      return r;
+    }
     const rule = { freq: recurrence, interval: 1, endType: 'never' };
     if (recurrence === 'weekly') {
       const startDate = new Date(startAt);
@@ -1036,7 +1045,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
         .select('id')
         .single();
       if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
-      await syncAssignments(data.id);
+      await syncAssignments(data.id, true);
       setSaving(false);
       onSaved();
       return;
@@ -1062,7 +1071,7 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
         .select('id')
         .single();
       if (error) { alert('Save failed: ' + formatUserError(error)); setSaving(false); return; }
-      await syncAssignments(data.id);
+      await syncAssignments(data.id, true);
       setSaving(false);
       onSaved();
       return;
@@ -1088,15 +1097,22 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
       eventId = data.id;
     }
 
-    await syncAssignments(eventId);
+    // editRealId => updating an existing row (diff against its own assignments);
+    // otherwise it's a brand-new insert (empty baseline).
+    await syncAssignments(eventId, !editRealId);
     setSaving(false);
     onSaved();
   };
 
-  const syncAssignments = async (eventId) => {
-    const existingIds = existingAssignments.map(a => a.user_id);
+  const syncAssignments = async (eventId, isNewRow = false) => {
+    // For a freshly-inserted row (single-occurrence / future edits create a new event
+    // id) there are no assignments in the DB yet. Diffing against the MASTER's
+    // assignments would make toAdd empty (nothing inserted) and toRemove delete the
+    // master's rows. Treat a new row as having an empty baseline.
+    const baseAssignments = isNewRow ? [] : existingAssignments;
+    const existingIds = baseAssignments.map(a => a.user_id);
     const toAdd = assignedIds.filter(id => !existingIds.includes(id));
-    const toRemove = existingAssignments.filter(a => !assignedIds.includes(a.user_id));
+    const toRemove = baseAssignments.filter(a => !assignedIds.includes(a.user_id));
     if (toAdd.length > 0) {
       await supabase.from('staff_schedule_assignments').insert(toAdd.map(uid => ({ event_id: eventId, user_id: uid })));
     }

@@ -127,7 +127,7 @@ export default function WorkAdminTimeOff({ userId }) {
           <span>
             Primary approver: <span className="font-semibold">{primaryApproverName}</span>
             {isPrimary && ' — that\'s you.'}
-            {!isPrimary && ' — you can still approve, but Cordell is the default.'}
+            {!isPrimary && ` — you can still approve, but ${primaryApproverName} is the default.`}
           </span>
         </div>
       )}

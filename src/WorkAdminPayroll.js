@@ -163,7 +163,7 @@ export default function WorkAdminPayroll({ userId }) {
     const [docsRes, staffRes] = await Promise.all([
       supabase
         .from('staff_pay_documents')
-        .select('id, user_id, doc_type, period_start, period_end, label, notes, file_path, file_name, file_size, created_at, recipient:user_id(full_name)')
+        .select('id, user_id, doc_type, period_start, period_end, label, notes, file_path, file_name, file_size, file_type, created_at, recipient:user_id(full_name)')
         .order('created_at', { ascending: false }),
       supabase
         .from('users')
@@ -178,7 +178,8 @@ export default function WorkAdminPayroll({ userId }) {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  // Don't pull payroll data into memory until the PIN gate is cleared.
+  useEffect(() => { if (pinVerified) fetchAll(); }, [fetchAll, pinVerified]);
 
   const resetForm = () => {
     setFormUserId('');

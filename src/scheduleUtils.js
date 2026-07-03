@@ -39,13 +39,22 @@ export function generateOccurrenceDates(startDate, rule, rangeStart, rangeEnd) {
       case 'daily': current.setDate(current.getDate() + interval); break;
       case 'weekly':
         if (rule.byDay && rule.byDay.length > 0) {
-          let found = false;
-          for (let i = 0; i < 7; i++) {
+          // Advance to the next day that is in byDay AND in an "active" week. Weeks are
+          // counted from the start date's week; with interval N only every N-th week is
+          // active (e.g. "every 2 weeks on Mon/Wed"). Bounded to avoid an infinite loop
+          // if byDay somehow never matches.
+          const dayCodes = ['SU','MO','TU','WE','TH','FR','SA'];
+          const startOfWeek = (d) => { const s = new Date(d); s.setDate(s.getDate() - s.getDay()); s.setHours(0, 0, 0, 0); return s; };
+          const baseWeek = startOfWeek(start);
+          let guard = 0;
+          const maxSteps = 7 * interval + 7;
+          do {
             current.setDate(current.getDate() + 1);
-            const dayName = ['SU','MO','TU','WE','TH','FR','SA'][current.getDay()];
-            if (rule.byDay.includes(dayName)) { found = true; break; }
-          }
-          if (!found) current.setDate(current.getDate() + 1);
+            guard++;
+            const inByDay = rule.byDay.includes(dayCodes[current.getDay()]);
+            const weekIdx = Math.round((startOfWeek(current) - baseWeek) / (7 * 86400000));
+            if (inByDay && weekIdx % interval === 0) break;
+          } while (guard < maxSteps);
         } else {
           current.setDate(current.getDate() + (7 * interval));
         }

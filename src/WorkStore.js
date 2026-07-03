@@ -169,7 +169,7 @@ function CatalogTab() {
       setSyncResult({
         inserted: json.inserted,
         updated: json.updated,
-        skipped: json.unmatched_user + json.unmatched_product,
+        skipped: (json.unmatched_user || 0) + (json.unmatched_product || 0),
         errors: (json.unmatched_details || []).map(d =>
           `${d.subscription_id}: ${d.reason}${d.email ? ` (${d.email})` : ''}${d.plan_variation_id ? ` [plan ${d.plan_variation_id}]` : ''}`
         ),
