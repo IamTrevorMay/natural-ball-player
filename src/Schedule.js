@@ -48,6 +48,66 @@ function getWorkoutCategory(title) {
   return 'general';
 }
 
+// Map a training slot title to Tailwind color classes matching EZ Facility colors (#232).
+function getTrainingSlotColorClasses(title, variant) {
+  const t = (title || '').toLowerCase();
+  // biomechanics must precede assessment (both contain 'assessment')
+  if (t.includes('biomechanics')) {
+    if (variant === 'pill') return 'bg-gray-500 text-white border-gray-600';
+    if (variant === 'card') return 'border-l-4 border-gray-500 bg-gray-100';
+    return 'bg-gray-100 text-gray-800 border-gray-400';
+  }
+  if (t.includes('assessment')) {
+    if (variant === 'pill') return 'bg-gray-900 text-white border-gray-800';
+    if (variant === 'card') return 'border-l-4 border-gray-900 bg-gray-200';
+    return 'bg-gray-200 text-gray-900 border-gray-700';
+  }
+  if (t.includes('cage')) {
+    if (variant === 'pill') return 'bg-yellow-500 text-white border-yellow-600';
+    if (variant === 'card') return 'border-l-4 border-yellow-500 bg-yellow-100';
+    return 'bg-yellow-100 text-yellow-800 border-yellow-400';
+  }
+  if (t.includes('local group')) {
+    if (variant === 'pill') return 'bg-red-900 text-white border-red-800';
+    if (variant === 'card') return 'border-l-4 border-red-900 bg-red-100';
+    return 'bg-red-100 text-red-900 border-red-600';
+  }
+  if (t.includes('youth group')) {
+    if (variant === 'pill') return 'bg-red-400 text-white border-red-500';
+    if (variant === 'card') return 'border-l-4 border-red-400 bg-red-50';
+    return 'bg-red-50 text-red-700 border-red-300';
+  }
+  if (t.includes('nbp+') && t.includes('hit')) {
+    if (variant === 'pill') return 'bg-purple-600 text-white border-purple-700';
+    if (variant === 'card') return 'border-l-4 border-purple-600 bg-purple-100';
+    return 'bg-purple-100 text-purple-800 border-purple-400';
+  }
+  if (t.includes('nbp+') && (t.includes('pitch') || t.includes('throw'))) {
+    if (variant === 'pill') return 'bg-pink-500 text-white border-pink-600';
+    if (variant === 'card') return 'border-l-4 border-pink-500 bg-pink-100';
+    return 'bg-pink-100 text-pink-800 border-pink-400';
+  }
+  if (t.includes('nbp+') && (t.includes('base') || t.includes('field'))) {
+    if (variant === 'pill') return 'bg-sky-400 text-white border-sky-500';
+    if (variant === 'card') return 'border-l-4 border-sky-400 bg-sky-100';
+    return 'bg-sky-100 text-sky-800 border-sky-300';
+  }
+  if (t.includes('nbp+') && (t.includes('strength') || t.includes('condition'))) {
+    if (variant === 'pill') return 'bg-green-600 text-white border-green-700';
+    if (variant === 'card') return 'border-l-4 border-green-600 bg-green-100';
+    return 'bg-green-100 text-green-800 border-green-400';
+  }
+  if (t.includes('lesson')) {
+    if (variant === 'pill') return 'bg-orange-500 text-white border-orange-600';
+    if (variant === 'card') return 'border-l-4 border-orange-500 bg-orange-100';
+    return 'bg-orange-100 text-orange-800 border-orange-400';
+  }
+  // Default teal
+  if (variant === 'pill') return 'bg-teal-500 text-white border-teal-600';
+  if (variant === 'card') return 'border-l-4 border-teal-600 bg-teal-100';
+  return 'bg-teal-100 text-teal-800 border-teal-300';
+}
+
 // Map a ProgramLibrarySidebar folder name to the canonical category we store on
 // schedule_events.category so calendar tiles inherit the source-library color.
 // Keep in sync with FOLDER_COLORS in ProgramLibrarySidebar.js (#191).
@@ -1814,7 +1874,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
       case 'practice': return 'bg-green-500 text-white border-green-600';
       case 'tryout': return 'bg-amber-500 text-white border-amber-600';
       case 'meal': return 'bg-yellow-400 text-yellow-900 border-yellow-500';
-      case 'training_slot': return 'bg-teal-500 text-white border-teal-600';
+      case 'training_slot': return getTrainingSlotColorClasses(typeof event === 'object' ? event?.title : '', 'pill');
       default: return 'bg-gray-500 text-white border-gray-600';
     }
   };
@@ -2067,7 +2127,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
       case 'practice': return 'border-l-4 border-green-600 bg-green-100';
       case 'tryout': return 'border-l-4 border-amber-600 bg-amber-100';
       case 'meal': return 'border-l-4 border-yellow-600 bg-yellow-100';
-      case 'training_slot': return 'border-l-4 border-teal-600 bg-teal-100';
+      case 'training_slot': return getTrainingSlotColorClasses(typeof ev === 'object' ? ev?.title : '', 'card');
       default: return 'border-l-4 border-gray-600 bg-gray-100';
     }
   };
@@ -2369,6 +2429,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                 return {
                   startIdx: timeToIndex(s.start_time), span: Math.max(Math.round((s.duration_minutes || 60) / 15), 1), kind: 'slot',
                   title: s.title,
+                  colorClass: getTrainingSlotColorClasses(s.title, 'lane'),
                   timeLabel: `${formatTimeDisplay(s.start_time)}–${endLabel(s.start_time, s.duration_minutes || 60)}`,
                   info: clients > 0 ? `${clients}/${s.capacity} booked` : (s.is_public ? 'Open' : 'Unbooked'),
                   onClick: null,
@@ -2425,9 +2486,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           style={{ width: SLOT_WIDTH * entry.span }}
                         >
                           {entry.onClick ? (
-                            <button type="button" onClick={entry.onClick} className={`${KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}>{inner}</button>
+                            <button type="button" onClick={entry.onClick} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}>{inner}</button>
                           ) : (
-                            <div className={`${KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left`}>{inner}</div>
+                            <div className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left`}>{inner}</div>
                           )}
                         </td>
                       );
