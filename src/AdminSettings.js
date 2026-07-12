@@ -1101,7 +1101,7 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   const handleSendPasswordReset = async () => {
     setResetSending(true);
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(user.email, {
-      redirectTo: 'https://www.thenatural-app.com/reset-password',
+      redirectTo: `${window.location.origin}/?type=recovery`,
     });
     setResetSending(false);
     if (resetError) { alert('Failed to send reset email: ' + formatUserError(resetError)); return; }
