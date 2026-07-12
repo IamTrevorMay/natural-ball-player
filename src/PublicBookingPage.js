@@ -7,9 +7,9 @@
 // This page never authenticates. It talks only to the public edge functions
 // (public-availability, public-book-checkout), which do all writes server-side.
 
-import React, { useState, useEffect } from 'react';
-import { supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { Calendar as CalendarIcon, Clock, MapPin, User, Dumbbell, CheckCircle, ArrowLeft, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
+import { Calendar as CalendarIcon, Clock, MapPin, User, Dumbbell, CheckCircle, ArrowLeft, Loader2, ChevronLeft, ChevronRight, ChevronDown, Check, X, LogIn } from 'lucide-react';
 
 const fnUrl = (name) => `${supabaseUrl}/functions/v1/${name}`;
 const fnHeaders = {
@@ -60,6 +60,19 @@ const shortTime = (t) => {
 
 const MONTH_MAX_PER_DAY = 7; // events shown per day before "View More"
 
+// Facility booking types offered in the Facility filter dropdown. Must match
+// the staff-side PUBLIC_BOOKING_TYPES values in Schedule.js (facility_events.booking_type).
+const FACILITY_TYPES = [
+  'Cage Rental',
+  'NBP+ Strength & Conditioning',
+  'NBP+ Hitting Session',
+  'NBP+ Pitching/Throwing Session',
+  'NBP+ Fielding Session',
+  'Camps',
+  'Assessment',
+  'Biomechanics Assessment',
+];
+
 // Weeks (arrays of Date) covering the calendar month of `anchor`, padded to
 // full Sun–Sat weeks.
 function buildMonthGrid(anchor) {
@@ -84,7 +97,12 @@ function buildWeekDays(anchor) {
   return Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
 }
 
-export default function PublicBookingPage() {
+// Props:
+//   embedded  — render without the outer page Shell (for use inside the logged-in
+//               public mini-portal); also suppresses the welcome popup.
+//   prefill   — { name, email, phone } to pre-populate the booking form for a
+//               known (logged-in) public user.
+export default function PublicBookingPage({ embedded = false, prefill = null }) {
   const params = new URLSearchParams(window.location.search);
   const returnedBooking = params.get('booking');
   const todayStr = fmtLocal(new Date());
@@ -93,14 +111,31 @@ export default function PublicBookingPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [filter, setFilter] = useState('all'); // all | resource | coach_session
+  const [typeFilter, setTypeFilter] = useState([]); // highlighted facility booking_types; empty = All
+  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  const typeMenuRef = useRef(null);
   const [view, setView] = useState('month'); // month | week | today | list
   const [viewDate, setViewDate] = useState(() => new Date()); // month/week anchor
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [dayModal, setDayModal] = useState(null); // date string when a day's overflow is expanded
   const [selected, setSelected] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', notes: '' });
+  const [form, setForm] = useState({
+    name: prefill?.name || '', email: prefill?.email || '', phone: prefill?.phone || '', notes: '',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+
+  // Close the Facility type dropdown when clicking anywhere outside it.
+  useEffect(() => {
+    if (!typeMenuOpen) return;
+    const onDown = (e) => {
+      if (typeMenuRef.current && !typeMenuRef.current.contains(e.target)) setTypeMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [typeMenuOpen]);
 
   const loadAvailability = async () => {
     setLoading(true);
@@ -125,6 +160,25 @@ export default function PublicBookingPage() {
     if (!returnedBooking) loadAvailability();
     else setLoading(false);
   }, [returnedBooking]);
+
+  // Track whether the visitor has an active session (drives the header
+  // Sign In / Account button) and show the once-per-browser welcome popup to
+  // logged-out first-timers. Skipped when embedded in the logged-in portal.
+  useEffect(() => {
+    if (embedded) return;
+    let seen = false;
+    try { seen = localStorage.getItem('nbp_book_welcome_seen') === '1'; } catch {}
+    supabase.auth.getSession().then(({ data }) => {
+      const hasSession = !!data?.session;
+      setSignedIn(hasSession);
+      if (!hasSession && !seen && !returnedBooking) setShowWelcome(true);
+    }).catch(() => { if (!seen && !returnedBooking) setShowWelcome(true); });
+  }, [embedded, returnedBooking]);
+
+  const dismissWelcome = () => {
+    try { localStorage.setItem('nbp_book_welcome_seen', '1'); } catch {}
+    setShowWelcome(false);
+  };
 
   const handleBook = async () => {
     if (!form.name.trim()) return setSubmitError('Please enter your name.');
@@ -158,7 +212,7 @@ export default function PublicBookingPage() {
   // --- Post-payment confirmation --------------------------------------------
   if (returnedBooking) {
     return (
-      <Shell>
+      <Shell signedIn={signedIn}>
         <div className="max-w-md mx-auto text-center py-16">
           <CheckCircle size={56} className="mx-auto text-green-500 mb-4" />
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Thank you!</h1>
@@ -176,7 +230,12 @@ export default function PublicBookingPage() {
 
   const openBooking = (s) => { setSelected(s); setSubmitError(''); };
 
-  const visible = slots.filter((s) => filter === 'all' || s.kind === filter);
+  const visible = slots.filter((s) => {
+    if (filter !== 'all' && s.kind !== filter) return false;
+    // Facility type highlight: only constrains facility resources; empty = All.
+    if (filter === 'resource' && typeFilter.length > 0 && !typeFilter.includes(s.booking_type)) return false;
+    return true;
+  });
   // Group by date.
   const byDate = {};
   visible.forEach((s) => { (byDate[s.occurrence_date] = byDate[s.occurrence_date] || []).push(s); });
@@ -291,11 +350,16 @@ export default function PublicBookingPage() {
     );
   };
 
+  const Wrap = embedded
+    ? ({ children }) => <div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>
+    : ({ children }) => <Shell wide={view === 'month'} signedIn={signedIn}><div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div></Shell>;
+
   return (
-    <Shell wide={view === 'month'}>
-      <div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>
-        <h1 className="text-3xl font-bold text-gray-900 mb-1">Book Facility Time</h1>
-        <p className="text-gray-600 mb-5">Reserve a resource or a session with one of our coaches.</p>
+    <Wrap>
+      {showWelcome && <WelcomePopup onClose={dismissWelcome} />}
+      <div>
+        {!embedded && <h1 className="text-3xl font-bold text-gray-900 mb-1">Book Facility Time</h1>}
+        {!embedded && <p className="text-gray-600 mb-5">Reserve a resource or a session with one of our coaches.</p>}
 
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           {/* View switcher */}
@@ -318,22 +382,62 @@ export default function PublicBookingPage() {
             ))}
           </div>
           {/* Kind filter */}
-          <div className="flex space-x-1.5">
-            {[
-              { key: 'all', label: 'All' },
-              { key: 'resource', label: 'Facility' },
-              { key: 'coach_session', label: 'Coaching' },
-            ].map((t) => (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => setFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                filter === 'all' ? 'bg-teal-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              All
+            </button>
+            <div className="relative" ref={typeMenuRef}>
               <button
-                key={t.key}
-                onClick={() => setFilter(t.key)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                  filter === t.key ? 'bg-teal-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                onClick={() => { setFilter('resource'); setTypeMenuOpen((o) => !o); }}
+                className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                  filter === 'resource' ? 'bg-teal-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                 }`}
               >
-                {t.label}
+                Facility{typeFilter.length > 0 ? ` (${typeFilter.length})` : ''}
+                <ChevronDown size={14} className={`ml-1 transition-transform ${typeMenuOpen ? 'rotate-180' : ''}`} />
               </button>
-            ))}
+              {typeMenuOpen && (
+                <div className="absolute right-0 mt-1.5 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-30 py-1">
+                  <button
+                    onClick={() => setTypeFilter([])}
+                    className={`w-full flex items-center justify-between text-left px-3 py-2 text-sm ${
+                      typeFilter.length === 0 ? 'bg-teal-50 text-teal-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    All
+                    {typeFilter.length === 0 && <Check size={14} />}
+                  </button>
+                  {FACILITY_TYPES.map((t) => {
+                    const on = typeFilter.includes(t);
+                    return (
+                      <button
+                        key={t}
+                        onClick={() => setTypeFilter((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))}
+                        className={`w-full flex items-center justify-between text-left px-3 py-2 text-sm ${
+                          on ? 'bg-teal-50 text-teal-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {t}
+                        {on && <Check size={14} />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setFilter('coach_session')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                filter === 'coach_session' ? 'bg-teal-600 text-white' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Private Lesson Availability
+            </button>
           </div>
         </div>
 
@@ -404,7 +508,45 @@ export default function PublicBookingPage() {
           </div>
         </div>
       )}
-    </Shell>
+    </Wrap>
+  );
+}
+
+// Welcome popup shown once to first-time, logged-out visitors of /book.
+function WelcomePopup({ onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 relative">
+        <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600" aria-label="Close">
+          <X size={20} />
+        </button>
+        <div className="text-center">
+          <div className="text-4xl mb-3">⚾</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Welcome to the Natural Ball Player</h2>
+          <p className="text-gray-600 text-sm mb-6">
+            Welcome to the scheduling page of the Natural Ball Player. If you have not
+            logged in, please do so now — or create an account to book and track your sessions.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <a
+              href="/"
+              className="flex-1 px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition font-medium text-sm text-center"
+            >
+              Log in
+            </a>
+            <a
+              href="/?signup=public"
+              className="flex-1 px-4 py-2.5 bg-white text-teal-700 border border-teal-300 rounded-lg hover:bg-teal-50 transition font-medium text-sm text-center"
+            >
+              Create an account
+            </a>
+          </div>
+          <button onClick={onClose} className="mt-4 text-xs text-gray-400 hover:text-gray-600">
+            Continue browsing without an account
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -500,13 +642,25 @@ function EmptyState({ label = 'No open times right now. Please check back soon.'
   );
 }
 
-function Shell({ children, wide }) {
+function Shell({ children, wide, signedIn }) {
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-white border-b border-gray-200">
-        <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto px-4 py-4 flex items-center space-x-2`}>
-          <span className="text-2xl">⚾</span>
-          <span className="font-bold text-gray-900">Natural Ball Player</span>
+        <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto px-4 py-4 flex items-center justify-between`}>
+          <div className="flex items-center space-x-2">
+            <img src="/nbp-logo.png" alt="Natural Ball Player" className="w-8 h-8 object-contain" />
+            <span className="font-bold text-gray-900">Natural Ball Player</span>
+          </div>
+          <a
+            href="/"
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition ${
+              signedIn
+                ? 'bg-white text-teal-700 border border-teal-300 hover:bg-teal-50'
+                : 'bg-teal-600 text-white hover:bg-teal-700'
+            }`}
+          >
+            {signedIn ? <><User size={16} /> My Account</> : <><LogIn size={16} /> Sign In</>}
+          </a>
         </div>
       </header>
       <main className="px-4 py-8">{children}</main>

@@ -110,7 +110,11 @@ Deno.serve(async (req) => {
       phone,
       date_of_birth: rawDob,
       signup_intent: rawIntent,
+      account_type: rawAccountType,
     } = await req.json();
+    // "public" = an outside customer signing up to book & pay for facility
+    // sessions (a lead). Anything else falls back to the athlete/player flow.
+    const account_type = rawAccountType === "public" ? "public" : "player";
     // H4: normalize email before any auth call so case/whitespace variants don't
     // create duplicate accounts and the orphan-recovery dedup in create-user
     // matches consistently.
@@ -119,6 +123,46 @@ Deno.serve(async (req) => {
 
     if (!email || !password || !full_name) {
       return json({ error: "Please provide your name, email, and a password." }, 400);
+    }
+    if (String(password).length < MIN_PASSWORD_LENGTH) {
+      return json(
+        { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` },
+        400
+      );
+    }
+
+    const confirmMessage =
+      "Account created. Check your email for a confirmation link, then log in.";
+
+    // Public (booking-only) signup: no DOB / intent / team placement. Creates a
+    // role='public' lead who gets the booking mini-portal. All the athlete-only
+    // work below (age-group sort, "New Users" team) is skipped.
+    if (account_type === "public") {
+      const anonClient = createClient(supabaseUrl, supabaseAnonKey);
+      const { data: signUpData, error: signUpError } = await anonClient.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name, role: "public" }, emailRedirectTo: appUrl },
+      });
+      if (signUpError) return json({ error: signUpError.message }, 400);
+      const newUser = signUpData.user;
+      if (!newUser || (Array.isArray(newUser.identities) && newUser.identities.length === 0)) {
+        return json({ success: true, message: confirmMessage });
+      }
+      const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
+      const { error: userError } = await serviceClient.from("users").insert({
+        id: newUser.id,
+        email,
+        full_name,
+        role: "public",
+        phone: phone || null,
+        lead_status: "new",
+      });
+      if (userError) {
+        await serviceClient.auth.admin.deleteUser(newUser.id).catch(() => {});
+        return json({ error: userError.message }, 400);
+      }
+      return json({ success: true, message: confirmMessage });
     }
 
     // #200: date of birth (drives age-group auto-sort) and intent are required.
@@ -131,15 +175,6 @@ Deno.serve(async (req) => {
     if (!signup_intent) {
       return json({ error: "Please choose whether you want a Naturals team, training only, or both." }, 400);
     }
-    if (String(password).length < MIN_PASSWORD_LENGTH) {
-      return json(
-        { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` },
-        400
-      );
-    }
-
-    const confirmMessage =
-      "Account created. Check your email for a confirmation link, then log in.";
 
     // 1. Create the auth user and trigger the confirmation email via signUp.
     const anonClient = createClient(supabaseUrl, supabaseAnonKey);

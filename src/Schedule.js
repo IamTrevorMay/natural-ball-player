@@ -4800,10 +4800,14 @@ const FACILITY_EVENT_COLORS = [
 // picker is hidden when creating a Public Booking. `value` is stored in
 // facility_events.booking_type.
 const PUBLIC_BOOKING_TYPES = [
-  { value: 'Assessment', label: 'Assessments', color: 'purple' },
-  { value: 'Hitting Session', label: 'Hitting Session', color: 'blue' },
-  { value: 'Private Lesson', label: 'Private Lesson', color: 'green' },
-  { value: 'Strength & Conditioning Session', label: 'Strength & Conditioning Session', color: 'orange' },
+  { value: 'Cage Rental', label: 'Cage Rental', color: 'teal' },
+  { value: 'NBP+ Strength & Conditioning', label: 'NBP+ Strength & Conditioning', color: 'orange' },
+  { value: 'NBP+ Hitting Session', label: 'NBP+ Hitting Session', color: 'blue' },
+  { value: 'NBP+ Pitching/Throwing Session', label: 'NBP+ Pitching/Throwing Session', color: 'red' },
+  { value: 'NBP+ Fielding Session', label: 'NBP+ Fielding Session', color: 'yellow' },
+  { value: 'Camps', label: 'Camps', color: 'green' },
+  { value: 'Assessment', label: 'Assessment', color: 'purple' },
+  { value: 'Biomechanics Assessment', label: 'Biomechanics Assessment', color: 'pink' },
 ];
 const bookingTypeColor = (t) => (PUBLIC_BOOKING_TYPES.find(x => x.value === t)?.color) || 'teal';
 

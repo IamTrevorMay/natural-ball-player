@@ -18,12 +18,14 @@ import FacilityFinePage from './FacilityFinePage';
 import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import PublicBookingPage from './PublicBookingPage';
+import PublicPortal from './PublicPortal';
+import Leads from './Leads';
 import NotificationBell from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import UsageDashboard from './UsageDashboard';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, UserPlus } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -73,7 +75,7 @@ export default function App() {
     // view. Those render blocks fail their gates and show a blank page with no
     // redirect, so reset to the role's default instead.
     const adminOnly = ['manage-coaches', 'manage-interns', 'usage'];
-    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'settings'];
+    const staffOnly = ['training-groups', 'manage-athletes', 'leads', 'coach-tools', 'settings'];
     const forbidden =
       (userRole !== 'admin' && adminOnly.includes(currentView)) ||
       (userRole === 'player' && staffOnly.includes(currentView));
@@ -330,6 +332,12 @@ export default function App() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
+  // Public (booking-only) users get a stripped-down mini portal — never the
+  // player/staff shell. Wait for the role to resolve so we don't flash MainApp.
+  if (userRole === 'public') {
+    return <PublicPortal userId={userId} userName={userName} onLogout={handleLogout} />;
+  }
+
   return (
     <div className="bg-gray-100 min-h-screen">
       <MainApp
@@ -366,10 +374,22 @@ function LoginPage({ onLogin }) {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
-  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '' });
+  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '', account_type: 'player' });
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupSent, setSignupSent] = useState(false);
   const [signupError, setSignupError] = useState('');
+
+  // The /book welcome popup's "Create an account" links here with ?signup=public
+  // to open the signup form pre-set to a booking-only Public account.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('signup') === 'public') {
+      setShowSignup(true);
+      setSignup((s) => ({ ...s, account_type: 'public' }));
+    }
+  }, []);
+
+  const isPublicSignup = signup.account_type === 'public';
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -404,7 +424,7 @@ function LoginPage({ onLogin }) {
     setShowSignup(false);
     setSignupSent(false);
     setSignupError('');
-    setSignup({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '' });
+    setSignup({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '', account_type: 'player' });
   };
 
   const handleForgotPassword = async (e) => {
@@ -454,7 +474,29 @@ function LoginPage({ onLogin }) {
                 <span>Back to Sign In</span>
               </button>
               <h2 className="text-lg font-semibold text-gray-900">Create Account</h2>
-              <p className="text-sm text-gray-600">New to NBP? Create your athlete account. A coach will get you set up after you confirm your email.</p>
+              <p className="text-sm text-gray-600">
+                {isPublicSignup
+                  ? 'Create a booking account to reserve and pay for sessions at our facility.'
+                  : 'New to NBP? Create your athlete account. A coach will get you set up after you confirm your email.'}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'player', label: 'Athlete', desc: 'Join / train with NBP' },
+                  { value: 'public', label: 'Just Booking', desc: 'Book & pay for sessions' },
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setSignup(s => ({ ...s, account_type: opt.value }))}
+                    className={`text-left border rounded-lg px-3 py-2 transition ${
+                      signup.account_type === opt.value ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium text-gray-900">{opt.label}</span>
+                    <span className="block text-xs text-gray-500">{opt.desc}</span>
+                  </button>
+                ))}
+              </div>
               {signupError && <p className="text-sm text-red-600">{signupError}</p>}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
@@ -485,6 +527,7 @@ function LoginPage({ onLogin }) {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+              {!isPublicSignup && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Date of Birth</label>
                 <input
@@ -493,10 +536,12 @@ function LoginPage({ onLogin }) {
                   onChange={(e) => setSignup(s => ({ ...s, date_of_birth: e.target.value }))}
                   max={new Date().toISOString().split('T')[0]}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
+                  required={!isPublicSignup}
                 />
                 <p className="text-xs text-gray-400 mt-1">Used to place you in the right age group.</p>
               </div>
+              )}
+              {!isPublicSignup && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">What are you looking for?</label>
                 <div className="grid grid-cols-1 gap-2">
@@ -518,7 +563,7 @@ function LoginPage({ onLogin }) {
                         checked={signup.signup_intent === opt.value}
                         onChange={(e) => setSignup(s => ({ ...s, signup_intent: e.target.value }))}
                         className="mt-1 text-blue-600 focus:ring-blue-500"
-                        required
+                        required={!isPublicSignup}
                       />
                       <span>
                         <span className="block text-sm font-medium text-gray-900">{opt.label}</span>
@@ -528,6 +573,7 @@ function LoginPage({ onLogin }) {
                   ))}
                 </div>
               </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
                 <input
@@ -940,6 +986,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
             {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'leads' && (userRole === 'admin' || userRole === 'coach') && <Leads />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
@@ -1239,6 +1286,16 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             >
               <Users size={18} />
               <span>Manage Athletes</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentView('leads')}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                currentView === 'leads' ? 'bg-blue-600' : 'hover:bg-gray-800'
+              }`}
+            >
+              <UserPlus size={18} />
+              <span>Leads</span>
             </button>
 
             {userRole === 'admin' && (
