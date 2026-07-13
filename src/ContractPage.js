@@ -8,6 +8,70 @@ import { trackAction } from './usage';
 const POSITION_OPTIONS = ['1B', '2B', '3B', 'SS', 'OF', 'P', 'C'];
 const BATS_THROWS_OPTIONS = ['R/R', 'L/L', 'R/L', 'L/R'];
 
+// Renders an uploaded contract document reliably across file types.
+// PDFs render natively in the browser; Office docs (docx/doc/ppt/xls) use the
+// Microsoft Office Online viewer; anything else (or a viewer that can't load)
+// falls back to a prominent download/open link so review never silently fails.
+function ContractDocViewer({ doc }) {
+  if (!doc) return null;
+  const ext = (doc.ext || '').toLowerCase();
+  const isPdf = ext === 'pdf';
+  const isOffice = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(ext);
+
+  return (
+    <div className="bg-white rounded-lg shadow">
+      <div className="border-b border-gray-200 p-4 flex items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold text-gray-900">{doc.title}</h3>
+        <a
+          href={doc.signedUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          download
+          className="text-sm text-blue-600 hover:underline whitespace-nowrap"
+        >
+          Download / Open in new tab
+        </a>
+      </div>
+      {isPdf ? (
+        <iframe
+          title="Player Contract"
+          src={doc.signedUrl}
+          className="w-full"
+          style={{ height: '720px', border: 0 }}
+        />
+      ) : isOffice ? (
+        <iframe
+          title="Player Contract"
+          src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(doc.signedUrl)}`}
+          className="w-full"
+          style={{ height: '720px', border: 0 }}
+        />
+      ) : (
+        <div className="p-8 text-center">
+          <p className="text-gray-600 mb-4">This document can't be previewed inline.</p>
+          <a
+            href={doc.signedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            download
+            className="inline-block bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition"
+          >
+            Open the contract to review
+          </a>
+        </div>
+      )}
+      <div className="border-t border-gray-200 px-4 py-3 bg-gray-50">
+        <p className="text-xs text-gray-500">
+          Trouble viewing the contract above?{' '}
+          <a href={doc.signedUrl} target="_blank" rel="noopener noreferrer" download className="text-blue-600 hover:underline">
+            Open it in a new tab
+          </a>{' '}to review before signing.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const SIZE_OPTIONS = {
   shorts: ['YS', 'YM', 'YL', 'YXL', 'AS', 'AM', 'AL', 'AXL', 'A2XL'],
   pants: ['YS', 'YM', 'YL', 'YXL', 'AS', 'AM', 'AL', 'AXL', 'A2XL'],
@@ -99,7 +163,9 @@ export default function ContractPage({ userId, userRole, onSigned }) {
         .from('staff-documents')
         .createSignedUrl(row.file_path, 60 * 60);
       if (sErr || !signed?.signedUrl) return;
-      const ext = row.file_path.split('.').pop().toLowerCase();
+      // Derive the extension from the stored file path so the viewer can pick
+      // the right rendering strategy (native PDF vs Office viewer vs download).
+      const ext = (row.file_path || '').split('.').pop().split('?')[0].toLowerCase();
       setContractDoc({ title: row.title, signedUrl: signed.signedUrl, ext });
     } catch (e) {
       console.error('Error loading contract document:', e);
@@ -314,20 +380,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
           </div>
         </div>
 
-        {contractDoc && (
-          <div className="bg-white rounded-lg shadow">
-            <div className="border-b border-gray-200 p-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">{contractDoc.title}</h3>
-              <a href={contractDoc.signedUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">Open in new tab</a>
-            </div>
-            <iframe
-              title="Player Contract"
-              src={contractDoc.ext === 'pdf' ? contractDoc.signedUrl : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
-              className="w-full"
-              style={{ height: '720px', border: 0 }}
-            />
-          </div>
-        )}
+        <ContractDocViewer doc={contractDoc} />
 
         <div className="bg-white rounded-lg shadow p-6 space-y-6">
           {/* Player Info Summary */}
@@ -462,20 +515,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
         <p className="text-sm text-yellow-800">Please complete all sections and sign the contract below.</p>
       </div>
 
-      {contractDoc && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="border-b border-gray-200 p-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-900">{contractDoc.title}</h3>
-            <a href={contractDoc.signedUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">Open in new tab</a>
-          </div>
-          <iframe
-            title="Player Contract"
-            src={contractDoc.ext === 'pdf' ? contractDoc.signedUrl : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
-            className="w-full"
-            style={{ height: '720px', border: 0 }}
-          />
-        </div>
-      )}
+      <ContractDocViewer doc={contractDoc} />
 
       <div className="bg-white rounded-lg shadow">
         <div className="p-6 space-y-8">

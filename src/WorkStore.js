@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package } from 'lucide-react';
 import BackfillHistory from './BackfillHistory';
 
 const KIND_OPTIONS = [
@@ -533,6 +533,104 @@ function PurchasesTab() {
   );
 }
 
+// #238: package overview grouped by product. Each package/bundle expands to
+// show every client who bought it, when, how many sessions remain, and how much
+// time is left before it expires.
+function packageTimeLeft(expiresAt) {
+  if (!expiresAt) return null;
+  const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000);
+  if (days < 0) return { text: `expired ${Math.abs(days)}d ago`, cls: 'text-red-600' };
+  if (days <= 14) return { text: `${days}d left`, cls: 'text-orange-600' };
+  return { text: `${days}d left`, cls: 'text-gray-500' };
+}
+
+function PackagesTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState({});
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from('store_purchases')
+        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, user:users!store_purchases_user_id_fkey(full_name, email)')
+        .in('product_kind', ['package', 'bundle'])
+        .order('created_at', { ascending: false })
+        .limit(1000);
+      setRows(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  // Group by product name (the snapshot is what the customer actually bought).
+  const groups = {};
+  rows.forEach(r => {
+    const key = r.product_name_snapshot || '(unnamed)';
+    (groups[key] = groups[key] || []).push(r);
+  });
+  const activeStatuses = new Set(['active', 'paid', 'pending', 'past_due']);
+  const groupNames = Object.keys(groups).sort();
+
+  if (loading) return <div className="text-center py-12 text-gray-500">Loading…</div>;
+  if (groupNames.length === 0) return <div className="text-center py-12 text-gray-500">No packages or bundles sold yet.</div>;
+
+  return (
+    <div className="space-y-2">
+      {groupNames.map(name => {
+        const list = groups[name];
+        const activeCount = list.filter(r => activeStatuses.has(r.status)).length;
+        const isOpen = !!open[name];
+        return (
+          <div key={name} className="bg-white rounded-lg shadow">
+            <button
+              onClick={() => setOpen(prev => ({ ...prev, [name]: !prev[name] }))}
+              className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition"
+            >
+              <div className="font-semibold text-gray-900">{name}</div>
+              <div className="text-sm text-gray-500">{list.length} sold · {activeCount} active</div>
+            </button>
+            {isOpen && (
+              <div className="border-t border-gray-100 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Purchased</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sessions left</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Time left</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {list.map(r => {
+                      const tl = packageTimeLeft(r.expires_at);
+                      return (
+                        <tr key={r.id}>
+                          <td className="px-4 py-2 text-sm text-gray-900">
+                            <div>{r.user?.full_name || '—'}</div>
+                            <div className="text-xs text-gray-500">{r.user?.email}</div>
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-700">{new Date(r.paid_at || r.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-2 text-sm text-gray-700">{r.remaining_qty != null ? r.remaining_qty : (r.product_kind === 'package' ? 'Monthly' : '—')}</td>
+                          <td className={`px-4 py-2 text-sm ${tl?.cls || 'text-gray-400'}`}>{tl?.text || '—'}</td>
+                          <td className="px-4 py-2 text-sm">
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_COLORS[r.status] || 'bg-gray-100 text-gray-700'}`}>{r.status}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function WorkStore() {
   const [tab, setTab] = useState('catalog');
   return (
@@ -557,6 +655,15 @@ export default function WorkStore() {
           <span>Purchases</span>
         </button>
         <button
+          onClick={() => setTab('packages')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
+            tab === 'packages' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Package size={16} />
+          <span>Packages</span>
+        </button>
+        <button
           onClick={() => setTab('backfill')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
             tab === 'backfill' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -566,7 +673,7 @@ export default function WorkStore() {
           <span>Backfill History</span>
         </button>
       </div>
-      {tab === 'catalog' ? <CatalogTab /> : tab === 'purchases' ? <PurchasesTab /> : <BackfillHistory />}
+      {tab === 'catalog' ? <CatalogTab /> : tab === 'purchases' ? <PurchasesTab /> : tab === 'packages' ? <PackagesTab /> : <BackfillHistory />}
     </div>
   );
 }

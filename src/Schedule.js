@@ -1353,6 +1353,20 @@ export default function Schedule({ userId, userRole }) {
                       if (error) { alert('Failed to decline reservation: ' + formatUserError(error)); return; }
                       fetchCoachSlots(selectedCoach.id);
                     }}
+                    onMarkAttendance={async (reservationId, value) => {
+                      // Toggle off if the same status is clicked again.
+                      const res = slotReservations.find(r => r.id === reservationId);
+                      const next = res?.attendance === value ? null : value;
+                      const { error } = await supabase.from('slot_reservations').update({
+                        attendance: next,
+                        attendance_marked_at: next ? new Date().toISOString() : null,
+                        attendance_marked_by: next ? userId : null,
+                      }).eq('id', reservationId);
+                      if (error) { alert('Failed to mark attendance: ' + formatUserError(error)); return; }
+                      // Present/Late consume a package session; anything else releases it.
+                      await syncReservationSessionUsage(res, next === 'present' || next === 'late', userId);
+                      fetchCoachSlots(selectedCoach.id);
+                    }}
                   />
                 ) : viewMode === 'lanes' ? (
                   <LaneView
@@ -4411,6 +4425,94 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     }
   };
 
+  // Training-slot / private session (#233): players see a Cancel button with a
+  // 12h-before cutoff; staff get a read-only summary (slots are managed from the
+  // Slots tab, not from schedule_events, so the normal delete path doesn't apply).
+  if (event.event_type === 'training_slot') {
+    const fmtTime = (t) => {
+      if (!t) return '';
+      const [h, m] = t.split(':');
+      const hr = parseInt(h, 10);
+      return `${hr % 12 || 12}:${m} ${hr >= 12 ? 'PM' : 'AM'}`;
+    };
+    const startAt = new Date(`${event.event_date}T${event.start_time || '00:00'}:00`);
+    const CUTOFF_MS = 12 * 60 * 60 * 1000;
+    const isPlayer = userRole === 'player';
+    const withinCancelWindow = Date.now() <= startAt.getTime() - CUTOFF_MS;
+
+    const handleCancelReservation = async () => {
+      setLoading(true);
+      try {
+        const { data: resRow, error: findErr } = await supabase
+          .from('slot_reservations')
+          .select('id')
+          .eq('slot_id', event.id)
+          .eq('slot_date', event.event_date)
+          .eq('player_id', userId)
+          .in('status', ['confirmed', 'pending'])
+          .maybeSingle();
+        if (findErr) throw findErr;
+        if (!resRow) throw new Error('Could not find your reservation for this session.');
+        const { error: updErr } = await supabase
+          .from('slot_reservations')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', resRow.id);
+        if (updErr) throw updErr;
+        alert('Session cancelled. The spot has been reopened.');
+        onDelete();
+      } catch (err) {
+        alert('Error cancelling session: ' + formatUserError(err));
+        setLoading(false);
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+          <div className="bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200 p-6 rounded-t-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1">Training Session</div>
+                <h3 className="text-xl font-bold text-gray-900">{event.title || 'Training Session'}</h3>
+              </div>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+            </div>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="text-sm text-gray-700">
+              <div className="font-medium">{startAt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+              <div>{fmtTime(event.start_time)}{event.duration_minutes ? ` · ${event.duration_minutes} min` : ''}</div>
+            </div>
+            {event.notes && <div className="text-sm text-gray-500">{event.notes}</div>}
+
+            {isPlayer ? (
+              withinCancelWindow ? (
+                <div className="space-y-2 pt-2">
+                  <button
+                    onClick={handleCancelReservation}
+                    disabled={loading}
+                    className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50"
+                  >
+                    {loading ? 'Cancelling...' : 'Cancel this session'}
+                  </button>
+                  <p className="text-xs text-gray-400 text-center">Cancellations are allowed up to 12 hours before the session.</p>
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                  Cancellations close 12 hours before the session. Please contact your coach if you can't make it.
+                </div>
+              )
+            ) : (
+              <div className="text-xs text-gray-400 pt-2 border-t border-gray-100">Manage this slot and attendance from the Slots tab.</div>
+            )}
+
+            <button onClick={onClose} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
@@ -5450,7 +5552,68 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 // COACH SLOTS WEEK VIEW
 // ============================================
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
+// #233↔#235: when a coach marks a player Present/Late for a session, consume one
+// session from their active package/bundle (soonest-expiring first) and log it in
+// store_session_usage tied to the reservation. Marking No-show/Cancelled/unmarking
+// releases the previously-consumed session. Monthly packages (remaining_qty null)
+// are never decremented. Package errors are swallowed so attendance still records.
+async function syncReservationSessionUsage(res, attended, markerId) {
+  if (!res) return;
+  try {
+    const { data: existing } = await supabase
+      .from('store_session_usage')
+      .select('id, purchase_id')
+      .eq('source_type', 'training_slot')
+      .eq('source_id', res.id)
+      .limit(1);
+    const has = existing && existing[0];
+
+    if (attended && !has) {
+      const { data: pkgs } = await supabase
+        .from('store_purchases')
+        .select('id, remaining_qty, expires_at')
+        .eq('user_id', res.player_id)
+        .in('product_kind', ['package', 'bundle'])
+        .in('status', ['active', 'paid'])
+        .gt('remaining_qty', 0)
+        .order('expires_at', { ascending: true, nullsFirst: false });
+      const pkg = (pkgs || [])[0];
+      if (!pkg) return; // no counted package to draw from — attendance still stands
+      await supabase.from('store_session_usage').insert({
+        purchase_id: pkg.id,
+        user_id: res.player_id,
+        used_on: res.slot_date,
+        source_type: 'training_slot',
+        source_id: res.id,
+        note: 'Attended training session',
+        created_by: markerId || null,
+      });
+      await supabase.from('store_purchases')
+        .update({ remaining_qty: pkg.remaining_qty - 1 })
+        .eq('id', pkg.id);
+    } else if (!attended && has) {
+      const { data: purch } = await supabase.from('store_purchases')
+        .select('id, remaining_qty').eq('id', has.purchase_id).maybeSingle();
+      await supabase.from('store_session_usage').delete().eq('id', has.id);
+      if (purch && purch.remaining_qty != null) {
+        await supabase.from('store_purchases')
+          .update({ remaining_qty: purch.remaining_qty + 1 })
+          .eq('id', purch.id);
+      }
+    }
+  } catch (e) {
+    console.error('Session-usage sync failed:', e);
+  }
+}
+
+const ATTENDANCE_OPTIONS = [
+  { value: 'present', label: 'Present', cls: 'bg-green-600' },
+  { value: 'late', label: 'Late', cls: 'bg-amber-500' },
+  { value: 'no_show', label: 'No-show', cls: 'bg-red-600' },
+  { value: 'cancelled', label: 'Cancelled', cls: 'bg-gray-500' },
+];
+
+function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -5534,6 +5697,22 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
                             <div className="flex space-x-1 mt-2">
                               <button onClick={() => onConfirm(res.id)} className="flex-1 bg-green-600 text-white py-1 rounded text-xs hover:bg-green-700">Confirm</button>
                               <button onClick={() => onDecline(res.id)} className="flex-1 bg-red-600 text-white py-1 rounded text-xs hover:bg-red-700">Decline</button>
+                            </div>
+                          )}
+                          {res.status === 'confirmed' && onMarkAttendance && (
+                            <div className="mt-2 pt-2 border-t border-gray-100">
+                              <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Attendance</div>
+                              <div className="flex flex-wrap gap-1">
+                                {ATTENDANCE_OPTIONS.map(opt => (
+                                  <button
+                                    key={opt.value}
+                                    onClick={() => onMarkAttendance(res.id, opt.value)}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${res.attendance === opt.value ? `${opt.cls} text-white` : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>

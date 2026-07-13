@@ -12,6 +12,7 @@ import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import AssignPackageModal from './AssignPackageModal';
+import PackagesModal from './PackagesModal';
 import { BadgePercent, CreditCard } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
@@ -251,6 +252,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [showStore, setShowStore] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
   const [showAssignPackage, setShowAssignPackage] = useState(false);
+  const [showPackages, setShowPackages] = useState(false);
   const [subscriptionRow, setSubscriptionRow] = useState(null);
   const [communicationLogs, setCommunicationLogs] = useState([]);
   const [loadingComms, setLoadingComms] = useState(false);
@@ -1739,9 +1741,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   cls = 'bg-yellow-50 text-yellow-700 border-yellow-200';
                 }
                 return (
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${cls}`}>
-                    {label}
-                  </span>
+                  <button
+                    onClick={() => setShowPackages(true)}
+                    title="View all packages & sessions"
+                    className={`px-3 py-1 rounded-full text-xs font-medium border transition hover:opacity-80 ${cls}`}
+                  >
+                    {label} ▾
+                  </button>
                 );
               })()}
               {onBack && (userRole === 'admin' || userRole === 'coach') && userData.role === 'player' && (
@@ -3971,6 +3977,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       {showStore && (
         <StoreModal userId={userData.id} onClose={() => setShowStore(false)} />
+      )}
+
+      {showPackages && (
+        <PackagesModal
+          userId={userData.id}
+          userName={userData.full_name}
+          canManage={userRole === 'admin' || userRole === 'coach'}
+          onClose={() => setShowPackages(false)}
+        />
       )}
 
       {showAssignPackage && (

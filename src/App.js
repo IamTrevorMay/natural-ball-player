@@ -814,6 +814,10 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const [profileIncomplete, setProfileIncomplete] = useState([]);
   const [showProfileReminder, setShowProfileReminder] = useState(false);
 
+  // Private-lesson reminder (#234): nudge players who haven't booked a training
+  // session in the last 2 months to schedule one. Shows once per session.
+  const [showLessonReminder, setShowLessonReminder] = useState(false);
+
   // Birthday popup (#210): the logged-in user sees a greeting on their own
   // birthday; staff additionally see which players are celebrating today.
   const [showBirthday, setShowBirthday] = useState(false);
@@ -861,6 +865,35 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     })();
     return () => { cancelled = true; };
   }, [userId, effectiveRole, waiverSigned]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Private-lesson reminder (#234): if a player's most recent booked/confirmed
+  // session is more than 2 months old (or they've never booked), prompt them to
+  // schedule one. Once per browser session so it isn't nagging on every view.
+  useEffect(() => {
+    if (effectiveRole !== 'player' || !userId) return;
+    let cancelled = false;
+    (async () => {
+      const key = `lesson_reminder_${userId}`;
+      if (sessionStorage.getItem(key)) return;
+      const { data: rows } = await supabase
+        .from('slot_reservations')
+        .select('slot_date')
+        .eq('player_id', userId)
+        .in('status', ['confirmed', 'pending'])
+        .order('slot_date', { ascending: false })
+        .limit(1);
+      if (cancelled) return;
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      const latest = rows && rows[0] ? new Date(rows[0].slot_date + 'T00:00:00') : null;
+      // No bookings, or the latest booking is older than 2 months → remind.
+      if (!latest || latest < twoMonthsAgo) {
+        setShowLessonReminder(true);
+        sessionStorage.setItem(key, '1');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId, effectiveRole]);
 
   // Birthday check (#210) — runs for every role; shows at most once per day.
   useEffect(() => {
@@ -1034,6 +1067,43 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                   className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
                 >
                   Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Private-lesson reminder modal (#234) */}
+      {showLessonReminder && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center">
+                  <Calendar size={20} className="text-teal-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Time for a Private Lesson?</h3>
+                  <p className="text-sm text-gray-500">It's been a while since your last session.</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-700 mb-6">
+                Staying consistent is key to development. Book a private lesson with your coach to keep
+                building on your progress.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setShowLessonReminder(false); setCurrentView('schedule'); }}
+                  className="flex-1 bg-teal-600 text-white py-2 rounded-lg font-medium hover:bg-teal-700 transition"
+                >
+                  Book a Session
+                </button>
+                <button
+                  onClick={() => setShowLessonReminder(false)}
+                  className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
+                >
+                  Maybe Later
                 </button>
               </div>
             </div>
