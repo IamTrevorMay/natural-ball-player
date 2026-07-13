@@ -99,7 +99,8 @@ export default function ContractPage({ userId, userRole, onSigned }) {
         .from('staff-documents')
         .createSignedUrl(row.file_path, 60 * 60);
       if (sErr || !signed?.signedUrl) return;
-      setContractDoc({ title: row.title, signedUrl: signed.signedUrl });
+      const ext = row.file_path.split('.').pop().toLowerCase();
+      setContractDoc({ title: row.title, signedUrl: signed.signedUrl, ext });
     } catch (e) {
       console.error('Error loading contract document:', e);
     }
@@ -321,7 +322,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
             </div>
             <iframe
               title="Player Contract"
-              src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
+              src={contractDoc.ext === 'pdf' ? contractDoc.signedUrl : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
               className="w-full"
               style={{ height: '720px', border: 0 }}
             />
@@ -469,7 +470,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
           </div>
           <iframe
             title="Player Contract"
-            src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
+            src={contractDoc.ext === 'pdf' ? contractDoc.signedUrl : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(contractDoc.signedUrl)}`}
             className="w-full"
             style={{ height: '720px', border: 0 }}
           />
