@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -5912,6 +5912,27 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const today = new Date().toISOString();
+        const { data } = await supabase
+          .from('store_purchases')
+          .select('id, product_name_snapshot, remaining_qty, product_kind')
+          .eq('user_id', user.id)
+          .in('product_kind', ['package', 'bundle'])
+          .eq('status', 'active')
+          .or(`expires_at.is.null,expires_at.gt.${today}`);
+        const active = (data || []).find(p => p.remaining_qty === null || p.remaining_qty > 0);
+        setPkgCheck({ checking: false, pkg: active || null });
+      } catch {
+        setPkgCheck({ checking: false, pkg: null });
+      }
+    })();
+  }, []);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -5952,6 +5973,21 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             </div>
             {slot.notes && <div className="mt-2 text-xs text-gray-500">{slot.notes}</div>}
           </div>
+          {!pkgCheck.checking && (
+            pkgCheck.pkg ? (
+              <div className="flex items-start space-x-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-800">
+                <Check size={16} className="mt-0.5 shrink-0 text-green-600" />
+                <span>
+                  <span className="font-medium">Payment confirmed</span> — {pkgCheck.pkg.remaining_qty === null ? 'Monthly package' : `${pkgCheck.pkg.remaining_qty} session${pkgCheck.pkg.remaining_qty !== 1 ? 's' : ''} remaining`} on <span className="font-medium">{pkgCheck.pkg.product_name_snapshot}</span>.
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                <span>No active package found. Please ensure payment has been arranged before reserving this slot.</span>
+              </div>
+            )
+          )}
           <div><label className="block text-sm font-medium text-gray-700 mb-1">What would you like to work on? (optional)</label><textarea value={playerNote} onChange={(e) => setPlayerNote(e.target.value)} placeholder="e.g., I want to work on my swing mechanics" rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           {slot.auto_confirm && <div className="flex items-center space-x-2 text-sm text-green-600"><Check size={16} /><span>This slot auto-confirms reservations</span></div>}
           <div className="flex space-x-3 pt-2">
