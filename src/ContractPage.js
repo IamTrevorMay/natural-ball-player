@@ -153,7 +153,7 @@ export default function ContractPage({ userId, userRole, onSigned }) {
       const { data: rows, error } = await supabase
         .from('staff_documents')
         .select('id, title, file_path, created_at')
-        .ilike('title', 'Naturals Player Contract%')
+        .ilike('title', '%Naturals Player Contract%')
         .order('created_at', { ascending: false })
         .limit(1);
       if (error) throw error;
