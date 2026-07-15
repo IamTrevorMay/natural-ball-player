@@ -32,6 +32,7 @@ const EQUIPMENT_FIELDS = [
 const PROGRAM_OPTIONS = ['Pitching', 'Hitting', 'Pitching/Hitting', 'Strength', 'Academy', 'Rehab', 'No Program'];
 const LEVEL_OPTIONS = ['Independent', 'Affiliate', 'High School', 'Professional', 'College', 'Youth', 'Pro - D', 'Pro - ND', '9U', '10U', '11U', '12U', '13U', '14U', '15U', '16U', '17U', '18U', 'AAA', 'AA', 'A+', 'A', 'MLB', 'Complex', 'NPB', 'KBO', 'MiLB', 'No Level'];
 const STATUS_OPTIONS = ['On-Site', 'Remote', 'Active', 'Inactive', 'Archived'];
+const SPORT_OPTIONS = ['Baseball', 'Basketball', 'Football', 'Soccer', 'Cricket', 'Softball', 'Lacrosse', 'Hockey', 'Golf', 'Wrestling', 'Swimming', 'Track & Field', 'Gymnastics'];
 
 const PROFILE_TABS = [
   { key: 'general', label: 'General' },
@@ -260,7 +261,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [trainerName, setTrainerName] = useState(null);
   const [allCoaches, setAllCoaches] = useState([]);
   const [sportInput, setSportInput] = useState('');
+  const [sportDropdownOpen, setSportDropdownOpen] = useState(false);
+  const [sportEditDropdownOpen, setSportEditDropdownOpen] = useState(false);
   const avatarInputRef = useRef(null);
+  const sportDropdownRef = useRef(null);
+  const sportEditDropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (sportDropdownRef.current && !sportDropdownRef.current.contains(e.target)) setSportDropdownOpen(false);
+      if (sportEditDropdownRef.current && !sportEditDropdownRef.current.contains(e.target)) setSportEditDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1786,15 +1800,39 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 <div>
                   <p className="text-sm font-semibold text-gray-700 mb-3">Sport</p>
                   <div className="border-t border-gray-200 pt-3">
-                    <input
-                      type="text"
-                      value={sportInput}
-                      onChange={(e) => setSportInput(e.target.value)}
-                      onBlur={() => { if (sportInput !== (profile.sport || '')) handleDropdownChange('sport', sportInput); }}
-                      disabled={!canEditProfile}
-                      placeholder="e.g., Baseball"
-                      className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed' : ''}`}
-                    />
+                    <div className="relative" ref={sportDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => canEditProfile && setSportDropdownOpen(o => !o)}
+                        disabled={!canEditProfile}
+                        className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-left truncate focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${!canEditProfile ? 'opacity-75 cursor-not-allowed text-gray-500' : 'text-gray-900'}`}
+                      >
+                        {sportInput || <span className="text-gray-400">Select sports</span>}
+                      </button>
+                      {sportDropdownOpen && (
+                        <div className="absolute z-20 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {SPORT_OPTIONS.map(sport => {
+                            const selected = sportInput.split(',').map(s => s.trim()).filter(Boolean).includes(sport);
+                            return (
+                              <label key={sport} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm text-gray-900">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() => {
+                                    const current = sportInput.split(',').map(s => s.trim()).filter(Boolean);
+                                    const next = selected ? current.filter(s => s !== sport) : [...current, sport];
+                                    const newVal = next.join(', ');
+                                    setSportInput(newVal);
+                                    handleDropdownChange('sport', newVal);
+                                  }}
+                                />
+                                {sport}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div>
@@ -3864,13 +3902,36 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 <div>
                   <p className="text-sm text-gray-600">Sport</p>
                   {editing ? (
-                    <input
-                      type="text"
-                      value={editForm.sport}
-                      onChange={(e) => setEditForm({...editForm, sport: e.target.value})}
-                      placeholder="e.g., Baseball"
-                      className="w-full border border-gray-300 rounded px-2 py-1 mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                    <div className="relative mt-1" ref={sportEditDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setSportEditDropdownOpen(o => !o)}
+                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-left truncate focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900"
+                      >
+                        {editForm.sport || <span className="text-gray-400">Select sports</span>}
+                      </button>
+                      {sportEditDropdownOpen && (
+                        <div className="absolute z-20 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                          {SPORT_OPTIONS.map(sport => {
+                            const selected = (editForm.sport || '').split(',').map(s => s.trim()).filter(Boolean).includes(sport);
+                            return (
+                              <label key={sport} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm text-gray-900">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() => {
+                                    const current = (editForm.sport || '').split(',').map(s => s.trim()).filter(Boolean);
+                                    const next = selected ? current.filter(s => s !== sport) : [...current, sport];
+                                    setEditForm({...editForm, sport: next.join(', ')});
+                                  }}
+                                />
+                                {sport}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-gray-900 font-medium">{profile.sport || 'Not set'}</p>
                   )}
