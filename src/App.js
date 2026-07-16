@@ -74,8 +74,8 @@ export default function App() {
     // player landing on manage-athletes/settings, or a coach on a usage/manage-coaches
     // view. Those render blocks fail their gates and show a blank page with no
     // redirect, so reset to the role's default instead.
-    const adminOnly = ['manage-coaches', 'manage-interns', 'usage'];
-    const staffOnly = ['training-groups', 'manage-athletes', 'leads', 'coach-tools', 'settings'];
+    const adminOnly = ['manage-coaches', 'manage-interns', 'usage', 'leads'];
+    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'settings'];
     const forbidden =
       (userRole !== 'admin' && adminOnly.includes(currentView)) ||
       (userRole === 'player' && staffOnly.includes(currentView));
@@ -1019,7 +1019,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
             {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'leads' && (userRole === 'admin' || userRole === 'coach') && <Leads />}
+            {currentView === 'leads' && userRole === 'admin' && <Leads />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
@@ -1358,18 +1358,17 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <span>Manage Athletes</span>
             </button>
 
-            <button
-              onClick={() => setCurrentView('leads')}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'leads' ? 'bg-blue-600' : 'hover:bg-gray-800'
-              }`}
-            >
-              <UserPlus size={18} />
-              <span>Leads</span>
-            </button>
-
             {userRole === 'admin' && (
               <>
+                <button
+                  onClick={() => setCurrentView('leads')}
+                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                    currentView === 'leads' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  }`}
+                >
+                  <UserPlus size={18} />
+                  <span>Leads</span>
+                </button>
                 <button
                   onClick={() => setCurrentView('manage-coaches')}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
