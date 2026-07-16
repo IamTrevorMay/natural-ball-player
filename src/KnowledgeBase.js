@@ -225,6 +225,14 @@ export default function KnowledgeBase({ userId, userRole }) {
 // go / what to do. Content lives in the situational_plays table (seeded with
 // standard baseball content; staff can edit the rows).
 
+// Static pseudo-positions appended to the picker after the nine on-field
+// positions. Their content (universal charts, prose, special team plays) is
+// canonical and never edited, so it lives in the component, not the DB (#240).
+const STATIC_POSITIONS = [
+  { code: 'GEN', label: 'General' },
+  { code: 'TEAM', label: 'Team Plays' },
+];
+
 function SituationalView() {
   const [plays, setPlays] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -241,13 +249,13 @@ function SituationalView() {
       if (cancelled) return;
       const rows = data || [];
       setPlays(rows);
-      if (rows.length) setActivePosition(rows[0].position_code);
+      setActivePosition(rows.length ? rows[0].position_code : 'GEN');
       setLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Distinct positions in picker order.
+  // Distinct on-field positions in picker order, then the static pseudo-tabs.
   const positions = [];
   const seen = new Set();
   plays.forEach(p => {
@@ -256,15 +264,27 @@ function SituationalView() {
       positions.push({ code: p.position_code, label: p.position_label });
     }
   });
+  STATIC_POSITIONS.forEach(p => { if (!seen.has(p.code)) positions.push(p); });
 
+  const isStatic = activePosition === 'GEN' || activePosition === 'TEAM';
   const activePlays = plays.filter(p => p.position_code === activePosition);
   const activeLabel = positions.find(p => p.code === activePosition)?.label;
 
+  // Group the active position's situations by base state, preserving the order
+  // they arrive in (rows come pre-sorted by sort_order).
+  const groups = [];
+  const groupIndex = {};
+  activePlays.forEach(play => {
+    const key = play.group_label || 'General';
+    if (groupIndex[key] === undefined) {
+      groupIndex[key] = groups.length;
+      groups.push({ label: key, items: [] });
+    }
+    groups[groupIndex[key]].items.push(play);
+  });
+
   if (loading) {
     return <p className="text-gray-500">Loading situational guide…</p>;
-  }
-  if (plays.length === 0) {
-    return <p className="text-gray-500">No situational content yet.</p>;
   }
 
   return (
@@ -273,6 +293,7 @@ function SituationalView() {
         <h3 className="text-lg font-semibold text-gray-900">Situational Guide</h3>
         <p className="text-sm text-gray-600 mt-1">
           Pick your position to see common game situations and exactly where to go and what to do.
+          Nine players have a job on every pitch — fielding, covering, backing up, or lining up a cutoff.
         </p>
       </div>
 
@@ -294,25 +315,214 @@ function SituationalView() {
         ))}
       </div>
 
-      {/* Situations for the selected position */}
-      <div>
-        <h4 className="text-base font-bold text-gray-900 mb-3">{activeLabel}</h4>
-        <div className="space-y-3">
-          {activePlays.map(play => (
-            <div key={play.id} className="bg-white border border-gray-200 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
-                  {play.sort_order}
+      {/* Content for the selected position */}
+      {activePosition === 'GEN' && <GeneralView />}
+      {activePosition === 'TEAM' && <TeamPlaysView />}
+      {!isStatic && (
+        <div>
+          <h4 className="text-base font-bold text-gray-900 mb-3">{activeLabel}</h4>
+          {activePlays.length === 0 ? (
+            <p className="text-gray-500">No situational content yet.</p>
+          ) : (
+            <div className="space-y-6">
+              {groups.map(group => (
+                <div key={group.label}>
+                  <div className="text-xs font-bold uppercase tracking-wide text-blue-700 mb-2">
+                    {group.label}
+                  </div>
+                  <div className="space-y-3">
+                    {group.items.map((play, i) => (
+                      <div key={play.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
+                            {i + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-gray-900">{play.situation}</div>
+                            <div className="text-sm text-gray-600 mt-1">{play.responsibility}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <div className="font-semibold text-gray-900">{play.situation}</div>
-                  <div className="text-sm text-gray-600 mt-1">{play.responsibility}</div>
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Shared responsive table shell for the reference charts.
+function RefTable({ headers, rows }) {
+  return (
+    <div className="overflow-x-auto border border-gray-200 rounded-lg">
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50">
+          <tr>
+            {headers.map(h => (
+              <th key={h} className="text-left font-semibold text-gray-700 px-3 py-2 whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200">
+          {rows.map((r, i) => (
+            <tr key={i} className="align-top">
+              {r.map((cell, j) => (
+                <td key={j} className="px-3 py-2 text-gray-700">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// GENERAL: the universal rule, cutoff/relay + backup + depth charts, and the
+// three run-saving rules. Static reference content (#240).
+function GeneralView() {
+  return (
+    <div className="space-y-8">
+      {/* The Universal Rule */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="font-bold text-gray-900 mb-2">The Universal Rule — before every pitch, ask three questions</div>
+        <ol className="list-decimal list-inside text-sm text-gray-700 space-y-1">
+          <li>How many outs? What's the count? What's the score and inning?</li>
+          <li>Where are the runners, and how fast are they?</li>
+          <li>What do I do if the ball comes to me — hard, soft, in the air, in the gap?</li>
+        </ol>
+        <p className="text-sm text-gray-600 mt-2">
+          If you're not fielding the ball, you are covering a base, backing up a base, serving as a cutoff/relay,
+          or directing traffic. There is no such thing as "standing there."
+        </p>
       </div>
+
+      {/* Cutoff & Relay */}
+      <div>
+        <h4 className="text-base font-bold text-gray-900 mb-3">Cutoff &amp; Relay Assignments</h4>
+        <RefTable
+          headers={['Play', 'Cutoff / Relay', 'Who covers the base']}
+          rows={[
+            ['Throw to 2nd (any outfielder)', 'Ball usually goes direct; pitcher trails as needed', 'SS or 2B (whoever isn’t the relay)'],
+            ['Throw to 3rd (any outfielder)', 'Shortstop goes out as cutoff', '3B stays at the bag'],
+            ['Throw home from LF', 'Third baseman', 'SS covers 3rd'],
+            ['Throw home from CF / RF', 'First baseman', '3B covers 3rd'],
+            ['Extra-base hit, LF / LC gap', 'SS is relay; 2B trails behind him', '2B covers 2nd if no relay needed'],
+            ['Extra-base hit, RF / RC gap', '2B is relay; SS trails behind him', 'SS covers 2nd if no relay needed'],
+          ]}
+        />
+        <p className="text-sm text-gray-600 mt-2">
+          <span className="font-semibold">Common simplification:</span> many programs make the 1st baseman the cutoff on
+          all throws home, keeping the 3rd baseman anchored at the bag. Pick one system and drill it — mixing them is how runs score.
+        </p>
+        <p className="text-sm text-gray-600 mt-2">
+          <span className="font-semibold">Mechanics:</span> line up directly between the outfielder and the base, ~45–60 ft in front of the target.
+          Hands high, yell so the outfielder finds you. The receiver makes the call — "Cut!" (cut and hold),
+          "Cut two/three/four!" (cut and throw; 4 = home), or silence = let it through.
+        </p>
+      </div>
+
+      {/* Backup Assignments */}
+      <div>
+        <h4 className="text-base font-bold text-gray-900 mb-3">Backup Assignments</h4>
+        <RefTable
+          headers={['Throw going to…', 'Backed up by']}
+          rows={[
+            ['1st base (infield throw, pickoff)', 'Right fielder, always. Also 2B on throws he’s not part of.'],
+            ['2nd base (catcher on a steal, pitcher pickoff)', 'Center fielder'],
+            ['2nd base (throw from the right side / RF)', 'Left fielder'],
+            ['2nd base (throw from the left side / LF)', 'Right fielder'],
+            ['3rd base', 'Left fielder, plus pitcher on throws from the outfield'],
+            ['Home plate', 'Pitcher'],
+            ['Ball in the gap', 'Nearest outfielder + the middle infielder trailing the relay'],
+          ]}
+        />
+      </div>
+
+      {/* Fly Ball Priority */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+        <div className="font-bold text-gray-900 mb-1">Fly Ball Priority (call it loud, call it three times)</div>
+        <div className="text-sm font-mono text-gray-800">CF &gt; LF/RF &gt; SS/2B &gt; 3B/1B &gt; P/C</div>
+        <p className="text-sm text-gray-600 mt-2">
+          Outfielders beat infielders. Center field beats everybody. The player with priority calls "Ball! Ball! Ball!"
+          and everyone else peels off and yells "Take it!" Nobody goes silent.
+        </p>
+      </div>
+
+      {/* Defensive Depths */}
+      <div>
+        <h4 className="text-base font-bold text-gray-900 mb-3">Defensive Depths</h4>
+        <RefTable
+          headers={['Situation', 'Infield', 'Outfield']}
+          rows={[
+            ['Nobody on, early innings', 'Normal', 'Normal'],
+            ['Runner on 1st, < 2 outs', 'Double-play depth (2 in, 2 toward the bag)', 'Normal'],
+            ['Runner on 3rd, < 2 outs, run matters', 'In (on the grass)', 'Shallow enough to throw home'],
+            ['Runner on 3rd, 2 outs', 'Normal — take the out at 1st', 'Normal'],
+            ['Bunt likely', 'Corners in', 'Normal'],
+            ['Late innings, protecting a lead', 'Guard the lines (1B and 3B)', 'No-doubles — deep and toward the lines'],
+          ]}
+        />
+      </div>
+
+      {/* Three Rules */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="font-bold text-gray-900 mb-2">The three rules that prevent more runs than anything else</div>
+        <ol className="list-decimal list-inside text-sm text-gray-700 space-y-1">
+          <li><span className="font-semibold">Hit the cutoff man.</span> A throw that reaches the cutoff stops the trail runner. Over his head is two extra bases.</li>
+          <li><span className="font-semibold">Back up the base.</span> Every throw has a backup. Every one. Overthrows with no backup are free runs.</li>
+          <li><span className="font-semibold">Take the sure out.</span> The lead runner is nice; the out is the point. A forced throw into the outfield turns one runner into two.</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+// TEAM PLAYS: special situations that involve the whole defense. Static (#240).
+function TeamPlaysView() {
+  const play = (title, body) => (
+    <div className="bg-white border border-gray-200 rounded-lg p-4">
+      <div className="font-bold text-gray-900 mb-1">{title}</div>
+      {body}
+    </div>
+  );
+  return (
+    <div className="space-y-4">
+      {play('Rundown (Pickle)', (
+        <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+          <li>Run the runner back toward the base he came from. Never let him advance.</li>
+          <li>Minimize throws — ideally one. Sprint at him with the ball held high, make him commit.</li>
+          <li>The receiving fielder gives a target off the base line so nobody gets hit.</li>
+          <li>Everybody has a base: after you throw, peel off behind the fielder you threw to and get in line at the other end.</li>
+          <li>Trap him — don't chase him forever.</li>
+        </ul>
+      ))}
+      {play('First & Third (runner on 1st takes off)', (
+        <div className="text-sm text-gray-700 space-y-1">
+          <p>Every team has a call. The three basic options:</p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li><span className="font-semibold">Throw through to 2nd</span> — take the out, concede the run if the runner on 3rd breaks. Fine if the run doesn't matter.</li>
+            <li><span className="font-semibold">Cut the throw</span> — a middle infielder cuts it in front of the bag, then looks the runner at 3rd back or throws home.</li>
+            <li><span className="font-semibold">Fake / hold</span> — catcher fakes or throws back to the pitcher; everybody looks the runner at 3rd back. Concede second, protect the run.</li>
+          </ol>
+          <p className="text-gray-600">Whatever the call, the pitcher, catcher, SS, and 2B must all know it before the pitch.</p>
+        </div>
+      ))}
+      {play('Infield Fly Rule', (
+        <p className="text-sm text-gray-700">
+          Runners on 1st &amp; 2nd (or bases loaded) with less than two outs, on an infield pop-up catchable with ordinary effort:
+          the batter is out automatically. The umpire calls it. Catch it anyway — but don't intentionally drop it for a cheap double play. It won't work.
+        </p>
+      ))}
+      {play('Tag-Ups', (
+        <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+          <li>Runner on 3rd, fly ball, less than 2 outs: the outfielder is throwing home; the 3B or cutoff man lines it up.</li>
+          <li>Foul-ball catch with a runner on 3rd: know how deep you're going. If the catch lets the run score and you're behind, it may not be worth it.</li>
+        </ul>
+      ))}
     </div>
   );
 }
