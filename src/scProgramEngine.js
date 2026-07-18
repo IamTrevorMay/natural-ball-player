@@ -721,3 +721,38 @@ export function weekToProgramDays(week) {
     })),
   }));
 }
+
+/* --------------------------------------------------------------------------- *
+ *  Full off-season macrocycle: generate a representative week for every phase
+ *  the athlete passes through from planStart to seasonEnd, in order.
+ * --------------------------------------------------------------------------- */
+
+/**
+ * @returns {Array} one generateWeek() result per distinct phase in the macro
+ *   calendar (Accumulation -> Strength -> Power -> Pre-season -> In-season …),
+ *   each carrying its own phase label, emphasis, days and flags.
+ */
+export function generateMacro(athlete, seasonStart, seasonEnd, planStart) {
+  return macroCalendar(athlete, seasonStart, seasonEnd, planStart).map((entry) => {
+    const d = new Date(`${entry.date}T00:00:00`);
+    return { ...generateWeek(athlete, d, seasonStart, seasonEnd), phaseStartDate: entry.date };
+  });
+}
+
+/**
+ * Flatten a macro (array of phase weeks) into program-day rows, each session
+ * prefixed with its phase so one assignable program spans the whole off-season.
+ */
+export function macroToProgramDays(weeks) {
+  const rows = [];
+  weeks.forEach((w) => {
+    weekToProgramDays(w).forEach((day) => {
+      rows.push({
+        title: `[${w.phaseLabel}] ${day.title}`,
+        notes: `${w.emphasis} — ${day.notes}`,
+        exercises: day.exercises,
+      });
+    });
+  });
+  return rows;
+}

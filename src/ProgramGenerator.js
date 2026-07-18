@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import {
   Position, Sex, makeAthlete, generateWeek, macroCalendar, weekToProgramDays,
-  trainingStage, maturityBand, loadStyle,
+  generateMacro, macroToProgramDays, trainingStage, maturityBand, loadStyle,
 } from './scProgramEngine';
 
 /* --------------------------------------------------------------------------- *
@@ -134,6 +134,8 @@ export default function ProgramGenerator({ userId, userRole }) {
 
   const [week, setWeek] = useState(null);
   const [macro, setMacro] = useState([]);
+  const [macroMode, setMacroMode] = useState(false);
+  const [macroWeeks, setMacroWeeks] = useState([]);
   const [openDays, setOpenDays] = useState({});
 
   const [programName, setProgramName] = useState('');
@@ -243,10 +245,18 @@ export default function ProgramGenerator({ userId, userRole }) {
       const ss = new Date(seasonStart + 'T00:00:00');
       const se = new Date(seasonEnd + 'T00:00:00');
       const pd = new Date(planDate + 'T00:00:00');
-      const w = generateWeek(ath, pd, ss, se);
-      setWeek(w);
       setMacro(macroCalendar(ath, ss, se, pd));
-      setOpenDays(Object.fromEntries(w.days.map((_, i) => [i, true])));
+      if (macroMode) {
+        const mw = generateMacro(ath, ss, se, pd);
+        setMacroWeeks(mw);
+        setWeek(mw[0] || null); // first phase drives the header / flags
+        setOpenDays({});
+      } else {
+        const w = generateWeek(ath, pd, ss, se);
+        setMacroWeeks([]);
+        setWeek(w);
+        setOpenDays(Object.fromEntries(w.days.map((_, i) => [i, true])));
+      }
     } catch (e) {
       setError(e.message || 'Generation failed.');
     }
@@ -258,14 +268,17 @@ export default function ProgramGenerator({ userId, userRole }) {
     setError('');
     setSaveMsg('');
     try {
-      const days = weekToProgramDays(week);
+      const isMacro = macroMode && macroWeeks.length > 0;
+      const days = isMacro ? macroToProgramDays(macroWeeks) : weekToProgramDays(week);
       const weeksToSeasonEnd = Math.ceil((new Date(seasonEnd) - new Date(planDate)) / (7 * 24 * 60 * 60 * 1000));
       const durationWeeks = Math.max(1, weeksToSeasonEnd || 1);
-      const description = `${week.phaseLabel} · ${week.emphasis} (generated ${iso(new Date())})`;
+      const description = isMacro
+        ? `Full off-season macro · ${macroWeeks.map((w) => w.phaseLabel).join(' → ')} (generated ${iso(new Date())})`
+        : `${week.phaseLabel} · ${week.emphasis} (generated ${iso(new Date())})`;
 
       const { data: prog, error: pErr } = await supabase
         .from('training_programs')
-        .insert({ name: programName || `${selectedName} — S&C Program`, description, duration_weeks: durationWeeks, created_by: userId })
+        .insert({ name: programName || `${selectedName} — S&C ${isMacro ? 'Off-Season Macro' : 'Program'}`, description, duration_weeks: durationWeeks, created_by: userId })
         .select('id')
         .single();
       if (pErr) throw pErr;
@@ -462,9 +475,14 @@ export default function ProgramGenerator({ userId, userRole }) {
             </div>
           </div>
 
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer px-1">
+            <input type="checkbox" checked={macroMode} onChange={(e) => setMacroMode(e.target.checked)} />
+            Full off-season macro (a week per phase: Accumulation → Strength → Power → Pre-season)
+          </label>
+
           <button onClick={generate}
             className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg">
-            <Wand2 className="w-5 h-5" /> Generate Program
+            <Wand2 className="w-5 h-5" /> {macroMode ? 'Generate Off-Season Macro' : 'Generate Program'}
           </button>
         </div>
 
@@ -508,42 +526,29 @@ export default function ProgramGenerator({ userId, userRole }) {
                 </ul>
               </div>
 
-              {/* Training days */}
-              {week.days.map((day, i) => (
-                <div key={i} className={card}>
-                  <button className="w-full flex items-center justify-between"
-                    onClick={() => setOpenDays((o) => ({ ...o, [i]: !o[i] }))}>
-                    <div className="text-left">
-                      <div className="font-bold text-gray-900">{day.name}</div>
-                      <div className="text-xs text-gray-500">{day.focus}</div>
+              {/* Training days — single week, or per-phase when in macro mode */}
+              {macroMode && macroWeeks.length > 0 ? (
+                macroWeeks.map((pw, pi) => (
+                  <div key={pi} className="space-y-3">
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-blue-600">{pw.phaseLabel}</span>
+                      <span className="text-xs text-gray-400">{pw.emphasis}</span>
                     </div>
-                    {openDays[i] ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-                  </button>
-                  {openDays[i] && (
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs text-gray-400 uppercase tracking-wide">
-                            <th className="py-1.5 pr-3 font-medium">Block</th>
-                            <th className="py-1.5 pr-3 font-medium">Exercise</th>
-                            <th className="py-1.5 font-medium">Prescription</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {day.blocks.map((b, j) => (
-                            <tr key={j} className="border-t border-gray-100 align-top">
-                              <td className="py-2 pr-3 text-xs text-gray-500 whitespace-nowrap">{b.label}</td>
-                              <td className="py-2 pr-3 font-medium text-gray-800">{b.exercise}
-                                {b.why && <div className="text-xs text-gray-400 font-normal">{b.why}</div>}</td>
-                              <td className="py-2 text-xs text-gray-600 font-mono">{b.prescription}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    {pw.days.map((day, i) => {
+                      const key = `${pi}-${i}`;
+                      return (
+                        <DayCard key={key} day={day} cardCls={card} open={!!openDays[key]}
+                          onToggle={() => setOpenDays((o) => ({ ...o, [key]: !o[key] }))} />
+                      );
+                    })}
+                  </div>
+                ))
+              ) : (
+                week.days.map((day, i) => (
+                  <DayCard key={i} day={day} cardCls={card} open={!!openDays[i]}
+                    onToggle={() => setOpenDays((o) => ({ ...o, [i]: !o[i] }))} />
+                ))
+              )}
 
               {/* Macro calendar */}
               {macro.length > 0 && (
@@ -586,6 +591,43 @@ export default function ProgramGenerator({ userId, userRole }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function DayCard({ day, cardCls, open, onToggle }) {
+  return (
+    <div className={cardCls}>
+      <button className="w-full flex items-center justify-between" onClick={onToggle}>
+        <div className="text-left">
+          <div className="font-bold text-gray-900">{day.name}</div>
+          <div className="text-xs text-gray-500">{day.focus}</div>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </button>
+      {open && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-400 uppercase tracking-wide">
+                <th className="py-1.5 pr-3 font-medium">Block</th>
+                <th className="py-1.5 pr-3 font-medium">Exercise</th>
+                <th className="py-1.5 font-medium">Prescription</th>
+              </tr>
+            </thead>
+            <tbody>
+              {day.blocks.map((b, j) => (
+                <tr key={j} className="border-t border-gray-100 align-top">
+                  <td className="py-2 pr-3 text-xs text-gray-500 whitespace-nowrap">{b.label}</td>
+                  <td className="py-2 pr-3 font-medium text-gray-800">{b.exercise}
+                    {b.why && <div className="text-xs text-gray-400 font-normal">{b.why}</div>}</td>
+                  <td className="py-2 text-xs text-gray-600 font-mono">{b.prescription}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
