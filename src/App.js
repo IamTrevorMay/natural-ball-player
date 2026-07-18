@@ -4,6 +4,7 @@ import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
 import ProgramGenerator from './ProgramGenerator';
+import ThrowingGenerator from './ThrowingGenerator';
 import Profile from './Profile';
 import Schedule from './Schedule';
 import Messages from './Messages';
@@ -26,7 +27,7 @@ import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import UsageDashboard from './UsageDashboard';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, UserPlus, Dumbbell } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, UserPlus, Dumbbell, Zap } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -76,7 +77,7 @@ export default function App() {
     // view. Those render blocks fail their gates and show a blank page with no
     // redirect, so reset to the role's default instead.
     const adminOnly = ['manage-coaches', 'manage-interns', 'usage', 'leads'];
-    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'program-generator', 'settings'];
+    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'program-generator', 'throwing-generator', 'settings'];
     const forbidden =
       (userRole !== 'admin' && adminOnly.includes(currentView)) ||
       (userRole === 'player' && staffOnly.includes(currentView));
@@ -1025,6 +1026,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'program-generator' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <ProgramGenerator userId={userId} userRole={effectiveRole} />}
+            {currentView === 'throwing-generator' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <ThrowingGenerator userId={userId} userRole={effectiveRole} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
             {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
@@ -1409,6 +1411,15 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             >
               <Dumbbell size={18} />
               <span>Program Generator</span>
+            </button>
+            <button
+              onClick={() => setCurrentView('throwing-generator')}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                currentView === 'throwing-generator' ? 'bg-blue-600' : 'hover:bg-gray-800'
+              }`}
+            >
+              <Zap size={18} />
+              <span>Throwing Generator</span>
             </button>
 
             <button

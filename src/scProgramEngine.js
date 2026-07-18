@@ -21,6 +21,13 @@
    This is coaching decision support, not medical advice.
    ========================================================================== */
 
+// Pitch Smart caps + required rest live in the shared module (one source of
+// truth across both engines). Imported for internal use by armStatusNote and
+// re-exported so existing importers of scProgramEngine keep working unchanged.
+import { requiredRestDays, dailyPitchMax } from './pitchSmart';
+
+export { requiredRestDays, dailyPitchMax } from './pitchSmart';
+
 /* --------------------------------------------------------------------------- *
  *  Enumerations (plain string constants)
  * --------------------------------------------------------------------------- */
@@ -475,27 +482,6 @@ export function prescriptionFor(phase, athlete) {
     weekly_lift_days: 2,
     emphasis: 'Maintain strength/power with minimum effective dose; never rob the arm.',
   };
-}
-
-// Pitch Smart rest days AFTER an outing, by league-age bracket + pitch count.
-const REST_7_14 = [[20, 0], [35, 1], [50, 2], [65, 3], [10000, 4]];
-const REST_15_18 = [[30, 0], [45, 1], [60, 2], [80, 3], [10000, 4]];
-const REST_19_22 = [[30, 0], [45, 1], [60, 2], [80, 3], [105, 4], [10000, 5]];
-
-export function requiredRestDays(leagueAge, pitchCount) {
-  if (pitchCount <= 0) return 0;
-  const table = leagueAge <= 14 ? REST_7_14 : leagueAge <= 18 ? REST_15_18 : REST_19_22;
-  for (const [threshold, rest] of table) if (pitchCount <= threshold) return rest;
-  return table[table.length - 1][1];
-}
-
-export function dailyPitchMax(leagueAge) {
-  if (leagueAge >= 7 && leagueAge <= 8) return 50;
-  if (leagueAge <= 10) return 75;
-  if (leagueAge <= 12) return 85;
-  if (leagueAge <= 16) return 95;
-  if (leagueAge <= 18) return 105;
-  return null; // adult — no fixed cap
 }
 
 export function armStatusNote(athlete) {
