@@ -3,7 +3,7 @@ import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign, Clock, Plane,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
-  ShoppingBag
+  ShoppingBag, UserPlus, BarChart3
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -20,6 +20,8 @@ import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
 import WorkInvoices from './WorkInvoices';
 import WorkStore from './WorkStore';
+import Leads from './Leads';
+import UsageDashboard from './UsageDashboard';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
@@ -41,6 +43,8 @@ const PAGE_META = {
   'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
   'work-admin-invoices':        { title: 'Coach Invoices',         description: 'Review and manage coach-submitted invoices.' },
   'work-admin-store':           { title: 'Store',                  description: 'Manage Square catalog and view all purchases.' },
+  'work-admin-leads':           { title: 'Leads',                  description: 'Outside customers who signed up to book & pay for sessions.' },
+  'work-admin-usage':           { title: 'Usage (V2 research)',    description: 'Anonymous product-usage analytics.' },
 };
 
 function ComingSoon({ viewKey }) {
@@ -107,6 +111,10 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <WorkInvoices userId={userId} userRole={userRole} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-store':
         return userRole === 'admin' ? <WorkStore /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-leads':
+        return userRole === 'admin' ? <Leads /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-usage':
+        return userRole === 'admin' ? <UsageDashboard /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
@@ -253,6 +261,8 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-docs"           icon={FolderOpen}  label="Manage Documents" />
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
+                <SubNavItem id="work-admin-leads"          icon={UserPlus}    label="Leads" />
+                <SubNavItem id="work-admin-usage"          icon={BarChart3}   label="Usage (V2 research)" />
                 <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>
             )}
