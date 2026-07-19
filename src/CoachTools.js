@@ -38,8 +38,6 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
     { key: 'schedule', icon: Calendar, label: 'Schedule' },
     { key: 'stats', icon: TrendingUp, label: 'Player Stats' },
     { key: 'benchmarks', icon: Target, label: 'Assessments' },
-    { key: 'training', icon: Dumbbell, label: 'Training Programs' },
-    { key: 'meals', icon: Utensils, label: 'Meal Plans' },
     { key: 'slots', icon: Clock, label: 'Training Slots' },
     { key: 'tasks', icon: ClipboardList, label: 'My Tasks' },
   ];
@@ -65,8 +63,6 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
           {activeTab === 'stats' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'benchmarks' && <AssessmentsTab players={players} userId={userId} />}
-          {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
-          {activeTab === 'meals' && <MealsTab teams={teams} players={players} />}
           {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
           {activeTab === 'tasks' && <MyTasksTab userId={userId} />}
         </div>
@@ -984,7 +980,7 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
    TRAINING PROGRAMS TAB
    ============================================ */
 
-function TrainingTab({ teams, players }) {
+export function TrainingTab({ teams, players }) {
   const [trainingSubTab, setTrainingSubTab] = useState('programs');
   const [programs, setPrograms] = useState([]);
   const [workoutTemplates, setWorkoutTemplates] = useState([]);
@@ -2445,7 +2441,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
    MEALS TAB (unchanged from previous)
    ============================================ */
 
-function MealsTab({ teams, players }) {
+export function MealsTab({ teams, players }) {
   const [mealsSubTab, setMealsSubTab] = useState('meals');
   const [meals, setMeals] = useState([]);
   const [mealPlans, setMealPlans] = useState([]);
