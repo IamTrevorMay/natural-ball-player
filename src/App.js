@@ -3,10 +3,7 @@ import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
-import ProgramGenerator from './ProgramGenerator';
-import ThrowingGenerator from './ThrowingGenerator';
-import HittingGenerator from './HittingGenerator';
-import NutritionGenerator from './NutritionGenerator';
+import Programming from './Programming';
 import Profile from './Profile';
 import Schedule from './Schedule';
 import Messages from './Messages';
@@ -29,7 +26,7 @@ import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import UsageDashboard from './UsageDashboard';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, UserPlus, Dumbbell, Zap, Utensils } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, UserPlus, Dumbbell } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -79,7 +76,7 @@ export default function App() {
     // view. Those render blocks fail their gates and show a blank page with no
     // redirect, so reset to the role's default instead.
     const adminOnly = ['manage-coaches', 'manage-interns', 'usage', 'leads'];
-    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'program-generator', 'throwing-generator', 'hitting-generator', 'nutrition-generator', 'settings'];
+    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'programming', 'settings'];
     const forbidden =
       (userRole !== 'admin' && adminOnly.includes(currentView)) ||
       (userRole === 'player' && staffOnly.includes(currentView));
@@ -1027,10 +1024,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'program-generator' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <ProgramGenerator userId={userId} userRole={effectiveRole} />}
-            {currentView === 'throwing-generator' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <ThrowingGenerator userId={userId} userRole={effectiveRole} />}
-            {currentView === 'hitting-generator' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <HittingGenerator userId={userId} userRole={effectiveRole} />}
-            {currentView === 'nutrition-generator' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <NutritionGenerator userId={userId} userRole={effectiveRole} />}
+            {currentView === 'programming' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <Programming userId={userId} userRole={effectiveRole} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
             {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
@@ -1408,40 +1402,13 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <span>Coach Tools</span>
             </button>
             <button
-              onClick={() => setCurrentView('program-generator')}
+              onClick={() => setCurrentView('programming')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'program-generator' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                currentView === 'programming' ? 'bg-blue-600' : 'hover:bg-gray-800'
               }`}
             >
               <Dumbbell size={18} />
-              <span>Program Generator</span>
-            </button>
-            <button
-              onClick={() => setCurrentView('throwing-generator')}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'throwing-generator' ? 'bg-blue-600' : 'hover:bg-gray-800'
-              }`}
-            >
-              <Zap size={18} />
-              <span>Throwing Generator</span>
-            </button>
-            <button
-              onClick={() => setCurrentView('hitting-generator')}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'hitting-generator' ? 'bg-blue-600' : 'hover:bg-gray-800'
-              }`}
-            >
-              <Target size={18} />
-              <span>Hitting Generator</span>
-            </button>
-            <button
-              onClick={() => setCurrentView('nutrition-generator')}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'nutrition-generator' ? 'bg-blue-600' : 'hover:bg-gray-800'
-              }`}
-            >
-              <Utensils size={18} />
-              <span>Nutrition Generator</span>
+              <span>Programming</span>
             </button>
 
             <button
