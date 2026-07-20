@@ -67,7 +67,7 @@ export default function NutritionGenerator({ userId, userRole }) {
   useEffect(() => {
     (async () => {
       const { data, error: e } = await supabase
-        .from('users').select('id, full_name').eq('role', 'player').order('full_name');
+        .from('users').select('id, full_name').in('role', ['player', 'coach', 'admin']).order('full_name');
       if (e) { setError(e.message); return; }
       let filtered = data || [];
       if (userRole === 'coach') {

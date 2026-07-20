@@ -91,7 +91,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
       const { data, error: e } = await supabase
         .from('users')
         .select('id, full_name, player_profiles!player_profiles_user_id_fkey(position)')
-        .eq('role', 'player')
+        .in('role', ['player', 'coach', 'admin'])
         .order('full_name');
       if (e) { setError(e.message); return; }
       let filtered = data || [];

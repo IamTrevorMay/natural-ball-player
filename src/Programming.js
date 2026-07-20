@@ -33,7 +33,7 @@ export default function Programming({ userId, userRole }) {
       const { data: p } = await supabase
         .from('users')
         .select('id, full_name, email, player_profiles!player_profiles_user_id_fkey(position, jersey_number, level), team_members(team_id, teams(name))')
-        .or('role.eq.player,secondary_role.eq.player')
+        .or('role.eq.player,role.eq.coach,role.eq.admin,secondary_role.eq.player')
         .order('full_name');
       setPlayers(p || []);
     })();
