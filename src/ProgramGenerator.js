@@ -19,6 +19,8 @@ import {
 const EQUIPMENT_OPTIONS = [
   'barbell', 'dumbbell', 'bands', 'medball', 'trapbar', 'ssb', 'box',
   'landmine', 'football_bar', 'pullup_bar', 'chains',
+  'sled', 'deadlift_platform', 'squat_rack', 'cable_machine', 'kettlebells',
+  'multi_grip_bar', 'leg_machines', 'belt_squat', 'trx_band',
 ];
 
 const ageFromDob = (dob) => {
@@ -122,7 +124,7 @@ export default function ProgramGenerator({ userId, userRole }) {
   const [sex, setSex] = useState(Sex.MALE);
   const [chronoAge, setChronoAge] = useState('16');
   const [trainingMonths, setTrainingMonths] = useState('12');
-  const [equipment, setEquipment] = useState(['barbell', 'dumbbell', 'bands', 'medball', 'trapbar']);
+  const [equipment, setEquipment] = useState([...EQUIPMENT_OPTIONS]);
   const [injuries, setInjuries] = useState('');
   const [recentPitchCount, setRecentPitchCount] = useState('0');
   const [assessment, setAssessment] = useState({ ...BLANK_ASSESSMENT });
