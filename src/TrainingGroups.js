@@ -91,8 +91,11 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
       const rows = toAdd.map(m => ({ team_id: group.id, user_id: m.user_id, role: 'player' }));
       const { error } = await supabase.from('team_members').insert(rows);
       if (error) throw error;
+      // Move the source team to the groups side so it no longer appears in the Teams column
+      const { error: updateErr } = await supabase.from('teams').update({ team_type: 'training' }).eq('id', sourceTeamId);
+      if (updateErr) throw updateErr;
       await fetchAll();
-      flashMsg('success', `Added ${toAdd.length} athlete${toAdd.length === 1 ? '' : 's'} from ${sourceName} to ${group.name}.`);
+      flashMsg('success', `Moved ${toAdd.length} athlete${toAdd.length === 1 ? '' : 's'} from ${sourceName} to ${group.name}.`);
     } catch (err) {
       flashMsg('error', formatUserError(err));
     } finally {
