@@ -15,7 +15,7 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
   const [loading, setLoading] = useState(true);
   const [teams, setTeams] = useState([]);
   const [membersByTeam, setMembersByTeam] = useState({});
-  const [dragOverGroupId, setDragOverGroupId] = useState(null);
+  const [dragOverColumn, setDragOverColumn] = useState(false);
   const [flash, setFlash] = useState(null); // { type: 'success'|'error', text }
   const [busyGroupId, setBusyGroupId] = useState(null);
   const [showNewGroup, setShowNewGroup] = useState(false);
@@ -66,36 +66,25 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
   const playersOf = (teamId) =>
     (membersByTeam[teamId] || []).filter(m => (m.users?.role || m.role) === 'player');
 
-  const handleDrop = async (e, group) => {
+  // #243: moving a team to the Groups side converts the team itself into a
+  // training group (team_type='training'). Its roster comes along via the shared
+  // team_members table, and it leaves the Teams column — no rows are copied and
+  // nothing is deleted (deleting would cascade the team's games/prospects/programs).
+  const handleDrop = async (e) => {
     e.preventDefault();
-    setDragOverGroupId(null);
+    setDragOverColumn(false);
     const sourceTeamId = e.dataTransfer.getData(TEAM_MIME);
-    if (!sourceTeamId || sourceTeamId === group.id) return;
+    if (!sourceTeamId) return;
+    const sourceTeam = teams.find(t => t.id === sourceTeamId);
+    if (!sourceTeam || isTraining(sourceTeam)) return; // already a group
+    const sourceName = sourceTeam.name || 'team';
 
-    const sourcePlayers = playersOf(sourceTeamId);
-    const existing = new Set((membersByTeam[group.id] || []).map(m => m.user_id));
-    const toAdd = sourcePlayers.filter(m => m.user_id && !existing.has(m.user_id));
-    const sourceName = teams.find(t => t.id === sourceTeamId)?.name || 'team';
-
-    if (sourcePlayers.length === 0) {
-      flashMsg('error', `${sourceName} has no athletes to copy.`);
-      return;
-    }
-    if (toAdd.length === 0) {
-      flashMsg('error', `All ${sourceName} athletes are already in ${group.name}.`);
-      return;
-    }
-
-    setBusyGroupId(group.id);
+    setBusyGroupId(sourceTeamId);
     try {
-      const rows = toAdd.map(m => ({ team_id: group.id, user_id: m.user_id, role: 'player' }));
-      const { error } = await supabase.from('team_members').insert(rows);
+      const { error } = await supabase.from('teams').update({ team_type: 'training' }).eq('id', sourceTeamId);
       if (error) throw error;
-      // Move the source team to the groups side so it no longer appears in the Teams column
-      const { error: updateErr } = await supabase.from('teams').update({ team_type: 'training' }).eq('id', sourceTeamId);
-      if (updateErr) throw updateErr;
       await fetchAll();
-      flashMsg('success', `Moved ${toAdd.length} athlete${toAdd.length === 1 ? '' : 's'} from ${sourceName} to ${group.name}.`);
+      flashMsg('success', `Moved ${sourceName} to Training Groups.`);
     } catch (err) {
       flashMsg('error', formatUserError(err));
     } finally {
@@ -219,7 +208,7 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
                     draggable
                     onDragStart={(e) => {
                       e.dataTransfer.setData(TEAM_MIME, team.id);
-                      e.dataTransfer.effectAllowed = 'copy';
+                      e.dataTransfer.effectAllowed = 'move';
                     }}
                     className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2.5 shadow-sm cursor-grab active:cursor-grabbing hover:border-blue-300 transition"
                   >
@@ -238,36 +227,39 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
           )}
         </div>
 
-        {/* Training groups (drop targets) */}
-        <div>
+        {/* Training groups — the whole column is a drop target (#243): dropping a
+            team here converts it into a training group. */}
+        <div
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes(TEAM_MIME)) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setDragOverColumn(true);
+            }
+          }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverColumn(false); }}
+          onDrop={handleDrop}
+          className={`rounded-lg transition ${dragOverColumn ? 'ring-2 ring-blue-400 ring-offset-2' : ''}`}
+        >
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Training Groups</h2>
           {trainingGroups.length === 0 ? (
-            <p className="text-sm text-gray-400">No training groups yet. Click “New Group” to add one.</p>
+            <div className={`text-sm rounded-md px-3 py-6 text-center border border-dashed transition ${dragOverColumn ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-200 text-gray-400'}`}>
+              Drag a team here to make it a training group, or click “New Group”.
+            </div>
           ) : (
             <div className="space-y-3">
               {trainingGroups.map(group => {
                 const members = membersByTeam[group.id] || [];
-                const active = dragOverGroupId === group.id;
                 return (
                   <div
                     key={group.id}
-                    onDragOver={(e) => {
-                      if (e.dataTransfer.types.includes(TEAM_MIME)) {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'copy';
-                        setDragOverGroupId(group.id);
-                      }
-                    }}
-                    onDragLeave={() => setDragOverGroupId(prev => (prev === group.id ? null : prev))}
-                    onDrop={(e) => handleDrop(e, group)}
-                    className={`rounded-lg border-2 transition p-3 ${active ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}`}
+                    className="rounded-lg border-2 border-gray-200 bg-white transition p-3"
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="min-w-0">
                         <div className="font-semibold text-gray-900 truncate">{group.name}</div>
                         <div className="text-xs text-gray-400">
                           {group.age_group ? `${group.age_group} · ` : ''}{members.length} athlete{members.length === 1 ? '' : 's'}
-                          {busyGroupId === group.id && ' · adding…'}
                         </div>
                       </div>
                       <button
@@ -279,8 +271,8 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
                       </button>
                     </div>
                     {members.length === 0 ? (
-                      <div className={`text-xs rounded-md px-3 py-4 text-center ${active ? 'text-blue-600' : 'text-gray-400 border border-dashed border-gray-200'}`}>
-                        Drag a team here to add its athletes
+                      <div className="text-xs rounded-md px-3 py-4 text-center text-gray-400 border border-dashed border-gray-200">
+                        No athletes in this group yet.
                       </div>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">

@@ -8,6 +8,7 @@ import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { COACH_SKILL_OPTIONS } from './skillOptions';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -181,6 +182,7 @@ export default function Schedule({ userId, userRole }) {
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
   const [laneDate, setLaneDate] = useState(fmtLocalDate(new Date()));
   const [coachesDrawerOpen, setCoachesDrawerOpen] = useState(false);
+  const [coachSkillFilter, setCoachSkillFilter] = useState('All');
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
   const [staffScheduleEvents, setStaffScheduleEvents] = useState([]);
   const [staffAssignments, setStaffAssignments] = useState([]);
@@ -531,7 +533,7 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const fetchCoaches = async () => {
-    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role').in('role', ['coach', 'admin']).order('full_name');
+    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills').in('role', ['coach', 'admin']).order('full_name');
     setCoaches(data || []);
   };
 
@@ -1221,6 +1223,17 @@ export default function Schedule({ userId, userRole }) {
                     <X size={18} />
                   </button>
                 </div>
+                <div className="p-3 border-b border-gray-200">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Filter by skill</label>
+                  <select
+                    value={coachSkillFilter}
+                    onChange={(e) => setCoachSkillFilter(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-teal-500 bg-white text-gray-700"
+                  >
+                    <option value="All">All skills</option>
+                    {COACH_SKILL_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
                 <div className="flex-1 overflow-y-auto">
                   {selectedCoach && (
                     <button
@@ -1230,7 +1243,9 @@ export default function Schedule({ userId, userRole }) {
                       &larr; Back to Facility Events
                     </button>
                   )}
-                  {coaches.map(coach => (
+                  {coaches
+                    .filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter))
+                    .map(coach => (
                     <button
                       key={coach.id}
                       onClick={() => {
@@ -1240,14 +1255,24 @@ export default function Schedule({ userId, userRole }) {
                       className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition border-b border-gray-100 ${selectedCoach?.id === coach.id ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
                     >
                       <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">{coach.full_name.charAt(0)}</div>
-                        <div>
+                        <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0">{coach.full_name.charAt(0)}</div>
+                        <div className="min-w-0">
                           <div className="text-sm font-medium text-gray-900">{coach.full_name}</div>
                           {coach.title && <div className="text-xs text-gray-500">{coach.title}</div>}
+                          {coach.skills && coach.skills.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {coach.skills.map(s => (
+                                <span key={s} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${s === coachSkillFilter ? 'bg-teal-600 text-white' : 'bg-teal-50 text-teal-700'}`}>{s}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </button>
                   ))}
+                  {coaches.filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter)).length === 0 && (
+                    <div className="px-4 py-6 text-center text-sm text-gray-500">No coaches cover {coachSkillFilter}.</div>
+                  )}
                 </div>
               </aside>
             </div>
@@ -5763,6 +5788,23 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   // Public booking (#229): let outside customers book & pay for this session.
   const [isPublic, setIsPublic] = useState(existingSlot?.is_public || false);
   const [publicPrice, setPublicPrice] = useState(existingSlot?.public_price_cents != null ? (existingSlot.public_price_cents / 100).toFixed(2) : '');
+  // Subscription session (#244): tie the slot to a Square subscription/package
+  // product so subscribers can join. Products come from store_products.
+  const [isSubscriptionSession, setIsSubscriptionSession] = useState(existingSlot?.is_subscription_session || false);
+  const [storeProductId, setStoreProductId] = useState(existingSlot?.store_product_id || '');
+  const [subProducts, setSubProducts] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from('store_products')
+        .select('id, name, price_cents, recurring')
+        .eq('kind', 'package')
+        .eq('active', true)
+        .order('sort_order');
+      setSubProducts(data || []);
+    })();
+  }, []);
 
   // Keep the slot's own weekday selected when slotDate changes.
   useEffect(() => {
@@ -5788,9 +5830,12 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 
   const handleSave = async () => {
     if (isPublic && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
+    if (isSubscriptionSession && !storeProductId) return alert('Choose a subscription for this session');
     const publicFields = {
       is_public: isPublic,
       public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
+      is_subscription_session: isSubscriptionSession,
+      store_product_id: isSubscriptionSession ? storeProductId : null,
     };
     setLoading(true);
     try {
@@ -5895,6 +5940,27 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
               </div>
             )}
           </div>
+          <div className="border border-gray-200 rounded-lg p-3">
+            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
+              <input type="checkbox" checked={isSubscriptionSession} onChange={(e) => setIsSubscriptionSession(e.target.checked)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+              <span>Subscription session</span>
+            </label>
+            {isSubscriptionSession && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Which subscription?</label>
+                <select value={storeProductId} onChange={(e) => setStoreProductId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+                  <option value="">Select a subscription…</option>
+                  {subProducts.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}{p.price_cents != null ? ` — $${(p.price_cents / 100).toFixed(2)}${p.recurring ? '/mo' : ''}` : ''}</option>
+                  ))}
+                </select>
+                {subProducts.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">No subscription products found. Add them in the Store (Work Portal) or sync from Square.</p>
+                )}
+                <p className="text-xs text-gray-400 mt-1.5">Athletes with an active subscription can join this session — no per-session fee.</p>
+              </div>
+            )}
+          </div>
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
             <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
@@ -5913,6 +5979,8 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
+  // #244: name of the subscription this session is tied to (if any).
+  const [subName, setSubName] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -5933,6 +6001,14 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!slot?.is_subscription_session || !slot?.store_product_id) { setSubName(null); return; }
+    (async () => {
+      const { data } = await supabase.from('store_products').select('name').eq('id', slot.store_product_id).single();
+      setSubName(data?.name || null);
+    })();
+  }, [slot?.is_subscription_session, slot?.store_product_id]);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -5967,12 +6043,25 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           <div className="bg-teal-50 rounded-lg p-4">
             <div className="text-sm font-semibold text-teal-900">{coach?.full_name}</div>
             {coach?.title && <div className="text-xs text-teal-600">{coach.title}</div>}
+            {coach?.skills && coach.skills.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {coach.skills.map(s => (
+                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-white text-teal-700 border border-teal-200">{s}</span>
+                ))}
+              </div>
+            )}
             <div className="mt-2 text-sm text-gray-700">
               <div>{new Date(slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
               <div>{formatTime(slot.start_time)} - {slot.duration_minutes} min</div>
             </div>
             {slot.notes && <div className="mt-2 text-xs text-gray-500">{slot.notes}</div>}
           </div>
+          {slot.is_subscription_session && (
+            <div className="flex items-start space-x-2 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-sm text-teal-800">
+              <ClipboardList size={16} className="mt-0.5 shrink-0 text-teal-600" />
+              <span>Subscription session{subName ? <> — included with the <span className="font-medium">{subName}</span> subscription.</> : '.'} Members on an active subscription can join.</span>
+            </div>
+          )}
           {!pkgCheck.checking && (
             pkgCheck.pkg ? (
               <div className="flex items-start space-x-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-800">

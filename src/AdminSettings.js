@@ -3,6 +3,7 @@ import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { COACH_SKILL_OPTIONS } from './skillOptions';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -608,6 +609,25 @@ function CoachCard({ coach, refreshUsers }) {
     setSaving(false);
   };
 
+  const handleToggleSkill = async (skill) => {
+    const current = coach.skills || [];
+    const next = current.includes(skill)
+      ? current.filter(s => s !== skill)
+      : [...current, skill];
+    setSaving(true);
+    const { error } = await supabase
+      .from('users')
+      .update({ skills: next })
+      .eq('id', coach.id);
+    if (error) {
+      console.error('Error updating skills:', error);
+      alert('Error updating skills: ' + formatUserError(error));
+    } else {
+      await refreshUsers();
+    }
+    setSaving(false);
+  };
+
   return (
     <div className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition">
       <div className="flex items-center justify-between">
@@ -661,6 +681,25 @@ function CoachCard({ coach, refreshUsers }) {
                   </button>
                 </div>
               )}
+            </div>
+            {/* Skills the coach can cover for booking (#245) */}
+            <div className="mt-2">
+              <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">Skills covered</p>
+              <div className="flex flex-wrap gap-1.5">
+                {COACH_SKILL_OPTIONS.map(skill => {
+                  const active = (coach.skills || []).includes(skill);
+                  return (
+                    <button
+                      key={skill}
+                      onClick={() => handleToggleSkill(skill)}
+                      disabled={saving}
+                      className={`text-xs px-2 py-0.5 rounded-full border transition disabled:opacity-50 ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}`}
+                    >
+                      {skill}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             {coach.team_members && coach.team_members.length > 0 && (
               <p className="text-xs text-gray-500 mt-1">
