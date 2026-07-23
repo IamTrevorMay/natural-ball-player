@@ -55,7 +55,7 @@
 - **#185** — Program data backfill script (one-time migration to copy template data into training_exercises)
 - **#178** — School directory data import (waiting on CSV from Matteo)
 - **#142** — Square payment integration (unlocks #189 facility fines)
-- **#48** — HitTrax API integration (needs credentials)
+- **#48** — HitTrax integration (credentials received; in progress — see below)
 - **#44** — Trackman API integration (needs credentials)
 
 ### Long-term
@@ -75,7 +75,7 @@
 | 174 | AI Programming | Low | Research phase | AI agent that reads assessment results + Whoop data and auto-generates training programs from the existing program vault. Large feature — needs architecture design |
 | 170 | AI Agent for video hyperlinks | Low | Research phase | AI agent to find YouTube videos for exercises missing hyperlinks in workout templates and auto-populate the link field |
 | 142 | Square & Lesson / Monthly Packages | Medium | Not started | Connect Square payment platform. Build packages/lessons/rentals/subscriptions catalog with purchase flow. Blocks #189 (facility fines) |
-| 48 | Hit-Trax API | Medium | Not started | Connect HitTrax API to pull session data into the Hittrax profile tab. Need API credentials and documentation |
+| 48 | HitTrax integration | Medium | In progress | Credentials + SDK received (July 2026). NOT a pull API like Trackman: data is pushed to a per-seat **Azure Service Bus** queue in the HitTrax cloud, consumable ONLY via HitTrax's Windows/C#/.NET 4.6.2 SDK. Architecture: a small always-on **C# bridge** (`integrations/hittrax-bridge/`, runs on a cloud Windows VM) drains the queue → POSTs each message to a Supabase `hittrax-ingest` edge function → `hittrax_sessions`/`hittrax_plays`/`hittrax_player_map` (RLS mirrors Trackman) → `HitTraxTab.js` profile tab + admin mapping UI. No historical backfill (queue is forward-only from first connect). Metric units (m/s, m) converted to mph/ft on ingest. Generator auto-fill from HitTrax = later follow-up. **Current step:** spike — run the bridge, capture real Play/Session/User JSON, then finalize schema. Credentials (apiID/apiKey/SID) are secrets — env only, rotate after setup. |
 | 44 | Trackman Integration | Medium | Not started | Connect Trackman API to pull pitch/hit data into the Trackman profile tab. Need API access and credentials |
 
 ## Architecture Notes
