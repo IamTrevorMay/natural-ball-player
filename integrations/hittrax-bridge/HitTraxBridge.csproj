@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- HitTrax Bridge — targets .NET Framework 4.6.2 to match the HitTrax SDK
+       (their Developers Guide compiles as .NET Framework 4.6.1; 4.6.2 is the
+       version listed in the license email and is backward compatible). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net462</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>HitTraxBridge</AssemblyName>
+    <RootNamespace>HitTraxBridge</RootNamespace>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <!-- Azure Service Bus classic client — the message pump the SDK is built on
+       (Microsoft.Azure.ServiceBus.Message / ExceptionReceivedEventArgs). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.ServiceBus" Version="5.2.0" />
+  </ItemGroup>
+
+  <!-- The HitTrax SDK DLL. Copy HitTraxPublicRealtimeDataAccessSDK.dll (and any
+       companion DLLs shipped in the SDK zip) into ./lib/ before building.
+       Vendor binaries are gitignored — they are not committed. -->
+  <ItemGroup>
+    <Reference Include="HitTraxPublicRealtimeDataAccessSDK">
+      <HintPath>lib\HitTraxPublicRealtimeDataAccessSDK.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
