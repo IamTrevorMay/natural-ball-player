@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { metricsByGroup } from './assessmentMetrics';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -2967,6 +2968,7 @@ function AssessmentsTab({ players, userId }) {
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [showFillModal, setShowFillModal] = useState(null);
   const [showViewModal, setShowViewModal] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(null);
 
   useEffect(() => { fetchTemplates(); fetchSubmissions(); }, []);
 
@@ -3103,6 +3105,9 @@ function AssessmentsTab({ players, userId }) {
                       <button onClick={() => setShowViewModal(s)} className="text-gray-400 hover:text-blue-600 transition" title="View">
                         <Eye size={16} />
                       </button>
+                      <button onClick={() => setShowEditModal(s)} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                        <Edit2 size={16} />
+                      </button>
                       <button onClick={() => handleDeleteSubmission(s.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
                         <Trash2 size={16} />
                       </button>
@@ -3138,6 +3143,18 @@ function AssessmentsTab({ players, userId }) {
         <ViewAssessmentModal
           submission={showViewModal}
           onClose={() => setShowViewModal(null)}
+        />
+      )}
+
+      {showEditModal && (
+        <FillAssessmentModal
+          template={templates.find(t => t.id === showEditModal.template_id) || null}
+          templates={templates}
+          players={players}
+          userId={userId}
+          editingSubmission={showEditModal}
+          onClose={() => setShowEditModal(null)}
+          onSuccess={() => { setShowEditModal(null); fetchSubmissions(); }}
         />
       )}
     </div>
@@ -3286,6 +3303,26 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
 
+                  {/* Scalar fields can be tagged with a canonical metric so program generators auto-fill from this value */}
+                  {(el.type === 'text_field' || el.type === 'combo_box') && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">
+                        Maps to metric <span className="text-gray-400 font-normal">(optional — lets S&amp;C / throwing / hitting / nutrition generators auto-fill from this field)</span>
+                      </label>
+                      <select value={el.metric_key || ''} onChange={(e) => updateElement(i, { metric_key: e.target.value || undefined })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">— none —</option>
+                        {metricsByGroup().map(g => (
+                          <optgroup key={g.group} label={g.group}>
+                            {g.items.map(m => (
+                              <option key={m.key} value={m.key}>{m.label}{m.unit ? ` (${m.unit})` : ''}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {/* Table-specific: columns and rows */}
                   {el.type === 'table' && (
                     <div className="grid grid-cols-2 gap-4">
@@ -3354,13 +3391,15 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
    FILL ASSESSMENT MODAL
    ============================================ */
 
-function FillAssessmentModal({ template, templates, players, userId, onClose, onSuccess }) {
+function FillAssessmentModal({ template, templates, players, userId, editingSubmission, onClose, onSuccess }) {
   useModalTracking('FillAssessmentModal');
-  const [selectedTemplate, setSelectedTemplate] = useState(template);
-  const [playerId, setPlayerId] = useState('');
-  const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
-  const [responses, setResponses] = useState({});
-  const [notes, setNotes] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState(
+    editingSubmission ? (templates.find(t => t.id === editingSubmission.template_id) || template) : template
+  );
+  const [playerId, setPlayerId] = useState(editingSubmission?.player_id || '');
+  const [assessmentDate, setAssessmentDate] = useState(editingSubmission?.assessment_date || fmtLocalDate(new Date()));
+  const [responses, setResponses] = useState(editingSubmission?.responses || {});
+  const [notes, setNotes] = useState(editingSubmission?.notes || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [playerSearch, setPlayerSearch] = useState('');
@@ -3385,19 +3424,21 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
   };
 
   const handleSave = async () => {
-    trackAction('submit_assessment');
+    trackAction(editingSubmission ? 'edit_assessment' : 'submit_assessment');
     if (!playerId) { setError('Please select a player'); return; }
     setLoading(true);
     setError('');
 
-    const { error: saveError } = await supabase.from('assessment_submissions').insert({
+    const payload = {
       template_id: selectedTemplate.id,
       player_id: playerId,
-      assessed_by: userId,
       assessment_date: assessmentDate,
       responses,
       notes: notes.trim() || null,
-    });
+    };
+    const { error: saveError } = editingSubmission
+      ? await supabase.from('assessment_submissions').update(payload).eq('id', editingSubmission.id)
+      : await supabase.from('assessment_submissions').insert({ ...payload, assessed_by: userId });
 
     if (saveError) {
       setError(saveError.message);
@@ -3411,7 +3452,7 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
         <div className="border-b border-gray-200 p-6 flex items-center justify-between shrink-0">
-          <h3 className="text-xl font-bold text-gray-900">Fill Out Assessment</h3>
+          <h3 className="text-xl font-bold text-gray-900">{editingSubmission ? 'Edit Assessment' : 'Fill Out Assessment'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
