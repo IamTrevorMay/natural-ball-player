@@ -1070,12 +1070,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       const mealPlayerQ = supabase
         .from('meal_plan_assignments')
-        .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description)')
+        .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description, meal_plan_items(sort_order, meals(id, name, meal_type, description, calories, protein_g, carbs_g, fat_g)))')
         .eq('player_id', userId);
       const mealTeamQ = teamIds.length > 0
         ? supabase
             .from('meal_plan_assignments')
-            .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description)')
+            .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description, meal_plan_items(sort_order, meals(id, name, meal_type, description, calories, protein_g, carbs_g, fat_g)))')
             .in('team_id', teamIds)
         : Promise.resolve({ data: [] });
 
@@ -3547,6 +3547,40 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               {a.team_id && <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Team</div>}
                             </div>
                           </div>
+                          {(() => {
+                            const items = [...(a.meal_plans?.meal_plan_items || [])]
+                              .sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0))
+                              .map(it => it.meals).filter(Boolean);
+                            if (items.length === 0) return null;
+                            const tot = items.reduce((s, m) => ({
+                              cal: s.cal + (m.calories || 0), p: s.p + (m.protein_g || 0),
+                              c: s.c + (m.carbs_g || 0), f: s.f + (m.fat_g || 0),
+                            }), { cal: 0, p: 0, c: 0, f: 0 });
+                            return (
+                              <div className="mt-2 pt-2 border-t border-gray-100">
+                                <div className="flex flex-wrap gap-1.5 mb-2 text-[11px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 font-medium">{Math.round(tot.cal)} kcal</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">P {Math.round(tot.p)}g</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">C {Math.round(tot.c)}g</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">F {Math.round(tot.f)}g</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                  {items.map(m => (
+                                    <div key={m.id} className="flex items-start justify-between gap-2 text-xs">
+                                      <div className="min-w-0">
+                                        <span className="font-medium text-gray-800">{m.meal_type ? `${m.meal_type}: ` : ''}</span>
+                                        <span className="text-gray-700">{m.name}</span>
+                                        {m.description && <div className="text-gray-400">{m.description}</div>}
+                                      </div>
+                                      <div className="text-gray-500 whitespace-nowrap flex-shrink-0">
+                                        {Math.round(m.calories || 0)} kcal · {Math.round(m.protein_g || 0)}/{Math.round(m.carbs_g || 0)}/{Math.round(m.fat_g || 0)}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>

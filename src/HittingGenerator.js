@@ -5,6 +5,7 @@ import {
   LEVELS, LEVEL_NAME, METRICS, BM, UNIV, KIND_COLOR,
   generatePlan, planToProgramDays,
 } from './hittingEngine';
+import { extractMetricsFromSubmission } from './assessmentMetrics';
 
 /* --------------------------------------------------------------------------- *
  *  Hitting Program Generator — "Barrel Path" (engine #3).
@@ -203,7 +204,12 @@ export default function HittingGenerator({ userId, userRole }) {
       const sub = subs && subs[0];
       const { out, matched } = mapAssessment(sub);
       matched.forEach((k) => { if (next[k] === '' || next[k] == null) next[k] = String(out[k]); });
-      if (matched.length) notes.push(`${matched.length} metrics from "${sub.assessment_templates?.name || 'assessment'}"`);
+      // Structured metric_key tags are authoritative — override fuzzy/blank with tagged values.
+      const byKey = extractMetricsFromSubmission(sub);
+      const keyed = Object.keys(byKey).filter((k) => METRIC_KEYS.includes(k));
+      keyed.forEach((k) => { next[k] = String(byKey[k]); });
+      const total = new Set([...matched, ...keyed]).size;
+      if (total) notes.push(`${total} metric${total > 1 ? 's' : ''} from "${sub.assessment_templates?.name || 'assessment'}"`);
 
       setValues(next);
       setProgramName(`${p.full_name} — Hitting Roadmap`);
@@ -239,7 +245,7 @@ export default function HittingGenerator({ userId, userRole }) {
         const d = rows[i];
         const { data: dayRow, error: dErr } = await supabase
           .from('training_days')
-          .insert({ program_id: prog.id, day_number: i + 1, title: d.title, notes: d.notes })
+          .insert({ program_id: prog.id, day_number: d.day_number || (i + 1), title: d.title, notes: d.notes })
           .select('id').single();
         if (dErr) throw dErr;
         if (d.exercises.length) {

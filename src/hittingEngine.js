@@ -462,16 +462,23 @@ export function generatePlan({ values, level, age, weeks, days }) {
 }
 
 /**
- * Per-phase serializer: one program day per phase, holding that phase's first
- * week's blocks. training_exercises.category='hitting' is a native enum value.
+ * Per-WEEK serializer: one program day per plan week, carrying that whole week's
+ * blocks. `day_number` is a 1-based ABSOLUTE calendar-day offset so the schedule
+ * (which places each day at drop_date + day_number-1) lands each week on the same
+ * weekday, 7 days apart — i.e. the Monday entry represents the full week, not a
+ * single day. Previously this emitted one row per phase and the schedule collapsed
+ * the weeks onto consecutive calendar days. training_exercises.category='hitting'
+ * is a native enum value.
  */
 export function planToProgramDays(phases, plan) {
-  return phases.map((ph) => {
-    const wk = plan.find((w) => w.week >= ph.span[0] && w.week <= ph.span[1]) || plan[0];
-    const blocks = wk ? wk.blocks : [];
+  const phaseOf = (wk) => phases.find((ph) => wk >= ph.span[0] && wk <= ph.span[1]) || phases[0] || null;
+  return (plan || []).map((w) => {
+    const ph = phaseOf(w.week);
+    const blocks = w.blocks || [];
     return {
-      title: `${ph.name} (wk ${ph.span[0]}–${ph.span[1]})`,
-      notes: ph.focus,
+      day_number: (w.week - 1) * 7 + 1,
+      title: `Week ${w.week}${ph ? ` — ${ph.name}` : ''}${w.deload ? ' (deload)' : ''}`,
+      notes: [ph && ph.focus, w.focus].filter(Boolean).join(' · '),
       exercises: blocks.map((b, i) => ({
         category: 'hitting',
         name: b.t,

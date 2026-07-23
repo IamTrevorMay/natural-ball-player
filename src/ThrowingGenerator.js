@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar } from 'lucide-react';
+import { extractMetricsFromSubmission } from './assessmentMetrics';
 import {
   LEVELS, POSITIONS, PHASES, PHASE_ORDER, ATHLETE_TYPES,
   gameDemand, readiness, assessmentGates, stressUnits, moundRamp, buildWeek, seedLog,
-  weekToProgramDays,
+  buildProgram, programToProgramDays, buildThrowingPhases, THROW_KIND_COLOR,
+  THROW_METRICS, gradeThrowing,
 } from './throwingEngine';
 
 /* --------------------------------------------------------------------------- *
@@ -12,9 +14,11 @@ import {
  *
  *  Position/level-aware throwing microcycles with Pitch Smart caps, ACWR
  *  workload, assessment gates and daily readiness. Fully wired: auto-fills
- *  readiness from the athlete's latest whoop_cycles and the chronic-load
- *  baseline from their trackman_pitches history, then saves the week into the
- *  training-program library. Reskinned to the app's light Tailwind UI.
+ *  readiness from the athlete's latest whoop_cycles, the chronic-load baseline
+ *  and the velocity/spin/extension benchmarks from their trackman_pitches
+ *  history, grades them vs level, then builds a multi-week (1-16) program with
+ *  real week-over-week progression and saves it into the training-program
+ *  library on absolute calendar-day offsets.
  * --------------------------------------------------------------------------- */
 
 const ageFromDob = (dob) => {
@@ -56,6 +60,36 @@ const clr = {
   red: { text: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', dot: 'bg-red-500' },
   blue: { text: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-500' },
 };
+const KIND_HEX = { blue: '#3b82f6', green: '#22c55e', amber: '#f59e0b', red: '#ef4444', gray: '#9ca3af' };
+const STATUS_CLR = { good: 'text-green-600', dev: 'text-amber-600', def: 'text-red-600' };
+
+// Dev/good zone bar for one graded (up-direction) throwing metric.
+function ThrowMetricBar({ mkey, s }) {
+  if (!s) return null;
+  const label = THROW_METRICS.find((m) => m.key === mkey)?.label || mkey;
+  const min = s.dev[0] * 0.8;
+  const max = s.good * 1.25;
+  const span = max - min || 1;
+  const clamp = (x) => Math.max(0, Math.min(100, ((x - min) / span) * 100));
+  const devL = clamp(s.dev[0]);
+  const devR = clamp(s.dev[1]);
+  const goodL = clamp(s.good);
+  const pos = clamp(s.value);
+  return (
+    <div className="mb-2.5">
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-gray-500">{label}</span>
+        <span className={`font-mono font-bold ${STATUS_CLR[s.status]}`}>{Math.round(s.value * 100) / 100}{s.unit}</span>
+      </div>
+      <div className="relative h-2 rounded bg-gray-100">
+        <div className="absolute h-full bg-amber-200 rounded" style={{ left: `${devL}%`, width: `${Math.max(0, devR - devL)}%` }} />
+        <div className="absolute h-full bg-green-300 rounded" style={{ left: `${goodL}%`, width: `${Math.max(0, 100 - goodL)}%` }} />
+        <div className="absolute w-1 h-3 -top-0.5 bg-gray-900 rounded" style={{ left: `calc(${pos}% - 2px)` }} />
+      </div>
+      <div className="text-[10px] text-gray-400 mt-0.5">dev {s.dev[0]}–{s.dev[1]}{s.unit} · target ≥{s.good}{s.unit}</div>
+    </div>
+  );
+}
 
 export default function ThrowingGenerator({ userId, userRole }) {
   const [players, setPlayers] = useState([]);
@@ -69,12 +103,14 @@ export default function ThrowingGenerator({ userId, userRole }) {
   const [phaseId, setPhaseId] = useState('VELO');
   const [typeId, setTypeId] = useState('intermediate');
   const [weekInPhase, setWeekInPhase] = useState(2);
+  const [weeks, setWeeks] = useState('4');
   const [mob, setMob] = useState(72);
   const [str, setStr] = useState(68);
   const [bio, setBio] = useState(70);
   const [whoop, setWhoop] = useState(74);
   const [hrv, setHrv] = useState('flat');
   const [soreness, setSoreness] = useState('none');
+  const [benchVals, setBenchVals] = useState({ velo: '', spin: '', ext: '' });
 
   const [log, setLog] = useState(seedLog);
   const [autoChronic, setAutoChronic] = useState(true);
@@ -118,7 +154,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
       // Demographics -> level + position.
       const { data: u } = await supabase
         .from('users')
-        .select('date_of_birth, player_profiles!player_profiles_user_id_fkey(position)')
+        .select('date_of_birth, player_profiles!player_profiles_user_id_fkey(position, training_age_months)')
         .eq('id', p.id).single();
       const pp = Array.isArray(u?.player_profiles) ? u.player_profiles[0] : u?.player_profiles;
       const age = ageFromDob(u?.date_of_birth);
@@ -126,6 +162,12 @@ export default function ThrowingGenerator({ userId, userRole }) {
       const pos = posKeyFromProfile(pp?.position);
       setLevelId(lvl);
       setPosId(pos);
+      // Training age -> athlete-type tolerance.
+      if (pp?.training_age_months != null) {
+        const ta = Number(pp.training_age_months);
+        setTypeId(ta < 12 ? 'novice' : ta <= 36 ? 'intermediate' : 'advanced');
+        notes.push('training age');
+      }
 
       // WHOOP readiness auto-fill (staff read-all RLS).
       const { data: cycles } = await supabase
@@ -145,13 +187,14 @@ export default function ThrowingGenerator({ userId, userRole }) {
         }
       }
 
-      // Trackman workload -> chronic baseline (pitchers).
+      // Trackman workload -> chronic baseline + velo/spin/extension benchmarks (pitchers).
       const since = iso(new Date(Date.now() - 28 * 24 * 60 * 60 * 1000));
       const { data: pitches } = await supabase
         .from('trackman_pitches')
-        .select('thrown_date')
+        .select('thrown_date, rel_speed, spin_rate, extension')
         .eq('pitcher_user_id', p.id)
         .gte('thrown_date', since);
+      const nb = { velo: '', spin: '', ext: '' };
       if (pitches && pitches.length) {
         const byDate = {};
         pitches.forEach((r) => { byDate[r.thrown_date] = (byDate[r.thrown_date] || 0) + 1; });
@@ -162,9 +205,30 @@ export default function ThrowingGenerator({ userId, userRole }) {
           throws: count, intent: 100, mound: true,
         })).filter((e) => e.dayAgo >= 0 && e.dayAgo < 28);
         if (built.length) { setLog(built); setAutoChronic(true); notes.push(`${built.length}d Trackman load`); }
+
+        const velos = pitches.map((r) => r.rel_speed).filter((v) => v != null).map(Number);
+        const spins = pitches.map((r) => r.spin_rate).filter((v) => v != null).map(Number);
+        const exts = pitches.map((r) => r.extension).filter((v) => v != null).map(Number);
+        if (velos.length) { nb.velo = String(Math.round(Math.max(...velos) * 10) / 10); notes.push('velocity benchmark'); }
+        if (spins.length) nb.spin = String(Math.round(spins.reduce((a, b) => a + b, 0) / spins.length));
+        if (exts.length) nb.ext = String(Math.round((exts.reduce((a, b) => a + b, 0) / exts.length) * 10) / 10);
       } else {
         setLog(seedLog());
       }
+
+      // Assessment-tagged throwing velo fills the benchmark when Trackman is absent.
+      const { data: subs } = await supabase
+        .from('assessment_submissions')
+        .select('responses, assessment_templates(name, schema)')
+        .eq('player_id', p.id)
+        .order('assessment_date', { ascending: false })
+        .limit(1);
+      const byKey = extractMetricsFromSubmission(subs && subs[0]);
+      if (!nb.velo && (byKey.throwing_velo_max != null || byKey.fb_velo != null)) {
+        nb.velo = String(byKey.throwing_velo_max != null ? byKey.throwing_velo_max : byKey.fb_velo);
+        notes.push('velo (assessment)');
+      }
+      setBenchVals(nb);
 
       setProgramName(`${p.full_name} — Throwing (${PHASES[phaseId].label})`);
       setAutoNote(notes.length
@@ -177,11 +241,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
 
   const ready = useMemo(() => readiness(whoop, hrv, soreness), [whoop, hrv, soreness]);
   const gates = useMemo(() => assessmentGates(mob, str, bio), [mob, str, bio]);
-  const week = useMemo(() => buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase }),
-    [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase]);
-  const demand = useMemo(() => gameDemand(posId, levelId), [posId, levelId]);
-  const isP = POSITIONS[posId].group === 'P';
-  const ramp = useMemo(() => (isP ? moundRamp(levelId, posId) : []), [isP, levelId, posId]);
+  const benchS = useMemo(() => gradeThrowing(benchVals, levelId), [benchVals, levelId]);
 
   const logStats = useMemo(() => {
     const su = (e) => stressUnits(e.throws, e.intent || 1, e.mound);
@@ -189,15 +249,24 @@ export default function ThrowingGenerator({ userId, userRole }) {
     const last28 = log.reduce((s, e) => s + su(e), 0);
     return { acute7: Math.round(last7), chronicWk: Math.round(last28 / 4) };
   }, [log]);
+  const chronicWeekly = autoChronic ? Math.max(1, logStats.chronicWk) : manualChronic;
+
+  // Post-ACWR-adjustment week (chronic drives the feedback loop inside buildWeek).
+  const week = useMemo(() => buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, chronic: chronicWeekly, bench: benchS }),
+    [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, chronicWeekly, benchS]);
+  const numWeeks = Math.max(1, Math.min(16, parseInt(weeks, 10) || 1));
+  const phasePlan = useMemo(() => buildThrowingPhases(phaseId, numWeeks), [phaseId, numWeeks]);
+  const demand = useMemo(() => gameDemand(posId, levelId), [posId, levelId]);
+  const isP = POSITIONS[posId].group === 'P';
+  const ramp = useMemo(() => (isP ? moundRamp(levelId, posId) : []), [isP, levelId, posId]);
 
   const acuteWeekly = week.reduce((s, d) => s + d.su, 0);
-  const chronicWeekly = autoChronic ? Math.max(1, logStats.chronicWk) : manualChronic;
   const acwr = chronicWeekly > 0 ? acuteWeekly / chronicWeekly : 0;
   const phase = PHASES[phaseId];
   const totalThrows = week.reduce((s, d) => s + d.throws, 0);
   const highDays = week.filter((d) => d.intent >= 90).length;
 
-  const acwrZone = acwr < 0.8 ? { label: 'UNDERLOADED', c: 'blue' }
+  const acwrZone = acwr < phase.acwr[0] ? { label: 'UNDERLOADED', c: 'blue' }
     : acwr <= phase.acwr[1] ? { label: 'IN RANGE', c: 'green' }
       : acwr <= 1.5 ? { label: 'CAUTION', c: 'amber' } : { label: 'HIGH RISK', c: 'red' };
 
@@ -205,29 +274,35 @@ export default function ThrowingGenerator({ userId, userRole }) {
     if (!week) return;
     setSaving(true); setError(''); setSaveMsg('');
     try {
-      const days = weekToProgramDays(week);
+      const program = buildProgram({
+        levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase,
+        weeks: numWeeks, chronic: chronicWeekly, bench: benchS,
+      });
+      const rows = programToProgramDays(program, { mob, str, bio, isP, bench: benchS });
       const { data: prog, error: pErr } = await supabase
         .from('training_programs')
         .insert({
           name: programName || `${selectedName} — Throwing`,
-          description: `${phase.label} · ${phase.goal} (generated ${iso(new Date())})`,
-          duration_weeks: 1, created_by: userId,
+          description: `${phase.label} · ${numWeeks}-week ramp · ${phase.goal} (generated ${iso(new Date())})`,
+          duration_weeks: numWeeks, created_by: userId,
         }).select('id').single();
       if (pErr) throw pErr;
-      for (let i = 0; i < days.length; i += 1) {
-        const d = days[i];
+      for (let i = 0; i < rows.length; i += 1) {
+        const d = rows[i];
         const { data: dayRow, error: dErr } = await supabase
           .from('training_days')
-          .insert({ program_id: prog.id, day_number: i + 1, title: d.title, notes: d.notes })
+          .insert({ program_id: prog.id, day_number: d.day_number, title: d.title, notes: d.notes })
           .select('id').single();
         if (dErr) throw dErr;
-        const { error: exErr } = await supabase.from('training_exercises').insert(
-          d.exercises.map((x) => ({
-            day_id: dayRow.id, category: x.category, name: x.name,
-            description: x.description, reps: x.reps, sort_order: x.sort_order,
-          })),
-        );
-        if (exErr) throw exErr;
+        if (d.exercises.length) {
+          const { error: exErr } = await supabase.from('training_exercises').insert(
+            d.exercises.map((x) => ({
+              day_id: dayRow.id, category: x.category, name: x.name,
+              description: x.description, reps: x.reps, sort_order: x.sort_order,
+            })),
+          );
+          if (exErr) throw exErr;
+        }
       }
       if (assignAthlete && selectedId) {
         const { error: aErr } = await supabase.from('training_program_assignments').insert({
@@ -235,7 +310,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
         });
         if (aErr) throw aErr;
       }
-      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}.`);
+      setSaveMsg(`Saved "${programName}" (${numWeeks} wk, ${rows.length} sessions)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.`);
     } catch (e) {
       setError(e.message || 'Save failed.');
     } finally {
@@ -271,7 +346,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
       </div>
       <p className="text-sm text-gray-500 mb-6">
         Position- and level-aware throwing microcycles — Pitch Smart caps, ACWR workload and daily readiness.
-        Auto-fills WHOOP recovery & Trackman load, then saves into the training-program library.
+        Auto-fills WHOOP recovery, Trackman load & velocity benchmarks, then builds a multi-week program.
       </p>
 
       {error && <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
@@ -332,13 +407,20 @@ export default function ThrowingGenerator({ userId, userRole }) {
                 <button key={id} onClick={() => setPhaseId(id)} className={chip(phaseId === id, 'amber')}>{PHASES[id].label}</button>
               ))}
             </div>
-            <div className="mt-3 flex items-center gap-2">
-              <span className={label + ' mb-0'}>Week in phase</span>
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className={label + ' mb-0'}>Start week in phase</span>
               {[1, 2, 3, 4, 5, 6].map((w) => (
                 <button key={w} onClick={() => setWeekInPhase(w)}
                   className={`w-7 h-7 rounded text-xs font-bold border ${weekInPhase === w
                     ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-300'}`}>{w}</button>
               ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <span className={label + ' mb-0'}>Program length</span>
+              <input type="number" min={1} max={16} value={weeks}
+                onChange={(e) => setWeeks(e.target.value)}
+                className="w-20 border border-gray-300 rounded px-2 py-1.5 text-sm" />
+              <span className="text-xs text-gray-400">weeks (1–16, true week-over-week progression)</span>
             </div>
           </div>
 
@@ -347,6 +429,20 @@ export default function ThrowingGenerator({ userId, userRole }) {
             <Slider text="Mobility (shoulder / hip / T-spine)" value={mob} set={setMob} />
             <Slider text="Strength (relative + posterior chain)" value={str} set={setStr} />
             <Slider text="Biomechanics (efficiency / low stress)" value={bio} set={setBio} />
+          </div>
+
+          <div className={card}>
+            <div className={eyebrow}>Throwing benchmarks (vs level)</div>
+            <div className="grid grid-cols-3 gap-3">
+              {THROW_METRICS.map((m) => (
+                <div key={m.key}>
+                  <span className={label}>{m.label} ({m.unit})</span>
+                  <input className={inp} type="number" value={benchVals[m.key]}
+                    onChange={(e) => setBenchVals((v) => ({ ...v, [m.key]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-gray-400 mt-2">Blank = not measured. Auto-fills from Trackman when available. A deficient velo grade biases in extra velo exposure & corrective plyo emphasis.</div>
           </div>
 
           <div className={card}>
@@ -386,6 +482,9 @@ export default function ThrowingGenerator({ userId, userRole }) {
                 </div>
                 <div className="font-bold text-gray-900">{ready.headline}</div>
                 <div className="text-xs text-gray-500 mt-0.5">{ready.detail}</div>
+                <div className="text-[10px] text-gray-400 mt-1 font-mono">
+                  vol ×{ready.volMult.toFixed(2)} · intent ×{ready.intentMult.toFixed(2)} (geometric WHOOP scaling)
+                </div>
               </div>
             </div>
           </div>
@@ -400,6 +499,39 @@ export default function ThrowingGenerator({ userId, userRole }) {
               <Stat label="Max distance" value={typeof demand.dist === 'number' ? `${demand.dist}'` : demand.dist} />
             </div>
             <div className="text-xs text-gray-400 mt-3">{demand.note}.</div>
+          </div>
+
+          {/* Benchmarks vs data */}
+          {Object.keys(benchS).length > 0 && (
+            <div className={card}>
+              <div className={eyebrow}>Benchmarks vs {LEVELS.find((l) => l.id === levelId).label}</div>
+              {THROW_METRICS.filter((m) => benchS[m.key]).map((m) => <ThrowMetricBar key={m.key} mkey={m.key} s={benchS[m.key]} />)}
+            </div>
+          )}
+
+          {/* Phase plan */}
+          <div className={card}>
+            <div className={eyebrow}>Phase plan · {numWeeks} {numWeeks === 1 ? 'week' : 'weeks'}</div>
+            <div className="flex rounded overflow-hidden h-8 mb-2">
+              {phasePlan.map((ph, i) => {
+                const w = (ph.span[1] - ph.span[0] + 1) / numWeeks * 100;
+                return (
+                  <div key={i} title={ph.name} className="flex items-center justify-center text-[9px] text-white font-semibold"
+                    style={{ width: `${w}%`, background: KIND_HEX[THROW_KIND_COLOR[ph.kind]] || KIND_HEX.blue }}>
+                    {ph.span[1] - ph.span[0] + 1}w
+                  </div>
+                );
+              })}
+            </div>
+            <div className="space-y-1.5">
+              {phasePlan.map((ph, i) => (
+                <div key={i} className="text-xs flex gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full mt-0.5 shrink-0" style={{ background: KIND_HEX[THROW_KIND_COLOR[ph.kind]] || KIND_HEX.blue }} />
+                  <span className="font-semibold text-gray-700 w-36 shrink-0">{ph.name}</span>
+                  <span className="text-gray-500">wk {ph.span[0]}–{ph.span[1]} · {ph.focus}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Microcycle */}
@@ -430,8 +562,8 @@ export default function ThrowingGenerator({ userId, userRole }) {
                         <td className="py-2 pr-3 font-mono text-gray-600">{d.throws || '—'}</td>
                         <td className="py-2 pr-3 font-mono text-xs text-gray-500">{d.distance || '—'}</td>
                         <td className="py-2 text-xs text-gray-500">{d.focus}
-                          {d.ps && <div className={`font-mono text-[10px] ${d.ps.over ? 'text-red-600' : 'text-gray-400'}`}>
-                            ~{d.ps.pitches} pitches · cap {d.ps.max}{d.ps.over ? ' · OVER CAP' : ` · needs ${d.ps.rest}d rest`}</div>}
+                          {d.ps && <div className={`font-mono text-[10px] ${d.ps.capped ? 'text-red-600' : 'text-gray-400'}`}>
+                            ~{d.ps.pitches} pitches · cap {d.ps.max}{d.ps.capped ? ` · CAPPED to ${d.ps.max}` : ` · needs ${d.ps.rest}d rest`}</div>}
                         </td>
                       </tr>
                     );
@@ -481,6 +613,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
               <div className="text-xs text-gray-400 mt-2 font-mono">
                 acute {Math.round(acuteWeekly)} / chronic {chronicWeekly} · target {phase.acwr[0]}–{phase.acwr[1]}
               </div>
+              <div className="text-[10px] text-gray-400 mt-1">Auto-adjusted: volume is scaled into the phase band after building.</div>
               <label className="flex items-center gap-2 mt-3 text-xs text-gray-500 cursor-pointer">
                 <input type="checkbox" checked={autoChronic} onChange={(e) => setAutoChronic(e.target.checked)} />
                 auto chronic from Trackman
@@ -542,7 +675,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
             </label>
             <button onClick={save} disabled={saving || !selectedId}
               className="mt-4 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg">
-              <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Program'}
+              <Save className="w-4 h-4" /> {saving ? 'Saving…' : `Save ${numWeeks}-Week Program`}
             </button>
             {saveMsg && (
               <div className="mt-3 p-3 rounded bg-green-50 border border-green-200 text-green-700 text-sm flex gap-2">
@@ -551,7 +684,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
             )}
             <div className="mt-3 flex items-start gap-2 text-xs text-gray-400">
               <Calendar className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              Saves the current 7-day microcycle as a program. Not medical advice — return-to-throw must be cleared clinically.
+              Saves {numWeeks} week{numWeeks === 1 ? '' : 's'} on absolute calendar-day offsets (weeks land on the correct days when dropped). Not medical advice — return-to-throw must be cleared clinically.
             </div>
           </div>
         </div>
