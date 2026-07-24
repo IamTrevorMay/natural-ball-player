@@ -5791,8 +5791,17 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   // Subscription session (#244): tie the slot to a Square subscription/package
   // product so subscribers can join. Products come from store_products.
   const [isSubscriptionSession, setIsSubscriptionSession] = useState(existingSlot?.is_subscription_session || false);
-  const [storeProductId, setStoreProductId] = useState(existingSlot?.store_product_id || '');
+  // #249: a session can accept MULTIPLE subscription/package plans, stored as a
+  // uuid[] (mirrors team_ids). store_product_id stays as primary/legacy = ids[0].
+  const [storeProductIds, setStoreProductIds] = useState(
+    existingSlot?.store_product_ids?.length ? existingSlot.store_product_ids
+      : (existingSlot?.store_product_id ? [existingSlot.store_product_id] : [])
+  );
   const [subProducts, setSubProducts] = useState([]);
+
+  const toggleProduct = (id) => {
+    setStoreProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
 
   useEffect(() => {
     (async () => {
@@ -5829,13 +5838,16 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   };
 
   const handleSave = async () => {
-    if (isPublic && !(parseFloat(publicPrice) >= 0)) return alert('Enter a price for public booking');
-    if (isSubscriptionSession && !storeProductId) return alert('Choose a subscription for this session');
+    // #249: allow $0 (free) sessions — reject only blank / negative / non-numeric.
+    if (isPublic && !(parseFloat(publicPrice) >= 0)) return alert('Enter a price for public booking (0 for free)');
+    if (isSubscriptionSession && storeProductIds.length === 0) return alert('Choose at least one subscription for this session');
     const publicFields = {
       is_public: isPublic,
       public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
       is_subscription_session: isSubscriptionSession,
-      store_product_id: isSubscriptionSession ? storeProductId : null,
+      // #249: accept N plans. Keep store_product_id = ids[0] as primary/legacy.
+      store_product_ids: isSubscriptionSession ? storeProductIds : [],
+      store_product_id: isSubscriptionSession ? (storeProductIds[0] || null) : null,
     };
     setLoading(true);
     try {
@@ -5936,7 +5948,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
                   <input type="number" min="0" step="0.01" value={publicPrice} onChange={(e) => setPublicPrice(e.target.value)} placeholder="0.00" className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
                 </div>
-                <p className="text-xs text-gray-400 mt-1.5">Outside customers can book & pay for this session on the public /book page (up to Max Players spots).</p>
+                <p className="text-xs text-gray-400 mt-1.5">Outside customers can book this session on the public /book page (up to Max Players spots). Enter <span className="font-medium">0</span> for a free session — guests are confirmed instantly with no payment.</p>
               </div>
             )}
           </div>
@@ -5947,17 +5959,20 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
             </label>
             {isSubscriptionSession && (
               <div className="mt-3">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Which subscription?</label>
-                <select value={storeProductId} onChange={(e) => setStoreProductId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white">
-                  <option value="">Select a subscription…</option>
-                  {subProducts.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}{p.price_cents != null ? ` — $${(p.price_cents / 100).toFixed(2)}${p.recurring ? '/mo' : ''}` : ''}</option>
-                  ))}
-                </select>
-                {subProducts.length === 0 && (
+                <label className="block text-xs font-medium text-gray-600 mb-1">Which subscriptions? (accept one or more)</label>
+                {subProducts.length === 0 ? (
                   <p className="text-xs text-amber-600 mt-1.5">No subscription products found. Add them in the Store (Work Portal) or sync from Square.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                    {subProducts.map(p => (
+                      <label key={p.id} className="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
+                        <input type="checkbox" checked={storeProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                        <span>{p.name}{p.price_cents != null ? ` — $${(p.price_cents / 100).toFixed(2)}${p.recurring ? '/mo' : ''}` : ''}</span>
+                      </label>
+                    ))}
+                  </div>
                 )}
-                <p className="text-xs text-gray-400 mt-1.5">Athletes with an active subscription can join this session — no per-session fee.</p>
+                <p className="text-xs text-gray-400 mt-1.5">Athletes with an active subscription on any selected plan can join this session — no per-session fee.</p>
               </div>
             )}
           </div>
@@ -5979,8 +5994,8 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
-  // #244: name of the subscription this session is tied to (if any).
-  const [subName, setSubName] = useState(null);
+  // #244/#249: names of the subscription plan(s) this session accepts (if any).
+  const [subNames, setSubNames] = useState([]);
 
   useEffect(() => {
     (async () => {
@@ -6003,12 +6018,13 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   }, []);
 
   useEffect(() => {
-    if (!slot?.is_subscription_session || !slot?.store_product_id) { setSubName(null); return; }
+    const ids = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
+    if (!slot?.is_subscription_session || ids.length === 0) { setSubNames([]); return; }
     (async () => {
-      const { data } = await supabase.from('store_products').select('name').eq('id', slot.store_product_id).single();
-      setSubName(data?.name || null);
+      const { data } = await supabase.from('store_products').select('name').in('id', ids);
+      setSubNames((data || []).map(d => d.name).filter(Boolean));
     })();
-  }, [slot?.is_subscription_session, slot?.store_product_id]);
+  }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -6059,7 +6075,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           {slot.is_subscription_session && (
             <div className="flex items-start space-x-2 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-sm text-teal-800">
               <ClipboardList size={16} className="mt-0.5 shrink-0 text-teal-600" />
-              <span>Subscription session{subName ? <> — included with the <span className="font-medium">{subName}</span> subscription.</> : '.'} Members on an active subscription can join.</span>
+              <span>Subscription session{subNames.length ? <> — included with: <span className="font-medium">{subNames.join(', ')}</span>.</> : '.'} Members on an active subscription can join.</span>
             </div>
           )}
           {!pkgCheck.checking && (

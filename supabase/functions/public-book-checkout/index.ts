@@ -178,11 +178,17 @@ Deno.serve(async (req) => {
         guest_phone: guest_phone?.trim() || null,
         notes: notes?.trim() || null,
         amount_cents: priceCents,
-        status: "pending_payment",
+        // #249: free ($0) sessions confirm instantly — no Square payment step.
+        status: priceCents === 0 ? "confirmed" : "pending_payment",
       })
       .select("id")
       .single();
     if (insErr || !booking) return jsonRes(cors, 500, { error: insErr?.message || "Could not create booking" });
+
+    // Free session: skip the Square payment link entirely, booking is already confirmed.
+    if (priceCents === 0) {
+      return jsonRes(cors, 200, { free: true, booking_id: booking.id });
+    }
 
     // Redirect target: honor a client return_url only if it's a trusted origin.
     let appOrigin = req.headers.get("Origin") || "https://nbp-portal.vercel.app";
