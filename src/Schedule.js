@@ -5829,7 +5829,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   };
 
   const handleSave = async () => {
-    if (isPublic && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
+    if (isPublic && !(parseFloat(publicPrice) >= 0)) return alert('Enter a price for public booking');
     if (isSubscriptionSession && !storeProductId) return alert('Choose a subscription for this session');
     const publicFields = {
       is_public: isPublic,
