@@ -152,8 +152,8 @@ export function makeAssessment(a = {}) {
     tspine_rotation_deg: a.tspine_rotation_deg ?? null,
     rel_squat: a.rel_squat ?? null,
     rel_trap_bar_dl: a.rel_trap_bar_dl ?? null,
-    broad_jump_cm: a.broad_jump_cm ?? null,
-    vertical_jump_cm: a.vertical_jump_cm ?? null,
+    broad_jump_in: a.broad_jump_in ?? null,
+    vertical_jump_in: a.vertical_jump_in ?? null,
     single_leg_stability: a.single_leg_stability ?? null, // "poor" | "fair" | "good"
     movement_competency: a.movement_competency ?? 'developing', // novice|developing|competent
   };
@@ -289,12 +289,12 @@ export function scLevelFromAge(age) {
 
 // dir 'up': dev = [lower, upper), good = target. Grades good / dev / def.
 export const SC_BM = {
-  vertical_jump_cm: { unit: 'cm', by: {
-    youth: { dev: [35, 45], good: 45 }, middleschool: { dev: [40, 50], good: 50 }, hs: { dev: [50, 60], good: 60 },
-    college: { dev: [58, 68], good: 68 }, pro: { dev: [64, 74], good: 74 } } },
-  broad_jump_cm: { unit: 'cm', by: {
-    youth: { dev: [180, 210], good: 210 }, middleschool: { dev: [200, 230], good: 230 }, hs: { dev: [230, 260], good: 260 },
-    college: { dev: [260, 290], good: 290 }, pro: { dev: [285, 315], good: 315 } } },
+  vertical_jump_in: { unit: 'in', by: {
+    youth: { dev: [14, 18], good: 18 }, middleschool: { dev: [16, 20], good: 20 }, hs: { dev: [20, 24], good: 24 },
+    college: { dev: [23, 27], good: 27 }, pro: { dev: [25, 29], good: 29 } } },
+  broad_jump_in: { unit: 'in', by: {
+    youth: { dev: [71, 83], good: 83 }, middleschool: { dev: [79, 91], good: 91 }, hs: { dev: [91, 102], good: 102 },
+    college: { dev: [102, 114], good: 114 }, pro: { dev: [112, 124], good: 124 } } },
   rel_squat: { unit: '× BW', by: {
     youth: { dev: [0.8, 1.2], good: 1.2 }, middleschool: { dev: [1.0, 1.5], good: 1.5 }, hs: { dev: [1.4, 1.9], good: 1.9 },
     college: { dev: [1.8, 2.2], good: 2.2 }, pro: { dev: [2.0, 2.5], good: 2.5 } } },
@@ -305,8 +305,8 @@ export const SC_BM = {
 
 // Force/power metric catalog (key, label) for the UI benchmark bars.
 export const SC_METRICS = [
-  { key: 'vertical_jump_cm', label: 'Vertical jump' },
-  { key: 'broad_jump_cm', label: 'Broad jump' },
+  { key: 'vertical_jump_in', label: 'Vertical jump' },
+  { key: 'broad_jump_in', label: 'Broad jump' },
   { key: 'rel_squat', label: 'Back squat (× BW)' },
   { key: 'rel_trap_bar_dl', label: 'Trap-bar deadlift (× BW)' },
 ];
@@ -967,9 +967,10 @@ function lowerMeDay(athlete, date, rx, ctx = {}) {
   const { wn, n, weekday } = ctxTools(ctx);
   const tags = weaknessTags(athlete.assessment);
   const meElig = eligible(ALL_POOLS.ME_LOWER, athlete);
+  // Only ONE true max-effort (1RM) lift per max-effort day — a second heavy lift on the
+  // same day fries the CNS/PNS for the rest of the week. The Olympic/clean below is the
+  // single explosive primer, kept distinct from the one main strength lift.
   const main = rotatePick(meElig, date, 'melower');
-  const supp = meElig.filter((e) => e !== main);
-  const second = supp.length ? rotatePick(supp, date, 'melower2') : null;
   const powerElig = eligible(ALL_POOLS.POWER, athlete);
   const triElig = powerElig.filter((e) => overlaps(e.targets, [...TRIPLE_TAGS]));
   const explosive = triElig.length ? rotatePick(triElig, date, 'explolow') : null;
@@ -982,7 +983,6 @@ function lowerMeDay(athlete, date, rx, ctx = {}) {
   if (explosive) blocks.push(blockOf('Explosive / Olympic lift', explosive.name, rx.power_volume, explosive.note));
   jumps.forEach((p) => blocks.push(blockOf('Power (CNS primer)', p.name, rx.power_volume, p.note)));
   if (main) blocks.push(blockOf('Max-Effort Lower', main.name, `${rx.main_scheme} @ ${rx.main_intensity}${wn}`, main.note));
-  if (second) blocks.push(blockOf('Secondary lower strength', second.name, rx.accessory_reps, second.note));
   post.forEach((a) => blocks.push(blockOf('Posterior-chain accessory', a.name, rx.accessory_reps, a.note)));
   sleg.forEach((a) => blocks.push(blockOf('Single-leg / stability', a.name, rx.accessory_reps, a.note)));
   core.forEach((c) => blocks.push(blockOf('Anti-rotation core', c.name, rx.core_reps, c.note)));
@@ -994,9 +994,10 @@ function upperMeDay(athlete, date, rx, ctx = {}) {
   const thrower = isThrower(athlete);
   const mainPress = rotatePick(eligible(ALL_POOLS.ME_UPPER, athlete), date, 'meupper');
   const pressElig = eligible(ALL_POOLS.PRESS, athlete);
-  const horiz = pickMix(pressElig, new Set(['horizontal_press']), 1);
-  const vert = pickMix(pressElig, new Set(['vertical_press']), 1);
-  const accPress = [...horiz, ...vert].filter(Boolean);
+  // Cap pressing at 2 per upper day (1 main + 1 accessory) and keep pulls >= presses.
+  // Three heavy presses at 4-5 sets each is too much systemic pressing volume; a single
+  // rotating accessory press (either plane) plus 3 pulls keeps the day press/pull balanced.
+  const accPress = pickMix(pressElig, new Set(['horizontal_press', 'vertical_press']), 1);
   const pulls = pickMix(eligible(ALL_POOLS.PULL, athlete), POST_TAGS, n(3));
   const arm = pickMix(eligible(ALL_POOLS.ARM_FARM, athlete), ARM_TAGS, n(thrower ? 3 : 2));
   const cuff = thrower ? pickN(eligible(ALL_POOLS.ARM_CARE, athlete), POST_TAGS, 1) : [];
@@ -1037,14 +1038,17 @@ function dynamicLowerDay(athlete, date, rx, ctx = {}) {
 
 function dynamicUpperDay(athlete, date, rx, ctx = {}) {
   const { wn, n, weekday } = ctxTools(ctx);
-  const thrower = isThrower(athlete);
   const powerElig = eligible(ALL_POOLS.POWER, athlete);
   const power = pickMix(powerElig, ROT_TAGS, n(2));
   const ohElig = powerElig.filter((e) => subsetOf([...OH_EXPLOSIVE_TAGS], e.targets));
   const ohExplosive = ohElig.length ? rotatePick(ohElig, date, 'expoup') : null;
+  // Match speed pulls to speed presses so this day mixes press and pull rather than being a
+  // press-dominant day (keep press/pull balanced within every upper day, not press-day vs pull-day).
   const dePress = pickN(eligible(ALL_POOLS.DE_UPPER, athlete), new Set(['horizontal_press', 'vertical_press']), n(2));
-  const speedPull = pickMix(eligible(ALL_POOLS.DE_UPPER, athlete), POST_TAGS, n(1));
-  const arm = pickMix(eligible(ALL_POOLS.ARM_FARM, athlete), ARM_TAGS, n(thrower ? 3 : 2));
+  const speedPull = pickMix(eligible(ALL_POOLS.DE_UPPER, athlete), POST_TAGS, n(2));
+  // Trim dynamic-day arm work to 2 so adding the balancing speed-pull keeps this day at ~9-10
+  // total (throwers still get the full arm-farm dose on the max-effort upper day).
+  const arm = pickMix(eligible(ALL_POOLS.ARM_FARM, athlete), ARM_TAGS, n(2));
   const core = pickN(eligible(ALL_POOLS.CORE, athlete), ANTIROT_TAGS, n(1));
 
   const blocks = power.map((p) => blockOf('Rotational power (sport transfer)', p.name, rx.power_volume, p.note));
@@ -1080,7 +1084,9 @@ function dynamicSplitDay(athlete, date, rx, ctx = {}) {
 
 function correctivePrep(athlete) {
   const tags = weaknessTags(athlete.assessment);
-  const corr = pickTargeted(eligible(ALL_POOLS.CORRECTIVE, athlete), tags, 3);
+  // Cap at 2 corrective prep blocks so the Monday max-effort lower day stays at 10-11 total
+  // movements (prep is prepended only to that day in assembleDays).
+  const corr = pickTargeted(eligible(ALL_POOLS.CORRECTIVE, athlete), tags, 2);
   if (!corr.length) {
     return [blockOf('Prep (clean screen)', 'General dynamic warm-up', '5-8 min: leg swings, band pull-aparts, hip openers')];
   }

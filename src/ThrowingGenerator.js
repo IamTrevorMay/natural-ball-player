@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar } from 'lucide-react';
 import { extractMetricsFromSubmission } from './assessmentMetrics';
+import AssessmentReadiness from './AssessmentReadiness';
 import {
   LEVELS, POSITIONS, PHASES, PHASE_ORDER, ATHLETE_TYPES,
   gameDemand, readiness, assessmentGates, stressUnits, moundRamp, buildWeek, seedLog,
@@ -216,19 +217,28 @@ export default function ThrowingGenerator({ userId, userRole }) {
         setLog(seedLog());
       }
 
-      // Assessment-tagged throwing velo fills the benchmark when Trackman is absent.
+      // Assessment-tagged metrics: throwing velo (benchmark) + mobility/strength/biomech gate
+      // scores. Merge across recent submissions so a value from any tagged assessment fills in
+      // (newest wins per key), since gate scores may live in a different submission than velo.
       const { data: subs } = await supabase
         .from('assessment_submissions')
         .select('responses, assessment_templates(name, schema)')
         .eq('player_id', p.id)
         .order('assessment_date', { ascending: false })
-        .limit(1);
-      const byKey = extractMetricsFromSubmission(subs && subs[0]);
+        .limit(20);
+      const byKey = {};
+      (subs || []).slice().reverse().forEach((s) => Object.assign(byKey, extractMetricsFromSubmission(s)));
       if (!nb.velo && (byKey.throwing_velo_max != null || byKey.fb_velo != null)) {
         nb.velo = String(byKey.throwing_velo_max != null ? byKey.throwing_velo_max : byKey.fb_velo);
         notes.push('velo (assessment)');
       }
       setBenchVals(nb);
+
+      // Auto-fill the assessment gate sliders (0-100) from tagged readiness scores.
+      const clamp100 = (v) => Math.max(0, Math.min(100, Math.round(Number(v))));
+      if (byKey.mobility_score != null) { setMob(clamp100(byKey.mobility_score)); notes.push('mobility gate'); }
+      if (byKey.strength_score != null) { setStr(clamp100(byKey.strength_score)); notes.push('strength gate'); }
+      if (byKey.biomech_score != null) { setBio(clamp100(byKey.biomech_score)); notes.push('biomech gate'); }
 
       setProgramName(`${p.full_name} — Throwing (${PHASES[phaseId].label})`);
       setAutoNote(notes.length
@@ -374,6 +384,8 @@ export default function ThrowingGenerator({ userId, userRole }) {
             {selectedName && <div className="mt-3 text-sm font-semibold text-gray-900">{selectedName}</div>}
             {autoNote && <div className="mt-2 text-xs text-orange-600 bg-orange-50 rounded p-2">{autoNote}</div>}
           </div>
+
+          {selectedId && <AssessmentReadiness athleteId={selectedId} highlight="throwing" />}
 
           <div className={card}>
             <div className={eyebrow}>Setup</div>

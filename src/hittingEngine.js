@@ -297,26 +297,27 @@ export function buildFindings(V, S, level) {
    PHASING — allocate weeks, biased by where the leverage sits
    ============================================================ */
 export const KIND_COLOR = {
-  foundation: 'violet', strength: 'cyan', power: 'amber', integration: 'green', inseason: 'blue', transition: 'gray',
+  foundation: 'violet', power: 'amber', integration: 'green', inseason: 'blue', transition: 'gray',
 };
 
 export function buildPhases(findings, weeks, age) {
   const bigMobility = findings.some((f) => f.cat === 'Mobility' && f.sev >= 3);
   const bigSkill = findings.some((f) => ['Bat-to-ball', 'Contact quality'].includes(f.cat) && f.sev >= 3);
 
+  // Strength/lifting is intentionally NOT a hitting phase — barbell strength is programmed by
+  // the Strength & Conditioning generator. The hitting developmental cycle is 3 phases:
+  // Foundation → Power/Velocity → Skill Integration.
   const P = {
     transition: { kind: 'transition', name: 'Transition & Re-assessment',
       focus: 'Active recovery after the season, then a full re-test. Restore general athleticism, unload accumulated fatigue, and rebuild movement quality before the developmental blocks begin.' },
     foundation: { kind: 'foundation', name: 'Foundation & Corrective',
-      focus: 'Restore mobility, own the movement patterns, and groove the correct kinematic sequence at low intent. Build the platform the rest of the plan stands on.' },
-    strength: { kind: 'strength', name: 'Strength & Stability',
-      focus: 'Build the force base — lower-body strength, anti-rotation core, lead-leg stability — while reinforcing sequence and connection in the cage.' },
+      focus: 'Restore mobility, own the movement patterns, and groove the correct kinematic sequence at low intent. Build the platform the rest of the plan stands on. (Barbell strength runs in parallel via the S&C program.)' },
     power: { kind: 'power', name: 'Power & Velocity',
       focus: 'Convert strength to rotational power and barrel speed: max-intent med-ball work, over/underload bat protocols, and bat-speed training.' },
     integration: { kind: 'integration', name: 'Skill Integration & Transfer',
       focus: 'Turn new speed into barrels: on-plane and connection refinement, barrel-accuracy and contact-quality work, then transfer against live velocity and peak.' },
     inseason: { kind: 'inseason', name: 'In-Season Maintenance',
-      focus: 'Compete. Protect the swing and hold the gains: minimal-volume heavy strength, short high-intent power priming, and heavy emphasis on approach, timing, and swing decisions. Deload around game density.' },
+      focus: 'Compete. Protect the swing and hold the gains: short high-intent power priming and heavy emphasis on approach, timing, and swing decisions. Deload around game density. (Maintenance lifting runs in the S&C program.)' },
   };
   const clone = (o, span) => Object.assign({}, o, { span });
 
@@ -327,17 +328,18 @@ export function buildPhases(findings, weeks, age) {
     const devW = Math.round(weeks * devFrac);
     const reset = 2;
     const inW = weeks - trans1 - devW - reset;
-    let dp = [0.22, 0.28, 0.26, 0.24];
-    if (bigMobility) dp = [0.32, 0.26, 0.22, 0.20];
-    if (bigSkill && !bigMobility) dp = [0.16, 0.24, 0.24, 0.36];
-    if (age !== null && age < 13) dp = [0.32, 0.20, 0.16, 0.32];
+    // 3 dev phases: [foundation, power, integration].
+    let dp = [0.30, 0.36, 0.34];
+    if (bigMobility) dp = [0.43, 0.30, 0.27];
+    if (bigSkill && !bigMobility) dp = [0.21, 0.32, 0.47];
+    if (age !== null && age < 13) dp = [0.40, 0.20, 0.40];
     const dcut = []; let a = 0;
-    for (let i = 0; i < 4; i++) { a += dp[i]; dcut.push(Math.round(a * devW)); }
-    dcut[3] = devW;
+    for (let i = 0; i < 3; i++) { a += dp[i]; dcut.push(Math.round(a * devW)); }
+    dcut[2] = devW;
     let w = 1; const out = [];
     out.push(clone(P.transition, [w, w + trans1 - 1])); w += trans1;
     const devStart = w;
-    const devPhases = [P.foundation, P.strength, P.power, P.integration];
+    const devPhases = [P.foundation, P.power, P.integration];
     let prev = 0;
     devPhases.forEach((ph, i) => { const s = devStart + prev; const e = devStart + dcut[i] - 1; out.push(clone(ph, [s, e])); prev = dcut[i]; });
     w = devStart + devW;
@@ -348,15 +350,15 @@ export function buildPhases(findings, weeks, age) {
   }
 
   // ---------- STANDARD MESOCYCLE (< 40 weeks) ----------
-  let p = [0.20, 0.27, 0.28, 0.25];
-  if (bigMobility) p = [0.30, 0.25, 0.23, 0.22];
-  if (bigSkill && !bigMobility) p = [0.15, 0.22, 0.25, 0.38];
-  if (age !== null && age < 13) p = [0.30, 0.20, 0.18, 0.32];
+  let p = [0.27, 0.39, 0.34];
+  if (bigMobility) p = [0.40, 0.31, 0.29];
+  if (bigSkill && !bigMobility) p = [0.19, 0.32, 0.49];
+  if (age !== null && age < 13) p = [0.375, 0.225, 0.40];
   const cut = []; let acc = 0;
-  for (let i = 0; i < 4; i++) { acc += p[i]; cut.push(Math.round(acc * weeks)); }
-  cut[3] = weeks;
-  const spans = [[1, cut[0]], [cut[0] + 1, cut[1]], [cut[1] + 1, cut[2]], [cut[2] + 1, cut[3]]];
-  return [clone(P.foundation, spans[0]), clone(P.strength, spans[1]), clone(P.power, spans[2]), clone(P.integration, spans[3])];
+  for (let i = 0; i < 3; i++) { acc += p[i]; cut.push(Math.round(acc * weeks)); }
+  cut[2] = weeks;
+  const spans = [[1, cut[0]], [cut[0] + 1, cut[1]], [cut[1] + 1, cut[2]]];
+  return [clone(P.foundation, spans[0]), clone(P.power, spans[1]), clone(P.integration, spans[2])];
 }
 
 /* ============================================================
@@ -375,7 +377,6 @@ function pick(arr, n, offset) {
 
 export function buildWeeks(findings, phases, weeks, days, age) {
   const youth = age !== null && age < 13;
-  const teen = age !== null && age >= 13 && age <= 15;
   const mob = findings.filter((f) => f.cat === 'Mobility');
   const seqF = findings.filter((f) => ['Sequencing', 'Rotational accel'].includes(f.cat));
   const skillF = findings.filter((f) => ['Bat-to-ball', 'Contact quality', 'Pattern flag'].includes(f.cat));
@@ -385,7 +386,6 @@ export function buildWeeks(findings, phases, weeks, days, age) {
   const focusMap = {
     transition: 'Recover · re-assess · rebuild movement',
     foundation: mob.length ? 'Free the restrictions · groove the sequence' : 'Movement quality · pattern the swing',
-    strength: 'Build the force base · reinforce connection',
     power: 'Convert to power · train bat speed at intent',
     integration: 'Barrels · contact quality · live transfer & peak',
     inseason: 'Compete · maintain gains · win swing decisions',
@@ -407,38 +407,26 @@ export function buildWeeks(findings, phases, weeks, days, age) {
       blocks.push({ t: 'Recovery', vol: 'ongoing', items: ['Prioritize sleep and tissue recovery — this block is where adaptation banks'] });
     } else if (kind === 'inseason') {
       blocks.push({ t: 'Movement prep', vol: 'pre-game/practice daily', items: mobPick });
-      blocks.push({ t: 'Strength — maintain', vol: youth ? '1×/wk · light' : '1–2×/wk · heavy, very low volume', items: ['Main lift 2–3 crisp reps at high load (keep, don\'t build)', 'Lead-leg & single-leg stability', 'Anti-rotation core'] });
       blocks.push({ t: 'Power priming', vol: '1–2×/wk · short & explosive', items: ['A few max-intent rotational throws pre-game', 'Low-volume CMJ/plyo to stay springy', 'No fatiguing power volume during game weeks'] });
       const inSkill = skillF.length ? pick(drills(skillF), 2, wkInPhase).map((d) => `Maintenance: ${d}`) : ['Tee/flips — hold plane & connection'];
       blocks.push({ t: 'Swing & approach', vol: 'around the game schedule', items: inSkill.concat(['Approach & swing-decision work (chase/zone discipline for OBP)', 'Timing vs live/machine velocity']) });
       blocks.push({ t: 'Load management', vol: 'ongoing', items: ['Cut training volume in dense game weeks — games are the stimulus', 'Deload fully around tournaments/heavy stretches', 'Track swing counts + soreness; protect the swing over the number'] });
     } else if (kind === 'foundation') {
       blocks.push({ t: 'Movement prep', vol: 'daily · 8–10 min', items: mobPick });
-      blocks.push({ t: 'Strength — foundation', vol: youth ? '2×/wk · bodyweight & med-ball' : '2×/wk · technique @ moderate load',
-        items: youth ? ['Bodyweight squat & hinge patterning', 'Med-ball chest pass & slams', 'Anti-rotation core (Pallof holds)']
-          : ['Goblet/front squat — pattern & control', 'Trap-bar deadlift — light, crisp reps', 'Pallof press & dead-bug (anti-rotation)'] });
       blocks.push({ t: 'Rotational patterning', vol: '2×/wk · low intent', items: (seqF.length ? pick(drills(seqF), 2, wkInPhase) : ['Step-behind walk-through swings', "Hip-turn 'back pocket' drill"]).concat(['Light rotational med-ball — feel sequence, not max']) });
-      blocks.push({ t: 'Swing skill', vol: '3–4×/wk · quality reps', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase) : ['Tee — plane & connection', 'Front toss — barrel accuracy']).map((d) => `Tee/constraint: ${d}`) });
-      blocks.push({ t: 'Recovery & monitoring', vol: 'ongoing', items: ['Sleep 8–9h; deload every 4th week', 'Re-test at each phase boundary', 'Log intent-swing counts'] });
-    } else if (kind === 'strength') {
-      blocks.push({ t: 'Movement prep', vol: 'daily · 8–10 min', items: mobPick });
-      blocks.push({ t: 'Strength — build the base', vol: youth ? '2×/wk · light & explosive' : (teen ? '3×/wk · moderate load' : '3×/wk · progressive load'), items: pick(RX.strength, 3, wkInPhase).concat(['Anti-rotation core: Pallof / suitcase carries']) });
-      blocks.push({ t: 'Rotational power — intro', vol: '2×/wk · moderate intent', items: pick(RX.rotpower, 2, wkInPhase).concat(seqF.length ? pick(drills(seqF), 1, wkInPhase) : ['Separation / torque drill']) });
-      blocks.push({ t: 'Swing skill', vol: '3–4×/wk · quality reps', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase + 1) : ['Tee — plane & connection', 'Front toss — barrel accuracy']).map((d) => `Tee/constraint: ${d}`) });
-      blocks.push({ t: 'Recovery & monitoring', vol: 'ongoing', items: ['Sleep 8–9h; deload every 4th week', 'Re-test at each phase boundary', 'Log intent-swing counts'] });
+      blocks.push({ t: 'Swing skill', vol: '3×/wk · quality reps', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase) : ['Tee — plane & connection', 'Front toss — barrel accuracy']).map((d) => `Tee/constraint: ${d}`) });
+      blocks.push({ t: 'Recovery & monitoring', vol: 'ongoing', items: ['Sleep 8–9h; deload every 4th week', 'Re-test at each phase boundary', 'Log intent-swing counts', 'Lifting is programmed in the S&C generator — coordinate hitting power work around lift days'] });
     } else if (kind === 'power') {
       blocks.push({ t: 'Movement prep', vol: 'daily · 8–10 min', items: mobPick });
-      blocks.push({ t: 'Strength — power maintenance', vol: '2×/wk · heavy but low volume', items: ['Trap-bar deadlift or squat — 3×3 heavy', 'Single-leg / RFE split squat', 'Trunk anti-rotation'] });
       blocks.push({ t: 'Power & bat speed', vol: youth ? '2×/wk · med-ball intent (no heavy overload bats)' : '3×/wk · MAX intent',
         items: youth ? ['Max-intent rotational scoop toss', 'Turn-and-go swings (game bat)', 'Jump/plyo for lower-body power'] : pick(RX.rotpower, 2, wkInPhase).concat(pick(RX.batspeed_speed, 2, wkInPhase)) });
-      blocks.push({ t: 'Swing skill', vol: '4×/wk · quality → competitive', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase + 2) : ['BP — barrel accuracy at game intent', 'Machine — timing']).map((d) => `Front-toss: ${d}`) });
-      blocks.push({ t: 'Transfer & swing decisions', vol: '1–2×/wk', items: ['Timing machine / live velocity at + level', 'Two-strike & count-based approach rounds', 'Track-and-decide (take/hack) drills for OBP'] });
+      blocks.push({ t: 'Swing skill', vol: '3×/wk · quality → competitive', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase + 2) : ['BP — barrel accuracy at game intent', 'Machine — timing']).map((d) => `Front-toss: ${d}`) });
+      blocks.push({ t: 'Transfer & swing decisions', vol: '2×/wk', items: ['Timing machine / live velocity at + level', 'Two-strike & count-based approach rounds', 'Track-and-decide (take/hack) drills for OBP'] });
       blocks.push({ t: 'Recovery & monitoring', vol: 'ongoing', items: ['Sleep 8–9h; deload every 4th week', 'Re-test at each phase boundary', 'Log intent-swing counts'] });
     } else { // integration
       blocks.push({ t: 'Movement prep', vol: 'daily · 8–10 min', items: mobPick });
-      blocks.push({ t: 'Strength — maintain', vol: '1–2×/wk · keep the base', items: ['Full-body lift, submaximal', 'Lead-leg stability (SL RDL, step-downs)'] });
       blocks.push({ t: 'Power — express & transfer', vol: '2×/wk', items: ['Max-intent rotational throws (short, crisp)', 'Bat-speed intent swings, then straight into BP', 'CMJ / broad jump to keep RFD'] });
-      blocks.push({ t: 'Swing skill', vol: '4×/wk · quality → competitive', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase + 3) : ['BP — barrel accuracy at game intent', 'Live — timing & swing decisions']).map((d) => `Live/BP transfer: ${d}`) });
+      blocks.push({ t: 'Swing skill', vol: '3×/wk · quality → competitive', items: (skillF.length ? pick(drills(skillF), 3, wkInPhase + 3) : ['BP — barrel accuracy at game intent', 'Live — timing & swing decisions']).map((d) => `Live/BP transfer: ${d}`) });
       blocks.push({ t: 'Transfer & swing decisions', vol: '2×/wk', items: ['Timing machine / live velocity at + level', 'Two-strike & count-based approach rounds', 'Track-and-decide (take/hack) drills for OBP'] });
       blocks.push({ t: 'Recovery & monitoring', vol: 'ongoing', items: ['Sleep 8–9h; deload every 4th week', 'Re-test at each phase boundary', 'Log intent-swing counts'] });
     }
@@ -461,31 +449,83 @@ export function generatePlan({ values, level, age, weeks, days }) {
   return { S, findings, phases, plan };
 }
 
+// Map a block's cadence text (its `vol`) to a target weekly frequency: 'all' means every
+// training day; otherwise an integer number of days per week.
+function blockFreq(vol) {
+  const v = (vol || '').toLowerCase();
+  if (v.includes('daily')) return 'all';
+  if (v.includes('once')) return 1;
+  if (/1\s*[–-]\s*2\s*[×x]/.test(v)) return 2; // "1–2×/wk"
+  if (/[34]\s*[×x]/.test(v)) return 3; // "3×", "4×", "3–4×"
+  if (/2\s*[×x]/.test(v)) return 2;
+  if (/1\s*[×x]/.test(v)) return 1;
+  if (v.includes('ongoing')) return 1; // standing reminders → first training day only
+  return 'all'; // e.g. "around the game schedule" — put on every training day
+}
+
+// Weekday offsets (0=Mon … 6=Sun) for N training days/week: 3 → Mon/Wed/Fri, 2 → Tue/Thu, 1 → Wed.
+function trainingDayOffsets(daysPerWeek) {
+  if (daysPerWeek >= 3) return [0, 2, 4];
+  if (daysPerWeek === 2) return [1, 3];
+  return [2];
+}
+
+// Which of the available training-day offsets a block lands on, given its frequency.
+function offsetsForFreq(freq, offsets) {
+  if (freq === 'all' || freq >= offsets.length) return offsets;
+  if (freq <= 1) return [offsets[0]];
+  if (freq === 2) {
+    if (offsets.length >= 3) return [offsets[0], offsets[offsets.length - 1]]; // spread across the week
+    return offsets.slice(0, 2);
+  }
+  return offsets.slice(0, freq);
+}
+
+// Strip the leading cadence token ("3×/wk · ") so the per-day reps text reads cleanly.
+function perDayReps(vol) {
+  if (!vol) return '';
+  const parts = String(vol).split('·');
+  return (parts.length > 1 ? parts.slice(1).join('·') : parts[0]).trim();
+}
+
+const WD_ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 /**
- * Per-WEEK serializer: one program day per plan week, carrying that whole week's
- * blocks. `day_number` is a 1-based ABSOLUTE calendar-day offset so the schedule
- * (which places each day at drop_date + day_number-1) lands each week on the same
- * weekday, 7 days apart — i.e. the Monday entry represents the full week, not a
- * single day. Previously this emitted one row per phase and the schedule collapsed
- * the weeks onto consecutive calendar days. training_exercises.category='hitting'
- * is a native enum value.
+ * Per-WEEKDAY serializer. Each plan week is expanded into one program day per training
+ * weekday (Mon/Wed/Fri for 3×/wk, Tue/Thu for 2×/wk), and every block is distributed onto
+ * the weekdays its cadence calls for — so a "3×/wk" swing-skill block actually shows up on
+ * three separate days instead of a single day that merely reads "do this 3×/wk".
+ * `day_number` is a 1-based ABSOLUTE calendar-day offset (week*7 + weekday); the schedule
+ * places each day at drop_date + day_number-1, so dropping on a Monday yields true M/W/F.
+ * training_exercises.category='hitting' is a native enum value.
  */
-export function planToProgramDays(phases, plan) {
+export function planToProgramDays(phases, plan, daysPerWeek = 3) {
   const phaseOf = (wk) => phases.find((ph) => wk >= ph.span[0] && wk <= ph.span[1]) || phases[0] || null;
-  return (plan || []).map((w) => {
+  const offsets = trainingDayOffsets(daysPerWeek);
+  const rows = [];
+  (plan || []).forEach((w) => {
     const ph = phaseOf(w.week);
     const blocks = w.blocks || [];
-    return {
-      day_number: (w.week - 1) * 7 + 1,
-      title: `Week ${w.week}${ph ? ` — ${ph.name}` : ''}${w.deload ? ' (deload)' : ''}`,
-      notes: [ph && ph.focus, w.focus].filter(Boolean).join(' · '),
-      exercises: blocks.map((b, i) => ({
-        category: 'hitting',
-        name: b.t,
-        description: b.items.join('; '),
-        reps: b.vol,
-        sort_order: i,
-      })),
-    };
+    const byOffset = new Map(offsets.map((o) => [o, []]));
+    blocks.forEach((b) => {
+      offsetsForFreq(blockFreq(b.vol), offsets).forEach((o) => byOffset.get(o).push(b));
+    });
+    offsets.forEach((o) => {
+      const dayBlocks = byOffset.get(o);
+      if (!dayBlocks.length) return;
+      rows.push({
+        day_number: (w.week - 1) * 7 + o + 1,
+        title: `Week ${w.week} · ${WD_ABBR[o]}${ph ? ` — ${ph.name}` : ''}${w.deload ? ' (deload)' : ''}`,
+        notes: [ph && ph.focus, w.focus].filter(Boolean).join(' · '),
+        exercises: dayBlocks.map((b, i) => ({
+          category: 'hitting',
+          name: b.t,
+          description: b.items.join('; '),
+          reps: perDayReps(b.vol),
+          sort_order: i,
+        })),
+      });
+    });
   });
+  return rows;
 }

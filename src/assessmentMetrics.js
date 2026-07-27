@@ -46,6 +46,11 @@ export const ASSESSMENT_METRICS = [
   { key: 'throwing_velo_max', label: 'Throwing velo — max (pulldown/mound)', group: 'Throwing', unit: 'mph' },
   { key: 'fb_velo',           label: 'Fastball velo',                        group: 'Throwing', unit: 'mph' },
   { key: 'arm_speed',         label: 'Arm speed',                            group: 'Throwing', unit: 'mph' },
+  { key: 'biomech_score',     label: 'Biomechanics readiness (gate 0–100)',  group: 'Throwing', unit: '0-100' },
+
+  // ---- Readiness gate scores (0-100) used by the throwing generator's assessment gates ----
+  { key: 'mobility_score', label: 'Mobility readiness (gate 0–100)', group: 'Mobility / Screen', unit: '0-100' },
+  { key: 'strength_score', label: 'Strength readiness (gate 0–100)', group: 'Strength & Power', unit: '0-100' },
 
   // ---- Strength & Power ----
   { key: 'cmj',          label: 'Counter-movement / vertical jump', group: 'Strength & Power', unit: 'in' },
@@ -112,6 +117,54 @@ export function extractMetricsFromSubmission(submission) {
     if (raw === undefined || raw === null || typeof raw === 'object') continue;
     const num = parseFloat(String(raw).replace(/[^0-9.-]/g, ''));
     if (!Number.isNaN(num)) out[mk] = num;
+  }
+  return out;
+}
+
+/* ============================================================================
+   Assessment "gates" / readiness — classify submissions into training areas so
+   a generator can show which of S&C / Hitting / Throwing has real data on file
+   before the coach picks a phase.
+   ========================================================================== */
+
+// The three program areas surfaced in the readiness panel.
+export const ASSESSMENT_AREAS = [
+  { key: 'sc', label: 'Strength & Conditioning' },
+  { key: 'hitting', label: 'Hitting' },
+  { key: 'throwing', label: 'Throwing / Pitching' },
+];
+
+// Metric-group → program area. Anthropometric is shared context and defines no area on its own.
+const GROUP_TO_AREA = {
+  Hitting: 'hitting',
+  Throwing: 'throwing',
+  'Strength & Power': 'sc',
+  'Mobility / Screen': 'sc',
+  Anthropometric: null,
+};
+
+const KEY_TO_GROUP = Object.fromEntries(ASSESSMENT_METRICS.map((m) => [m.key, m.group]));
+
+// Which program areas a single submission carries real (numeric) data for.
+export function assessmentAreas(submission) {
+  const areas = new Set();
+  const metrics = extractMetricsFromSubmission(submission);
+  for (const k of Object.keys(metrics)) {
+    const area = GROUP_TO_AREA[KEY_TO_GROUP[k]];
+    if (area) areas.add(area);
+  }
+  return areas;
+}
+
+// Across an athlete's submissions, the most recent one that covers each area.
+// Returns { sc: {date, submissionId}|null, hitting: ..., throwing: ... }.
+export function assessmentReadiness(submissions) {
+  const out = { sc: null, hitting: null, throwing: null };
+  const rows = (submissions || []).slice().sort((a, b) => String(b.assessment_date || b.created_at || '')
+    .localeCompare(String(a.assessment_date || a.created_at || '')));
+  for (const s of rows) {
+    const date = s.assessment_date || s.created_at || null;
+    assessmentAreas(s).forEach((a) => { if (!out[a]) out[a] = { date, submissionId: s.id }; });
   }
   return out;
 }

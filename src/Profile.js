@@ -13,7 +13,7 @@ import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import AssignPackageModal from './AssignPackageModal';
 import PackagesModal from './PackagesModal';
-import { BadgePercent, CreditCard } from 'lucide-react';
+import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 
@@ -377,6 +377,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         weight: data.weight || '',
         date_of_birth: data.date_of_birth || '',
         sport: profile?.sport || '',
+        training_age_years: profile?.training_age_months != null ? String(Math.round((profile.training_age_months / 12) * 10) / 10) : '',
         instagram: data.instagram || '',
         twitter: data.twitter || '',
         organization: data.organization || '',
@@ -440,9 +441,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       // Update sport in player_profiles
       const profile = userData._profile;
       if (profile) {
+        // Training age is entered in years on the profile (single source of truth for the
+        // generators) but stored as months in player_profiles.training_age_months.
+        const taYears = parseFloat(editForm.training_age_years);
+        const trainingAgeMonths = Number.isFinite(taYears) ? Math.max(0, Math.round(taYears * 12)) : null;
         const { error: profileError } = await supabase
           .from('player_profiles')
-          .update({ sport: editForm.sport || null })
+          .update({ sport: editForm.sport || null, training_age_months: trainingAgeMonths })
           .eq('user_id', userId);
 
         if (profileError) throw profileError;
@@ -3904,6 +3909,33 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   )}
                 </div>
               </div>
+
+              {userData.role === 'player' && (
+                <div className="flex items-center space-x-3">
+                  <Dumbbell className="text-gray-400" size={20} />
+                  <div className="flex-1">
+                    <p className="text-sm text-gray-600">Training age (years lifting)</p>
+                    {editing ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={editForm.training_age_years}
+                        onChange={(e) => setEditForm({...editForm, training_age_years: e.target.value})}
+                        placeholder="e.g., 2"
+                        className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <p className="text-gray-900">
+                        {userData._profile?.training_age_months != null
+                          ? `${Math.round((userData._profile.training_age_months / 12) * 10) / 10} yrs`
+                          : 'Not set'}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-gray-400 mt-0.5">Years of consistent resistance training — used by the program generators.</p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center space-x-3">
                 <Calendar className="text-gray-400" size={20} />

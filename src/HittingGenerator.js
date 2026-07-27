@@ -6,6 +6,7 @@ import {
   generatePlan, planToProgramDays,
 } from './hittingEngine';
 import { extractMetricsFromSubmission } from './assessmentMetrics';
+import AssessmentReadiness from './AssessmentReadiness';
 
 /* --------------------------------------------------------------------------- *
  *  Hitting Program Generator — "Barrel Path" (engine #3).
@@ -137,6 +138,7 @@ export default function HittingGenerator({ userId, userRole }) {
   const [level, setLevel] = useState('hs_varsity');
   const [age, setAge] = useState('16');
   const [weeks, setWeeks] = useState('16');
+  const [daysPerWeek, setDaysPerWeek] = useState('3'); // hitting cadence: 3 → M/W/F, 2 → Tue/Thu
   const [values, setValues] = useState({ ...BLANK });
 
   const [openPhase, setOpenPhase] = useState({});
@@ -224,14 +226,14 @@ export default function HittingGenerator({ userId, userRole }) {
     METRIC_KEYS.forEach((k) => { const n = parseFloat(values[k]); V[k] = Number.isFinite(n) ? n : null; });
     const anySet = Object.values(V).some((x) => x !== null);
     if (!anySet) return null;
-    return generatePlan({ values: V, level, age: parseInt(age, 10) || null, weeks: parseInt(weeks, 10) || 16, days: 4 });
-  }, [values, level, age, weeks]);
+    return generatePlan({ values: V, level, age: parseInt(age, 10) || null, weeks: parseInt(weeks, 10) || 16, days: parseInt(daysPerWeek, 10) || 3 });
+  }, [values, level, age, weeks, daysPerWeek]);
 
   const save = async () => {
     if (!gen) return;
     setSaving(true); setError(''); setSaveMsg('');
     try {
-      const rows = planToProgramDays(gen.phases, gen.plan);
+      const rows = planToProgramDays(gen.phases, gen.plan, parseInt(daysPerWeek, 10) || 3);
       const topFindings = gen.findings.slice(0, 3).map((f) => f.title).join('; ');
       const { data: prog, error: pErr } = await supabase
         .from('training_programs')
@@ -317,6 +319,8 @@ export default function HittingGenerator({ userId, userRole }) {
             {autoNote && <div className="mt-2 text-xs text-cyan-700 bg-cyan-50 rounded p-2">{autoNote}</div>}
           </div>
 
+          {selectedId && <AssessmentReadiness athleteId={selectedId} highlight="hitting" />}
+
           <div className={card}>
             <div className={eyebrow}>Plan setup</div>
             <div className="grid grid-cols-4 gap-3">
@@ -333,6 +337,13 @@ export default function HittingGenerator({ userId, userRole }) {
               <div>
                 <span className={label}>Weeks</span>
                 <input className={inp} type="number" value={weeks} onChange={(e) => setWeeks(e.target.value)} />
+              </div>
+              <div>
+                <span className={label}>Days / week</span>
+                <select className={inp} value={daysPerWeek} onChange={(e) => setDaysPerWeek(e.target.value)}>
+                  <option value="3">3× · Mon / Wed / Fri</option>
+                  <option value="2">2× · Tue / Thu</option>
+                </select>
               </div>
             </div>
           </div>

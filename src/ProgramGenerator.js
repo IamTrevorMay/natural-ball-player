@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
 import { extractMetricsFromSubmission } from './assessmentMetrics';
+import AssessmentReadiness from './AssessmentReadiness';
 import {
   Position, Sex, makeAthlete, trainingStage, maturityBand, loadStyle,
   generateProgram, programToProgramDays, macroCalendar,
@@ -81,8 +82,8 @@ function mapAssessmentFromSubmission(submission) {
   assign('hip_ir_deg', find((l) => l.includes('hip') && l.includes('ir')));
   assign('ankle_dorsiflexion_cm', find((l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('knee to wall') || l.includes('dorsi')));
   assign('tspine_rotation_deg', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
-  assign('vertical_jump_cm', find((l) => l.includes('vertical') && l.includes('jump')));
-  assign('broad_jump_cm', find((l) => l.includes('broad') && l.includes('jump')));
+  assign('vertical_jump_in', find((l) => l.includes('vertical') && l.includes('jump')));
+  assign('broad_jump_in', find((l) => l.includes('broad') && l.includes('jump')));
   assign('rel_squat', find((l) => l.includes('squat') && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×') || l.includes('x bw'))));
   assign('rel_trap_bar_dl', find((l) => (l.includes('trap') || l.includes('deadlift')) && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×'))));
 
@@ -93,12 +94,12 @@ function mapAssessmentFromSubmission(submission) {
 const BLANK_ASSESSMENT = {
   shoulder_ir_dom: '', shoulder_ir_nondom: '', shoulder_er_dom: '', total_rom_deficit: '',
   hip_ir_deg: '', ankle_dorsiflexion_cm: '', tspine_rotation_deg: '',
-  vertical_jump_cm: '', broad_jump_cm: '', rel_squat: '', rel_trap_bar_dl: '',
+  vertical_jump_in: '', broad_jump_in: '', rel_squat: '', rel_trap_bar_dl: '',
   single_leg_stability: '', movement_competency: 'developing',
 };
 
 // Canonical assessment metric_key -> this generator's screen field [field, unitMultiplier].
-// Registry stores jumps in inches; the S&C screen wants cm, so cmj/broad_jump are ×2.54.
+// Jumps are stored and displayed in inches throughout (registry, screen, and benchmarks), so no conversion.
 const SC_KEY_MAP = {
   hipir: ['hip_ir_deg', 1],
   tspine: ['tspine_rotation_deg', 1],
@@ -106,8 +107,8 @@ const SC_KEY_MAP = {
   shoulder_ir: ['shoulder_ir_dom', 1],
   shoulder_er: ['shoulder_er_dom', 1],
   shoulder_rom_deficit: ['total_rom_deficit', 1],
-  cmj: ['vertical_jump_cm', 2.54],
-  broad_jump: ['broad_jump_cm', 2.54],
+  cmj: ['vertical_jump_in', 1],
+  broad_jump: ['broad_jump_in', 1],
   dl: ['rel_trap_bar_dl', 1],
 };
 
@@ -119,8 +120,8 @@ const ASSESSMENT_FIELDS = [
   ['hip_ir_deg', 'Hip IR (°)'],
   ['ankle_dorsiflexion_cm', 'Ankle dorsiflexion (cm)'],
   ['tspine_rotation_deg', 'T-spine rotation (°)'],
-  ['vertical_jump_cm', 'Vertical jump (cm)'],
-  ['broad_jump_cm', 'Broad jump (cm)'],
+  ['vertical_jump_in', 'Vertical jump (in)'],
+  ['broad_jump_in', 'Broad jump (in)'],
   ['rel_squat', 'Back squat (× BW)'],
   ['rel_trap_bar_dl', 'Trap-bar deadlift (× BW)'],
 ];
@@ -297,8 +298,8 @@ export default function ProgramGenerator({ userId, userRole }) {
         hip_ir_deg: numOrNull(assessment.hip_ir_deg),
         ankle_dorsiflexion_cm: numOrNull(assessment.ankle_dorsiflexion_cm),
         tspine_rotation_deg: numOrNull(assessment.tspine_rotation_deg),
-        vertical_jump_cm: numOrNull(assessment.vertical_jump_cm),
-        broad_jump_cm: numOrNull(assessment.broad_jump_cm),
+        vertical_jump_in: numOrNull(assessment.vertical_jump_in),
+        broad_jump_in: numOrNull(assessment.broad_jump_in),
         rel_squat: numOrNull(assessment.rel_squat),
         rel_trap_bar_dl: numOrNull(assessment.rel_trap_bar_dl),
         single_leg_stability: assessment.single_leg_stability || null,
@@ -323,13 +324,8 @@ export default function ProgramGenerator({ userId, userRole }) {
       }
       const prog = generateProgram(ath, pd, ss, se, len);
       setProgram(prog);
-      // Remember training age on the profile so it auto-fills next time.
-      if (selectedId) {
-        const ta = parseInt(trainingMonths, 10);
-        if (Number.isFinite(ta)) {
-          supabase.from('player_profiles').update({ training_age_months: ta }).eq('user_id', selectedId).then(() => {}, () => {});
-        }
-      }
+      // Training age is owned by the athlete's profile (edit it on the Profile → General tab).
+      // The generator only reads it, so we no longer write it back here.
       setMacro(macroCalendar(ath, ss, se, pd));
       // Open the first week's days by default; keep the rest collapsed.
       setOpenDays(Object.fromEntries((prog.weeks[0]?.days || []).map((_, i) => [`0-${i}`, true])));
@@ -450,6 +446,8 @@ export default function ProgramGenerator({ userId, userRole }) {
             {autoNote && <div className="mt-2 text-xs text-blue-600 bg-blue-50 rounded p-2">{autoNote}</div>}
           </div>
 
+          {selectedId && <AssessmentReadiness athleteId={selectedId} highlight="sc" />}
+
           <div className={card}>
             <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Profile</div>
             <div className="grid grid-cols-2 gap-3">
@@ -476,6 +474,7 @@ export default function ProgramGenerator({ userId, userRole }) {
               <div>
                 <span className={label}>Training age (months lifting)</span>
                 <input className={numInput} type="number" value={trainingMonths} onChange={(e) => setTrainingMonths(e.target.value)} />
+                <span className="text-[10px] text-gray-400">Auto-filled from the athlete's profile · edit it on Profile → General</span>
               </div>
               <div>
                 <span className={label}>Movement competency</span>
