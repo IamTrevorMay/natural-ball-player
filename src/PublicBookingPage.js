@@ -97,6 +97,18 @@ function buildWeekDays(anchor) {
   return Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
 }
 
+// Stable wrapper — defined outside the component so its identity never changes
+// between renders (an inline component would cause full remounts on every
+// state update, re-firing autoFocus and resetting focus to the first field).
+function BookingWrap({ embedded, wide, signedIn, children }) {
+  if (embedded) return <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>;
+  return (
+    <Shell wide={wide} signedIn={signedIn}>
+      <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>
+    </Shell>
+  );
+}
+
 // Props:
 //   embedded  — render without the outer page Shell (for use inside the logged-in
 //               public mini-portal); also suppresses the welcome popup.
@@ -355,12 +367,8 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
     );
   };
 
-  const Wrap = embedded
-    ? ({ children }) => <div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>
-    : ({ children }) => <Shell wide={view === 'month'} signedIn={signedIn}><div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div></Shell>;
-
   return (
-    <Wrap>
+    <BookingWrap embedded={embedded} wide={view === 'month'} signedIn={signedIn}>
       {showWelcome && <WelcomePopup onClose={dismissWelcome} />}
       <div>
         {!embedded && <h1 className="text-3xl font-bold text-gray-900 mb-1">Book Facility Time</h1>}
@@ -524,7 +532,7 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
           </div>
         </div>
       )}
-    </Wrap>
+    </BookingWrap>
   );
 }
 
