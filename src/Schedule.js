@@ -6023,7 +6023,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           .select('id, product_name_snapshot, remaining_qty, product_kind')
           .eq('user_id', user.id)
           .in('product_kind', ['package', 'bundle'])
-          .eq('status', 'active')
+          .in('status', ['active', 'paid'])
           .or(`expires_at.is.null,expires_at.gt.${today}`);
         const active = (data || []).find(p => p.remaining_qty === null || p.remaining_qty > 0);
         setPkgCheck({ checking: false, pkg: active || null });
