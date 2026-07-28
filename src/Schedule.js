@@ -175,6 +175,7 @@ export default function Schedule({ userId, userRole }) {
   const [selectedCoach, setSelectedCoach] = useState(null);
   const [coachSlots, setCoachSlots] = useState([]);
   const [slotReservations, setSlotReservations] = useState([]);
+  const [publicSlotBookings, setPublicSlotBookings] = useState([]);
   const [showCreateSlot, setShowCreateSlot] = useState(null);
   const [showReserveSlot, setShowReserveSlot] = useState(null);
   const [showEditSlot, setShowEditSlot] = useState(null);
@@ -638,10 +639,15 @@ export default function Schedule({ userId, userRole }) {
     setCoachSlots(expandedSlots);
     const slotIds = (slots || []).map(s => s.id);
     if (slotIds.length > 0) {
-      const { data: reservations } = await supabase.from('slot_reservations').select('*, users:player_id(full_name, email)').in('slot_id', slotIds).gte('slot_date', startStr).lte('slot_date', endStr);
-      setSlotReservations(reservations || []);
+      const [resResult, pubResult] = await Promise.all([
+        supabase.from('slot_reservations').select('*, users:player_id(full_name, email)').in('slot_id', slotIds).gte('slot_date', startStr).lte('slot_date', endStr),
+        supabase.from('public_bookings').select('source_id, occurrence_date, guest_name, status').eq('source_type', 'training_slot').in('source_id', slotIds).gte('occurrence_date', startStr).lte('occurrence_date', endStr).in('status', ['pending_payment', 'confirmed']),
+      ]);
+      setSlotReservations(resResult.data || []);
+      setPublicSlotBookings(pubResult.data || []);
     } else {
       setSlotReservations([]);
+      setPublicSlotBookings([]);
     }
   };
 
@@ -1351,6 +1357,7 @@ export default function Schedule({ userId, userRole }) {
                     selectedDate={selectedDate}
                     slots={coachSlots}
                     reservations={slotReservations}
+                    publicBookings={publicSlotBookings}
                     coach={selectedCoach}
                     userId={userId}
                     userRole={userRole}
@@ -5638,7 +5645,7 @@ const ATTENDANCE_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled', cls: 'bg-gray-500' },
 ];
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
+function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings = [], coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -5692,7 +5699,8 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
               <div className="p-2 space-y-2">
                 {daySlots.map((slot, si) => {
                   const slotRes = reservations.filter(r => r.slot_id === slot.id && r.slot_date === dateStr && r.status !== 'cancelled');
-                  const isBooked = slotRes.length >= (slot.max_players || 1);
+                  const pubRes = publicBookings.filter(b => b.source_id === slot.id && b.occurrence_date === dateStr);
+                  const isBooked = (slotRes.length + pubRes.length) >= (slot.max_players || 1);
                   const userRes = slotRes.find(r => r.player_id === userId);
                   const endTime = getEndTime(slot.start_time, slot.duration_minutes);
                   const isSel = selecting && selectedIds && selectedIds.has(String(slot.id));
@@ -5740,6 +5748,14 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
                               </div>
                             </div>
                           )}
+                        </div>
+                      ))}
+                      {isOwnSlots && pubRes.map((b, bi) => (
+                        <div key={`pub-${bi}`} className="mt-2 p-2 bg-white rounded border border-blue-100">
+                          <div className="font-medium text-gray-900">{b.guest_name}</div>
+                          <div className={`inline-block px-2 py-0.5 rounded-full text-xs mt-1 ${b.status === 'confirmed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {b.status === 'confirmed' ? 'Confirmed (public)' : 'Payment pending (public)'}
+                          </div>
                         </div>
                       ))}
                       {!isOwnSlots && userRole === 'player' && !userRes && !isBooked && (
