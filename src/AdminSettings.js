@@ -852,7 +852,9 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUsers, userId, userRole, onNavigateToProfile }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterRole, setFilterRole] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
+  // Default to Active so Settings opens showing current athletes/staff only.
+  // Inactive, Archived and "All Statuses" are still one click away below.
+  const [filterStatus, setFilterStatus] = useState('Active');
   const [sortBy, setSortBy] = useState('name');
 
   const getUserStatus = (u) => {
@@ -877,7 +879,19 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
     return true;
   });
 
+  // Active first, then Inactive, then Archived. Only has a visible effect when
+  // the status filter is "All Statuses" — otherwise the list is already one
+  // status. The chosen Sort option still orders users within each group.
+  const statusRank = (u) => {
+    const s = getUserStatus(u);
+    if (s === 'Inactive') return 1;
+    if (s === 'Archived') return 2;
+    return 0;
+  };
+
   const sortedUsers = [...filteredUsers].sort((a, b) => {
+    const rank = statusRank(a) - statusRank(b);
+    if (rank !== 0) return rank;
     if (sortBy === 'name') return 0;
     const da = a.date_of_birth ? new Date(a.date_of_birth) : null;
     const db = b.date_of_birth ? new Date(b.date_of_birth) : null;

@@ -799,6 +799,50 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
   const [navigateTeamId, setNavigateTeamId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // --- Profile "Back" behaviour -------------------------------------------
+  // Remember WHICH list a profile was opened from and HOW FAR the user had
+  // scrolled, so Back returns them to the same place instead of the top of
+  // the Settings list. `profileReturn.view` replaces the old hard-coded
+  // 'settings' target; `pendingScrollY` is applied once the list re-renders.
+  const [profileReturn, setProfileReturn] = useState({ view: 'settings', scrollY: 0 });
+  const [pendingScrollY, setPendingScrollY] = useState(null);
+
+  // Opens a profile and records where we came from. Used by every list that
+  // links to a profile (Settings, Manage Athletes, Teams, Coach Tools, ...).
+  const openProfileFrom = (fromView) => (profileUserId) => {
+    setProfileReturn({ view: fromView, scrollY: window.scrollY });
+    setViewProfileUserId(profileUserId);
+    setCurrentView('profile-view');
+    window.scrollTo(0, 0);
+  };
+
+  const backFromProfile = () => {
+    setCurrentView(profileReturn.view);
+    setPendingScrollY(profileReturn.scrollY);
+  };
+
+  // Lists fetch their rows on mount, so right after Back the page is still
+  // short and scrolling would clamp to the top. Retry each frame (~2s max)
+  // until the page is tall enough to land on the original position.
+  useEffect(() => {
+    if (pendingScrollY == null) return;
+    let cancelled = false;
+    let frames = 0;
+    const tick = () => {
+      if (cancelled) return;
+      const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      if (maxScroll >= pendingScrollY || frames > 120) {
+        window.scrollTo(0, Math.min(pendingScrollY, maxScroll));
+        setPendingScrollY(null);
+        return;
+      }
+      frames += 1;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return () => { cancelled = true; };
+  }, [pendingScrollY]);
   const hasSecondary = !!secondaryRole && secondaryRole !== userRole;
   const [viewMode, setViewMode] = useState(userRole);
   useEffect(() => { setViewMode(userRole); }, [userRole]);
@@ -1010,24 +1054,24 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                 <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
-            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={openProfileFrom('profile')} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={backFromProfile} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); window.scrollTo(0, 0); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={openProfileFrom('team')} />}
+            {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('training-groups')} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
-            {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('manage-athletes')} />}
             {currentView === 'leads' && userRole === 'admin' && <Leads />}
-            {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
-            {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={openProfileFrom('manage-coaches')} />}
+            {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={openProfileFrom('manage-interns')} />}
+            {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={openProfileFrom('coach-tools')} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
             {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
             {currentView === 'facility-fine' && <FacilityFinePage userId={userId} onSigned={() => setFacilityFineSigned(true)} />}
-            {currentView === 'settings' && (userRole === 'admin' || userRole === 'coach') && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {currentView === 'settings' && (userRole === 'admin' || userRole === 'coach') && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('settings')} />}
             {currentView === 'usage' && userRole === 'admin' && <UsageDashboard />}
           </div>
         </div>

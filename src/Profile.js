@@ -16,6 +16,7 @@ import PackagesModal from './PackagesModal';
 import { BadgePercent, CreditCard } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { assignDefaultProProgram } from './defaultProgram';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -4325,6 +4326,8 @@ function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
   const [notes, setNotes] = useState('');
   const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
   const [saving, setSaving] = useState(false);
+  // Off by default — a coach has to deliberately choose to start the block.
+  const [startDefaultProgram, setStartDefaultProgram] = useState(false);
 
   const schema = [...(template.schema || [])].sort((a, b) => a.sort_order - b.sort_order);
 
@@ -4352,6 +4355,22 @@ function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
         notes: notes.trim() || null,
       });
       if (error) throw error;
+
+      // The assessment is saved at this point. The default program is a bonus
+      // step — if it fails we say so, but we never undo the assessment for it.
+      if (startDefaultProgram) {
+        try {
+          const result = await assignDefaultProProgram(playerId);
+          if (result.skipped) {
+            alert('Assessment saved.\n\n' + result.reason);
+          } else {
+            alert(`Assessment saved.\n\nScheduled ${result.scheduled} Pro workouts over ${result.weeks} weeks, starting ${result.startDate}.`);
+          }
+        } catch (progErr) {
+          alert('Assessment saved, but the default program could not be scheduled: ' + formatUserError(progErr));
+        }
+      }
+
       onSubmitted();
     } catch (err) {
       alert('Error submitting assessment: ' + formatUserError(err));
@@ -4377,6 +4396,28 @@ function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
               onChange={(e) => setAssessmentDate(e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          {/* Optional starter block for brand-new athletes. Anyone who already
+              has training scheduled is skipped, so ticking this can't overwrite
+              an existing plan. */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={startDefaultProgram}
+                onChange={(e) => setStartDefaultProgram(e.target.checked)}
+                className="mt-0.5 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-700">
+                <span className="font-medium text-gray-900">Start the default 3-month program</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Puts the first 12 weeks of the Pro lifting block on this athlete's calendar
+                  (Mon / Tue / Thu / Fri), starting next Monday. Skipped automatically if they
+                  already have training scheduled.
+                </span>
+              </span>
+            </label>
           </div>
 
           {schema.map(el => (
