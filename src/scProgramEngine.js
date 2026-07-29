@@ -954,6 +954,56 @@ function blockOf(label, exercise, prescription, why = '') {
   return { label, exercise, prescription, why };
 }
 
+/* --------------------------------------------------------------------------- *
+ *  Movement-pattern classifier + per-day de-duplication (#2).
+ *  A single workout must never program the same movement twice — not just the
+ *  same object, but the same PATTERN reached through a different variant (two
+ *  split-squat variants, or a lift that qualifies for two accessory slots).
+ *  Exercises the classifier does not recognise fall back to their own name, so
+ *  genuinely distinct work (two different jumps / med-ball throws / carries) is
+ *  never falsely merged.
+ * --------------------------------------------------------------------------- */
+// Only LOWER-body strength patterns are canonicalised (that is where the coach
+// saw double-programming). Upper pressing / pulling variety is intentional, so
+// those fall through to their exact name — a genuine exact duplicate still
+// collapses, but distinct variants (two different rows/presses) survive.
+function movementPattern(name) {
+  const n = String(name || '').toLowerCase();
+  if (/split squat|split-squat|bulgarian/.test(n)) return 'split_squat';
+  if (/lunge/.test(n)) return 'lunge';
+  if (/step-?up/.test(n)) return 'step_up';
+  if (/rdl|romanian|stiff-?leg/.test(n)) return 'rdl';
+  if (/good ?morning/.test(n)) return 'good_morning';
+  if (/hip thrust|glute bridge|hip bridge/.test(n)) return 'hip_thrust';
+  if (/reverse hyper/.test(n)) return 'reverse_hyper';
+  if (/leg curl|nordic|razor curl|glute-?ham raise|\bghr\b/.test(n)) return 'ham_curl';
+  if (/deadlift|speed pull|trap-bar speed|rack pull/.test(n)) return 'deadlift';
+  if (/squat/.test(n)) return 'squat';
+  return n;
+}
+
+function dedupeBlocksByPattern(blocks) {
+  const seen = new Set();
+  const out = [];
+  for (const b of blocks) {
+    const key = movementPattern(b.exercise);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(b);
+  }
+  return out;
+}
+
+// Barbell Olympic lift / Olympic pull — the heavy, high-CNS compound power moves.
+// Used to keep a Max-Effort LOWER day to a single heavy barbell/Olympic compound
+// (its ME main), so a power clean/clean-pull is never stacked on a back squat (#3).
+function isBarbellOly(e) {
+  if (!e) return false;
+  if (e.is_olympic_full) return true;
+  const barbell = (e.equipment || []).includes('barbell');
+  return barbell && /clean|snatch|\bjerk\b|high-?pull|high pull|mid-?thigh pull/i.test(e.name);
+}
+
 // Per-day context helpers (deload trims counts; wave note tags the main lifts).
 function ctxTools(ctx) {
   const wv = (ctx && ctx.wave) || {};
@@ -971,18 +1021,24 @@ function lowerMeDay(athlete, date, rx, ctx = {}) {
   // same day fries the CNS/PNS for the rest of the week. The Olympic/clean below is the
   // single explosive primer, kept distinct from the one main strength lift.
   const main = rotatePick(meElig, date, 'melower');
+  // #3: exactly ONE heavy bilateral/Olympic compound on a Max-Effort LOWER day
+  // (the ME main). No second Max-Effort lower lift, and the power primer excludes
+  // barbell Olympic lifts/pulls so a power clean is never stacked on a back squat.
   const powerElig = eligible(ALL_POOLS.POWER, athlete);
-  const triElig = powerElig.filter((e) => overlaps(e.targets, [...TRIPLE_TAGS]));
+  const triElig = powerElig.filter((e) => overlaps(e.targets, [...TRIPLE_TAGS]) && !isBarbellOly(e));
   const explosive = triElig.length ? rotatePick(triElig, date, 'explolow') : null;
-  const jumps = pickN(powerElig.filter((e) => e !== explosive), tags, n(2));
-  const post = pickMix(eligible(ALL_POOLS.LOWER_ACC, athlete), GLUTE_TAGS, n(2));
-  const sleg = pickMix(eligible(ALL_POOLS.LOWER_ACC, athlete), SL_TAGS, n(1));
+  const jumps = pickN(powerElig.filter((e) => e !== explosive && !isBarbellOly(e)), tags, n(2));
+  // Posterior = bilateral hinge/bridge only; single-leg is its own single slot so
+  // the day never doubles up loaded single-leg work (#2/#3).
+  const accElig = eligible(ALL_POOLS.LOWER_ACC, athlete);
+  const post = pickMix(accElig.filter((e) => !e.unilateral), GLUTE_TAGS, n(2));
+  const sleg = pickMix(accElig.filter((e) => e.unilateral), SL_TAGS, n(1));
   const core = pickN(eligible(ALL_POOLS.CORE, athlete), tags, n(2));
 
   const blocks = [];
-  if (explosive) blocks.push(blockOf('Explosive / Olympic lift', explosive.name, rx.power_volume, explosive.note));
+  if (explosive) blocks.push(blockOf('Explosive / power primer', explosive.name, rx.power_volume, explosive.note));
   jumps.forEach((p) => blocks.push(blockOf('Power (CNS primer)', p.name, rx.power_volume, p.note)));
-  if (main) blocks.push(blockOf('Max-Effort Lower', main.name, `${rx.main_scheme} @ ${rx.main_intensity}${wn}`, main.note));
+  if (main) blocks.push(blockOf('Max-Effort Lower (single main compound)', main.name, `${rx.main_scheme} @ ${rx.main_intensity}${wn}`, main.note));
   post.forEach((a) => blocks.push(blockOf('Posterior-chain accessory', a.name, rx.accessory_reps, a.note)));
   sleg.forEach((a) => blocks.push(blockOf('Single-leg / stability', a.name, rx.accessory_reps, a.note)));
   core.forEach((c) => blocks.push(blockOf('Anti-rotation core', c.name, rx.core_reps, c.note)));
@@ -1110,7 +1166,8 @@ function assembleDays(athlete, date, rx, ctx, inSeason) {
       dynamicUpperDay(athlete, date, rx, { ...ctx, weekday: WD.FRI }),
     ];
   if (days.length) days[0] = { ...days[0], blocks: [...prep, ...days[0].blocks] };
-  return days;
+  // Final safety net: no workout ever repeats a movement pattern (#2).
+  return days.map((d) => ({ ...d, blocks: dedupeBlocksByPattern(d.blocks) }));
 }
 
 export function collectFlags(athlete) {

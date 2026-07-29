@@ -182,6 +182,95 @@ const PLYO_DRILL = {
   fielding: ['Footwork & exchange drills', 'Crow-hop carry throws', 'Quick-release transfer reps'],
 };
 
+/* ---------- Curated drill hyperlinks (#4) ---------------------------------- *
+ *  Athletes can tap a drill to watch it. Each drill points at a curated YouTube
+ *  search so the link always resolves to relevant, current instruction (a coach
+ *  can later swap in a specific video). Keyed by DEFICIENCY so drills are
+ *  auto-selected from the athlete's movement-pattern / kinetic-sequencing /
+ *  assessment-number deficits, not generically.
+ * --------------------------------------------------------------------------- */
+const YT = (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+
+const THROW_DRILL_LIB = {
+  posterior_shoulder: [
+    { name: 'Sleeper stretch', q: 'sleeper stretch posterior shoulder baseball' },
+    { name: 'Cross-body shoulder stretch', q: 'cross body shoulder stretch pitcher' },
+  ],
+  scap: [{ name: 'Band Y-T-W raises', q: 'band YTW scapular drill baseball' }],
+  hip_mobility: [
+    { name: '90/90 hip switch', q: '90 90 hip switch mobility pitcher' },
+    { name: 'Hip CARs', q: 'hip CARs mobility drill baseball' },
+  ],
+  tspine: [{ name: 'Thoracic open-book', q: 'thoracic spine open book rotation drill' }],
+  ankle: [{ name: 'Knee-to-wall ankle mob', q: 'knee to wall ankle dorsiflexion drill' }],
+  arm_action: [
+    { name: 'Wall arm-action drill', q: 'wall drill pitching arm action' },
+    { name: 'Roll-in throws', q: 'roll in drill pitching arm path' },
+  ],
+  sequencing: [
+    { name: 'Hip–shoulder separation walkthrough', q: 'hip shoulder separation drill pitching' },
+    { name: 'Step-behind / Hershiser', q: 'hershiser step behind drill kinetic sequence' },
+  ],
+  decel: [{ name: 'Stride-block / deceleration reps', q: 'deceleration stride block drill pitcher' }],
+  velo: [
+    { name: 'Plyo-ball pulldowns', q: 'plyo ball pulldowns velocity drill' },
+    { name: 'Run-and-gun throws', q: 'run and gun throwing velocity drill' },
+  ],
+  command: [
+    { name: 'Towel drill', q: 'towel drill pitching command' },
+    { name: 'Connection-ball pen', q: 'connection ball bullpen command drill' },
+  ],
+  fielding: [
+    { name: 'Crow-hop carry', q: 'crow hop throwing drill outfield' },
+    { name: 'Quick-exchange transfer', q: 'infield quick exchange transfer drill' },
+  ],
+};
+
+// Representative link for a whole per-day drill block (velo / command / etc.).
+const PLYO_URL = {
+  velo: YT('plyo ball velocity drills pitching'),
+  command: YT('bullpen command drills pitching'),
+  arm_action: YT('arm action wall drill pitching'),
+  fielding: YT('defensive throwing footwork drill baseball'),
+  recovery: YT('arm care recovery plyos j bands baseball'),
+};
+
+function drillsFor(tag) {
+  return (THROW_DRILL_LIB[tag] || []).map((d) => ({ name: d.name, url: YT(d.q), tag }));
+}
+
+/* Auto-select deficiency-targeted drills from the assessment gates + velo grade
+   (#4). Mobility deficits pull mobility drills; biomech / kinetic-sequence
+   deficits pull sequencing / arm-action / decel drills; a deficient velo pulls
+   velo drills; pitchers always carry command work, position players fielding.
+   Returns an ordered, de-duplicated {name, url, tag}[] most-relevant-first. */
+export function deficiencyDrills({ mob, str, bio, veloBad, isP }) {
+  const m = mob == null ? 70 : mob;
+  const s = str == null ? 70 : str;
+  const b = bio == null ? 70 : bio;
+  const picks = [];
+  const add = (arr) => arr.forEach((d) => { if (!picks.some((x) => x.name === d.name)) picks.push(d); });
+  if (m < 60) { add(drillsFor('posterior_shoulder')); add(drillsFor('hip_mobility')); add(drillsFor('tspine')); add(drillsFor('ankle')); add(drillsFor('scap')); }
+  else if (m < 75) { add(drillsFor('hip_mobility')); add(drillsFor('scap')); }
+  if (b < 60) { add(drillsFor('sequencing')); add(drillsFor('arm_action')); add(drillsFor('decel')); }
+  else if (b < 75) { add(drillsFor('arm_action')); }
+  if (s < 55) { add(drillsFor('decel')); }
+  if (veloBad && isP) { add(drillsFor('velo')); }
+  if (isP) add(drillsFor('command')); else add(drillsFor('fielding'));
+  return picks;
+}
+
+// Deterministically pick n drills for a given day from the targeted set so the
+// athlete sees the whole set spread across the week (and preview == saved).
+function pickDayDrills(list, salt, n) {
+  if (!Array.isArray(list) || !list.length) return [];
+  let h = 0; const str = String(salt);
+  for (let i = 0; i < str.length; i += 1) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  const out = [];
+  for (let i = 0; i < Math.min(n, list.length); i += 1) out.push(list[(h + i) % list.length]);
+  return out;
+}
+
 /* ============================ ENGINE ============================ */
 
 export function gameDemand(posId, levelId) {
@@ -336,12 +425,18 @@ export function moundRamp(levelId, posId) {
   });
 }
 
-/* Pre-season pitcher week — enforces bullpen-before-live ordering (rule 4). */
+/* Pre-season pitcher week (rules 4 + 8). Three sub-phases build to the mound:
+   - re-entry (w<=2): 2x/wk build @50-75%, no mound.
+   - MOUND PROGRESSION (w3-5): add bullpens at SUB-MAX intent — a light slope pen
+     first (w3 ~72%), then fuller sub-max bullpens (w4-5 ~88%), never max.
+   - GAME READINESS (w>=6): 4x/wk with a live outing that ramps to 95-100%; the
+     bullpen sits 3 days before (starters) / 2 days before (relievers) the outing,
+     never the day before. */
 function preseasonPitcherWeek(posId, w) {
-  if (w <= 2) return ['PRE_THROW', 'RECOVERY', 'CARE', 'PRE_THROW', 'RECOVERY', 'OFF', 'OFF'];      // 2x/wk
-  if (w <= 5) return ['PRE_THROW', 'RECOVERY', 'PRE_THROW', 'CARE', 'PRE_THROW', 'OFF', 'OFF'];      // 3x/wk
-  // w >= 6: 4x/wk with a Saturday live outing; day before live is recovery.
-  // Bullpen sits 3 days before (Wed) for starters, 2 days before (Thu) for relievers.
+  if (w <= 2) return ['PRE_THROW', 'RECOVERY', 'CARE', 'PRE_THROW', 'RECOVERY', 'OFF', 'OFF'];  // re-entry, no mound
+  if (w === 3) return ['PRE_THROW', 'RECOVERY', 'SLOPE', 'CARE', 'PRE_THROW', 'OFF', 'OFF'];     // mound progression: light slope pen
+  if (w <= 5) return ['PRE_THROW', 'RECOVERY', 'MOUND', 'CARE', 'PRE_THROW', 'OFF', 'OFF'];      // mound progression: sub-max bullpen
+  // w >= 6: game readiness — bullpen 3 days before (SP) / 2 days before (RP) the live outing.
   return posId === 'RP'
     ? ['PRE_THROW', 'RECOVERY', 'PRE_THROW', 'MOUND', 'RECOVERY', 'LIVE', 'OFF']
     : ['PRE_THROW', 'RECOVERY', 'MOUND', 'PRE_THROW', 'RECOVERY', 'LIVE', 'OFF'];
@@ -376,6 +471,13 @@ export function buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, read
     LONGTOSS: { t: 85, m: false, label: 'Long toss', focus: 'Extension out, compression in', f: 1.1 },
     MOUND: { t: 88, m: true, label: 'Mound / pen', focus: 'Bullpen — build feel & count', f: 1.0 },
     LIVE: { t: 100, m: true, label: 'Live / outing', focus: 'Compete: game or live ABs', f: 1.15 },
+    // Slope phase: light sub-max mound re-integration (return-to-throw + pre-season
+    // mound progression). Pitchers only — never a max-intent day.
+    SLOPE: { t: 72, m: true, label: 'Slope / light pen', focus: 'Mound re-integration — sub-max bullpen, build feel & count', f: 0.6 },
+    // Position-player game day — at-bats + in-game defensive throws, NOT a mound
+    // outing (no pitch count, no mound flag). Keeps live-pitching days off any
+    // non-pitcher's plan (#7).
+    GAME: { t: 90, m: false, label: 'Game / competition', focus: 'Game at-bats + in-game defensive throws', f: 1.0 },
     TOUCH: { t: 70, m: true, label: 'Touch-and-feel pen', focus: 'Short low pen, command', f: 0.5 },
     PRE_THROW: { t: 65, m: false, label: 'Build throw', focus: 'Catch progression 50–75%, extension out', f: 0.9 },
     FIELD: { t: 85, m: false, label: 'Position work', focus: 'Defensive reps at game intent', f: 0.9 },
@@ -391,6 +493,11 @@ export function buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, read
         // Long toss unlocks only once the role's volume base is built (rule 5).
         const gate = ROLE_LT_GATE[posId] ?? 55;
         const ltReady = pitcherVolTarget(posId, 'ONRAMP', w) >= gate;
+        // Slope phase (rule 6-slope): once the volume base is built, re-integrate
+        // the mound with light sub-max bullpens as return-to-throw completes.
+        if (w >= 5) {
+          return ['LOW', 'CARE', ltReady ? 'LONGTOSS' : 'MED', 'OFF', 'SLOPE', 'CARE', w >= 6 ? 'SLOPE' : 'MED'];
+        }
         return ['LOW', 'CARE', ltReady ? 'LONGTOSS' : 'LOW', 'OFF', 'MED', 'CARE', w >= 4 ? 'MED' : 'RECOVERY'];
       }
       case 'VELO': {
@@ -405,20 +512,23 @@ export function buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, read
         return [dayB, 'RECOVERY', 'LONGTOSS', 'CARE', 'VELO', 'RECOVERY', 'OFF'];
       }
       case 'PRESEASON':
+        // Position players get GAME (at-bats + defensive throws), never a live
+        // pitching outing (#7) — only pitchers / two-way run mound outings.
         return isP ? preseasonPitcherWeek(posId, w)
           : (posId === 'C'
-            ? ['FIELD', 'THROWDOWN', 'RECOVERY', 'FIELD', 'CARE', 'LIVE', 'OFF']
-            : ['FIELD', 'LONGTOSS', 'RECOVERY', 'FIELD', 'CARE', 'LIVE', 'OFF']);
+            ? ['FIELD', 'THROWDOWN', 'RECOVERY', 'FIELD', 'CARE', 'GAME', 'OFF']
+            : ['FIELD', 'LONGTOSS', 'RECOVERY', 'FIELD', 'CARE', 'GAME', 'OFF']);
       case 'INSEASON':
         // SP/SW: ONE live start/wk + a controlled midweek touch pen (rule 6).
         if (posId === 'SP' || posId === 'SW') return ['LIVE', 'RECOVERY', 'CARE', 'TOUCH', 'LONGTOSS', 'RECOVERY', 'OFF'];
         if (posId === 'RP') return ['LIVE', 'CARE', 'LIVE', 'RECOVERY', 'LIVE', 'CARE', 'OFF'];
         // TW: one start + a 20-25 pitch midweek pen, NO second live.
         if (posId === 'TW') return ['LIVE', 'RECOVERY', 'FIELD', 'TOUCH', 'FIELD', 'RECOVERY', 'OFF'];
-        // Position players: games are LIVE at-bats only; recovery/medium throwing between (rule 7).
+        // Position players: games are at-bats + defensive throwing (GAME), NEVER a
+        // live pitching outing; recovery / medium throwing between (rule 7 / #7).
         return posId === 'C'
-          ? ['LIVE', 'RECOVERY', 'THROWDOWN', 'MED', 'LIVE', 'FIELD', 'OFF']
-          : ['LIVE', 'RECOVERY', 'FIELD', 'MED', 'LIVE', 'FIELD', 'OFF'];
+          ? ['GAME', 'RECOVERY', 'THROWDOWN', 'MED', 'GAME', 'FIELD', 'OFF']
+          : ['GAME', 'RECOVERY', 'FIELD', 'MED', 'GAME', 'FIELD', 'OFF'];
       case 'POSTSEASON':
         return w >= 3 ? ['OFF', 'CARE', 'OFF', 'OFF', 'CARE', 'OFF', 'OFF']
           : ['RECOVERY', 'CARE', 'OFF', 'RECOVERY', 'OFF', 'CARE', 'OFF'];
@@ -448,6 +558,8 @@ export function buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, read
       }
     } else if (isP && key === 'MOUND') {
       throws = Math.round(demand.pitches * 0.5 * ready.volMult);
+    } else if (isP && key === 'SLOPE') {
+      throws = Math.round(demand.pitches * 0.35 * ready.volMult); // light sub-max bullpen
     } else if (isP && key === 'TOUCH') {
       throws = posId === 'TW'
         ? Math.round(22 * ready.volMult)                                   // 20-25 pitch two-way pen
@@ -466,7 +578,7 @@ export function buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, read
       distance = `${ITP_LADDER[Math.max(0, Math.min(ITP_LADDER.length - 1, idx))]} ft`;
     } else if (key === 'LONGTOSS') {
       distance = isP ? '≤300 ft pulldown' : `150–${demand.dist || 250} ft`;
-    } else if (['MOUND', 'LIVE', 'TOUCH'].includes(key) && isP) {
+    } else if (['MOUND', 'LIVE', 'TOUCH', 'SLOPE'].includes(key) && isP) {
       distance = 'Mound 60\'6"';
     } else if (spec.t > 0) {
       distance = isP ? '60–120 ft' : (posId === 'OF' ? `150–${demand.dist} ft` : `≤${demand.dist} ft`);
@@ -474,7 +586,7 @@ export function buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, read
 
     // Pitch Smart HARD ceiling on live / mound / pen days (rule: never exceed).
     let ps = null;
-    if (isP && (key === 'LIVE' || key === 'MOUND' || key === 'TOUCH')) {
+    if (isP && (key === 'LIVE' || key === 'MOUND' || key === 'TOUCH' || key === 'SLOPE')) {
       const base = pitchSmartByLevel(levelId, throws);
       const capped = base.max != null && throws > base.max;
       if (capped) throws = base.max;
@@ -540,6 +652,8 @@ const THROW_PHASE_PLAN = {
     { kind: 'reintro', name: 'Re-introduction', focus: 'Light catch, tissue tolerance, restore range of motion.' },
     { kind: 'build', name: 'Volume build', focus: 'Extend distance & throw count toward the role\'s base volume.' },
     { kind: 'extend', name: 'Long-toss extension', focus: 'Add long toss / compression once the volume base is built.' },
+    // Slope phase — pitchers only (dropped for position players in buildThrowingPhases).
+    { kind: 'mound', name: 'Slope phase (mound integration)', focus: 'Pitchers re-integrate the mound with light sub-max bullpens as return-to-throw completes.' },
   ],
   VELO: [
     { kind: 'base', name: 'Tolerant base', focus: 'Confirm volume tolerance before adding intent.' },
@@ -558,9 +672,11 @@ const THROW_PHASE_PLAN = {
   POSTSEASON: [{ kind: 'shutdown', name: 'Shutdown', focus: 'Taper to a mandated no-overhead-throwing block.' }],
 };
 
-export function buildThrowingPhases(phaseId, weeks) {
+export function buildThrowingPhases(phaseId, weeks, isP = true) {
   const N = Math.max(1, Math.min(16, weeks || 1));
-  const tmpl = THROW_PHASE_PLAN[phaseId] || THROW_PHASE_PLAN.VELO;
+  let tmpl = THROW_PHASE_PLAN[phaseId] || THROW_PHASE_PLAN.VELO;
+  // The on-ramp slope (mound) sub-phase applies only to pitchers.
+  if (phaseId === 'ONRAMP' && !isP) tmpl = tmpl.filter((p) => p.kind !== 'mound');
   const n = tmpl.length;
   if (N <= n) return tmpl.slice(0, N).map((p, i) => ({ ...p, span: [i + 1, i + 1] }));
   const per = Math.floor(N / n);
@@ -597,8 +713,9 @@ export function seedLog() {
  *  carried in the exercise NAME, not a new category.
  * --------------------------------------------------------------------------- */
 function categoryForCode(code) {
-  if (['MOUND', 'LIVE', 'TOUCH'].includes(code)) return 'pitching';
+  if (['MOUND', 'LIVE', 'TOUCH', 'SLOPE'].includes(code)) return 'pitching';
   if (['FIELD', 'THROWDOWN'].includes(code)) return 'fielding';
+  if (code === 'GAME') return 'other'; // position-player game (at-bats + defense)
   if (['CARE', 'OFF'].includes(code)) return 'recovery';
   return 'conditioning'; // RECOVERY, LOW, MED, HIGH, HIGH_INTENT, VELO, LONGTOSS, PRE_THROW
 }
@@ -616,20 +733,21 @@ function movementPrep(mob, str, bio) {
   return [...new Set(items)];
 }
 
-/* Plyo / drill block appropriate to the day type (rule 9). */
+/* Plyo / drill block appropriate to the day type (rule 9). Each block carries a
+   representative curated video link (#4). */
 function plyoFor(code, isP, veloBad) {
   if (['VELO', 'HIGH_INTENT', 'HIGH'].includes(code)) {
     return { category: 'conditioning',
       name: veloBad ? 'Plyo / velo work (corrective — velocity below level)' : 'Plyo / velo work',
-      items: PLYO_DRILL.velo.slice(0, veloBad ? 4 : 2) };
+      items: PLYO_DRILL.velo.slice(0, veloBad ? 4 : 2), url: PLYO_URL.velo };
   }
-  if (['RECOVERY', 'CARE'].includes(code)) return { category: 'recovery', name: 'Recovery plyos & arm care', items: PLYO_DRILL.recovery };
+  if (['RECOVERY', 'CARE'].includes(code)) return { category: 'recovery', name: 'Recovery plyos & arm care', items: PLYO_DRILL.recovery, url: PLYO_URL.recovery };
   if (code === 'LONGTOSS') return { category: 'conditioning', name: 'Arm-action / plyo drills',
-    items: PLYO_DRILL.arm_action.slice(0, 2).concat(veloBad ? PLYO_DRILL.velo.slice(0, 1) : []) };
-  if (['MOUND', 'TOUCH'].includes(code) && isP) return { category: 'pitching', name: 'Command / pen drills', items: PLYO_DRILL.command };
-  if (code === 'LIVE' && isP) return { category: 'pitching', name: 'Compete — pre-outing prep', items: PLYO_DRILL.command.slice(0, 2) };
-  if (['FIELD', 'THROWDOWN'].includes(code)) return { category: 'fielding', name: 'Defensive throwing drills', items: PLYO_DRILL.fielding };
-  if (['LOW', 'MED', 'PRE_THROW'].includes(code)) return { category: 'conditioning', name: 'Throwing drills', items: PLYO_DRILL.arm_action.slice(0, 2) };
+    items: PLYO_DRILL.arm_action.slice(0, 2).concat(veloBad ? PLYO_DRILL.velo.slice(0, 1) : []), url: PLYO_URL.arm_action };
+  if (['MOUND', 'TOUCH', 'SLOPE'].includes(code) && isP) return { category: 'pitching', name: 'Command / pen drills', items: PLYO_DRILL.command, url: PLYO_URL.command };
+  if (code === 'LIVE' && isP) return { category: 'pitching', name: 'Compete — pre-outing prep', items: PLYO_DRILL.command.slice(0, 2), url: PLYO_URL.command };
+  if (['FIELD', 'THROWDOWN', 'GAME'].includes(code)) return { category: 'fielding', name: 'Defensive throwing drills', items: PLYO_DRILL.fielding, url: PLYO_URL.fielding };
+  if (['LOW', 'MED', 'PRE_THROW'].includes(code)) return { category: 'conditioning', name: 'Throwing drills', items: PLYO_DRILL.arm_action.slice(0, 2), url: PLYO_URL.arm_action };
   return null;
 }
 
@@ -657,11 +775,20 @@ function dayToProgramDay(d, opts) {
   ex.push({ category: mainCat, name: d.label, description: bits.join(' · '),
     reps: d.throws ? `${d.throws} throws` : '—', sort_order: so });
   so += 1;
-  // 3) Plyo / drill block (rule 9).
+  // 3) Plyo / drill block (rule 9) — with a curated video link (#4).
   const pl = plyoFor(d.code, o.isP, veloBad);
   if (pl) {
-    ex.push({ category: pl.category, name: pl.name, description: pl.items.join(' · '), reps: 'as prescribed', sort_order: so });
+    ex.push({ category: pl.category, name: pl.name, description: pl.items.join(' · '), reps: 'as prescribed', sort_order: so, video_url: pl.url || null });
     so += 1;
+  }
+  // 4) Deficiency-targeted drills (#4) — individual clickable rows on active
+  // throwing days, spread across the week so the athlete sees the whole set.
+  if (d.code !== 'OFF' && d.code !== 'CARE' && Array.isArray(o.drills) && o.drills.length) {
+    pickDayDrills(o.drills, `${d.day}${d.code}`, 2).forEach((dr) => {
+      ex.push({ category: 'conditioning', name: `Drill: ${dr.name}`,
+        description: 'Movement / kinetic-sequence corrective — tap to watch', reps: 'video', sort_order: so, video_url: dr.url });
+      so += 1;
+    });
   }
 
   return { title: `${d.day} — ${d.label}`, notes: d.focus, exercises: ex };

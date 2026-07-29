@@ -4,7 +4,7 @@ import { Utensils, Search, User, Save, Check, AlertTriangle, Droplet, Clock } fr
 import {
   Sex, Goal, Phase, DayType, makeProfile, generatePlan, planToMealRows, mealTotals,
 } from './nutritionEngine';
-import { extractMetricsFromSubmission } from './assessmentMetrics';
+import { extractMetricsFromSubmissions } from './assessmentMetrics';
 
 /* --------------------------------------------------------------------------- *
  *  Nutrition Program Generator — "BallFuel" (engine #4).
@@ -114,14 +114,16 @@ export default function NutritionGenerator({ userId, userRole }) {
         if (hist.length >= 3) { setHrvBase(String(Math.round(hist.reduce((s, v) => s + v, 0) / hist.length))); notes.push('HRV baseline'); }
       }
 
-      // Assessment-tagged body metrics override the users-table fallbacks.
+      // Assessment-tagged body metrics override the users-table fallbacks — read
+      // across ALL past assessments (newest value per metric) so weight/height/
+      // body-fat come from whichever assessment last recorded them (#11).
       const { data: subs } = await supabase
         .from('assessment_submissions')
         .select('responses, assessment_templates(name, schema)')
         .eq('player_id', p.id)
         .order('assessment_date', { ascending: false })
-        .limit(1);
-      const byKey = extractMetricsFromSubmission(subs && subs[0]);
+        .limit(50);
+      const byKey = extractMetricsFromSubmissions(subs || []);
       if (byKey.body_weight != null) { setWeightLb(String(byKey.body_weight)); notes.push('weight'); }
       if (byKey.height != null) { setHeightIn(String(byKey.height)); notes.push('height'); }
       if (byKey.body_fat_pct != null) { setBodyFat(String(byKey.body_fat_pct)); notes.push('body fat'); }

@@ -141,6 +141,7 @@ function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
         title: planName,
         player_id: a.player_id,
         _isMealPlan: true,
+        _mealPlanId: a.meal_plan_id,
       });
     }
   }
@@ -4286,6 +4287,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   const [loading, setLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false); // Custom confirm modal
   const [mealData, setMealData] = useState(null);
+  const [planMeals, setPlanMeals] = useState(null); // fuel-plan assignment: full meal breakdown
   const [formData, setFormData] = useState({
     title: event.title || event.opponent || '',
     event_date: event.event_date,
@@ -4308,7 +4310,23 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     if (event.event_type === 'meal' && event.meal_id) {
       fetchMealData();
     }
+    // Fuel-plan assignment (no single meal_id): load the plan's meal breakdown so
+    // the schedule shows calories/macros instead of a blank/"TBD" (#12).
+    if (event._isMealPlan && event._mealPlanId) {
+      fetchPlanMeals();
+    }
   }, [event]);
+
+  const fetchPlanMeals = async () => {
+    const { data, error } = await supabase
+      .from('meal_plan_items')
+      .select('sort_order, meals(name, meal_type, calories, protein_g, carbs_g, fat_g)')
+      .eq('meal_plan_id', event._mealPlanId)
+      .order('sort_order', { ascending: true });
+    if (!error && data) {
+      setPlanMeals(data.map((r) => r.meals).filter(Boolean));
+    }
+  };
 
   const fetchMealData = async () => {
     const { data, error } = await supabase
@@ -4790,6 +4808,55 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                       <span className="text-orange-700 font-medium text-sm">Description:</span>
                       <p className="text-gray-900 text-sm mt-1">{mealData.description}</p>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fuel-plan assignment — full meal breakdown with calories/macros (#12) */}
+              {event._isMealPlan && (
+                <div className="mt-4 p-4 bg-orange-50 rounded-lg border-2 border-orange-200">
+                  <h4 className="text-sm font-semibold text-orange-900 mb-3">Fuel Plan — {event.title}</h4>
+                  {planMeals === null ? (
+                    <div className="text-sm text-gray-500">Loading meals…</div>
+                  ) : planMeals.length === 0 ? (
+                    <div className="text-sm text-gray-500">No meals recorded on this plan.</div>
+                  ) : (
+                    <>
+                      {(() => {
+                        const tot = planMeals.reduce((t, m) => ({
+                          calories: t.calories + (Number(m.calories) || 0),
+                          protein_g: t.protein_g + (Number(m.protein_g) || 0),
+                          carbs_g: t.carbs_g + (Number(m.carbs_g) || 0),
+                          fat_g: t.fat_g + (Number(m.fat_g) || 0),
+                        }), { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
+                        return (
+                          <div className="grid grid-cols-4 gap-2 mb-3 text-center">
+                            {[['Calories', Math.round(tot.calories)], ['Protein', `${Math.round(tot.protein_g)}g`], ['Carbs', `${Math.round(tot.carbs_g)}g`], ['Fat', `${Math.round(tot.fat_g)}g`]].map(([l, v]) => (
+                              <div key={l} className="bg-white rounded-md py-1.5 border border-orange-200">
+                                <div className="text-sm font-bold text-gray-900">{v}</div>
+                                <div className="text-[10px] text-orange-700 uppercase tracking-wide">{l}</div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                      <div className="space-y-2">
+                        {planMeals.map((m, i) => (
+                          <div key={i} className="bg-white rounded-md p-2.5 border border-orange-100">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium text-gray-900">{m.name}</div>
+                              {m.meal_type && <span className="text-[10px] text-orange-700 capitalize">{m.meal_type}</span>}
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 text-xs text-gray-500 mt-0.5">
+                              {m.calories != null && <span>{Math.round(m.calories)} kcal</span>}
+                              {m.protein_g != null && <span>P {Math.round(m.protein_g)}g</span>}
+                              {m.carbs_g != null && <span>C {Math.round(m.carbs_g)}g</span>}
+                              {m.fat_g != null && <span>F {Math.round(m.fat_g)}g</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
               )}

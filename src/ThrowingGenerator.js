@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar } from 'lucide-react';
-import { extractMetricsFromSubmission } from './assessmentMetrics';
+import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { extractMetricsFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import {
   LEVELS, POSITIONS, PHASES, PHASE_ORDER, ATHLETE_TYPES,
   gameDemand, readiness, assessmentGates, stressUnits, moundRamp, buildWeek, seedLog,
-  buildProgram, programToProgramDays, buildThrowingPhases, THROW_KIND_COLOR,
-  THROW_METRICS, gradeThrowing,
+  buildProgram, programToProgramDays, weekToProgramDays, buildThrowingPhases, THROW_KIND_COLOR,
+  THROW_METRICS, gradeThrowing, deficiencyDrills,
 } from './throwingEngine';
 
 /* --------------------------------------------------------------------------- *
@@ -52,6 +52,36 @@ function posKeyFromProfile(pos) {
 }
 
 const iso = (d) => d.toISOString().slice(0, 10);
+
+// Derive the mobility / strength assessment-gate scores (0-100) from aggregated
+// assessment metrics so the high-intent gates react to real screen data instead
+// of manual slider defaults (#9). Each sub-metric is scored vs a coaching-default
+// threshold band and the available ones are averaged; missing groups return null
+// so the existing slider value is left untouched. Tunable defaults, not clinical.
+function deriveGateScores(byKey) {
+  const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
+  const lin = (v, lo, hi) => ((v - lo) / (hi - lo)) * 100; // lo->0, hi->100
+  const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+
+  // ---- Mobility: hip IR, T-spine rot, ankle DF, shoulder total-ROM deficit ----
+  const mobParts = [];
+  if (byKey.hipir != null) mobParts.push(lin(byKey.hipir, 10, 40));
+  if (byKey.tspine != null) mobParts.push(lin(byKey.tspine, 25, 50));
+  if (byKey.ankle != null) mobParts.push(lin(byKey.ankle, 5, 12));
+  if (byKey.shoulder_rom_deficit != null) mobParts.push(100 - lin(byKey.shoulder_rom_deficit, 0, 15)); // lower deficit = better
+  const mob = mobParts.length ? clamp(avg(mobParts)) : null;
+
+  // ---- Strength: trap-bar DL (xBW), relative back-squat, CMJ, broad jump, grip ----
+  const strParts = [];
+  if (byKey.dl != null) strParts.push(lin(byKey.dl, 0.8, 1.8));
+  if (byKey.back_squat != null && byKey.body_weight) strParts.push(lin(byKey.back_squat / byKey.body_weight, 0.8, 1.8));
+  if (byKey.cmj != null) strParts.push(lin(byKey.cmj, 10, 26));
+  if (byKey.broad_jump != null) strParts.push(lin(byKey.broad_jump, 60, 110));
+  if (byKey.grip != null) strParts.push(lin(byKey.grip, 25, 55));
+  const str = strParts.length ? clamp(avg(strParts)) : null;
+
+  return { mob, str, mobCount: mobParts.length, strCount: strParts.length };
+}
 
 // Status/zone -> Tailwind accent classes.
 const READY_CLR = { GO: 'green', MODIFY: 'amber', CAUTION: 'red', REST: 'red' };
@@ -122,6 +152,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
   const [error, setError] = useState('');
+  const [openPhase, setOpenPhase] = useState({}); // full-program preview accordion
 
   useEffect(() => {
     (async () => {
@@ -217,27 +248,30 @@ export default function ThrowingGenerator({ userId, userRole }) {
         setLog(seedLog());
       }
 
-      // Assessment-tagged metrics: throwing velo (benchmark) + mobility/strength/biomech gate
-      // scores. Merge across recent submissions so a value from any tagged assessment fills in
-      // (newest wins per key), since gate scores may live in a different submission than velo.
+      // ALL assessments (newest-first) so throwing velo AND the mobility/strength
+      // gate metrics all resolve from whichever past screen measured them (#9/#11).
       const { data: subs } = await supabase
         .from('assessment_submissions')
         .select('responses, assessment_templates(name, schema)')
         .eq('player_id', p.id)
         .order('assessment_date', { ascending: false })
-        .limit(20);
-      const byKey = {};
-      (subs || []).slice().reverse().forEach((s) => Object.assign(byKey, extractMetricsFromSubmission(s)));
+        .limit(50);
+      const byKey = extractMetricsFromSubmissions(subs || []);
       if (!nb.velo && (byKey.throwing_velo_max != null || byKey.fb_velo != null)) {
         nb.velo = String(byKey.throwing_velo_max != null ? byKey.throwing_velo_max : byKey.fb_velo);
         notes.push('velo (assessment)');
       }
       setBenchVals(nb);
 
-      // Auto-fill the assessment gate sliders (0-100) from tagged readiness scores.
+      // Drive the mobility / strength / biomech assessment gates from real screen
+      // data (#9). Prefer a directly-tagged readiness score; otherwise DERIVE the
+      // gate from the raw mobility / strength metrics across all assessments.
       const clamp100 = (v) => Math.max(0, Math.min(100, Math.round(Number(v))));
+      const gs = deriveGateScores(byKey);
       if (byKey.mobility_score != null) { setMob(clamp100(byKey.mobility_score)); notes.push('mobility gate'); }
+      else if (gs.mob != null) { setMob(gs.mob); notes.push('mobility gate'); }
       if (byKey.strength_score != null) { setStr(clamp100(byKey.strength_score)); notes.push('strength gate'); }
+      else if (gs.str != null) { setStr(gs.str); notes.push('strength gate'); }
       if (byKey.biomech_score != null) { setBio(clamp100(byKey.biomech_score)); notes.push('biomech gate'); }
 
       setProgramName(`${p.full_name} — Throwing (${PHASES[phaseId].label})`);
@@ -265,10 +299,19 @@ export default function ThrowingGenerator({ userId, userRole }) {
   const week = useMemo(() => buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, chronic: chronicWeekly, bench: benchS }),
     [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, chronicWeekly, benchS]);
   const numWeeks = Math.max(1, Math.min(16, parseInt(weeks, 10) || 1));
-  const phasePlan = useMemo(() => buildThrowingPhases(phaseId, numWeeks), [phaseId, numWeeks]);
-  const demand = useMemo(() => gameDemand(posId, levelId), [posId, levelId]);
   const isP = POSITIONS[posId].group === 'P';
+  const phasePlan = useMemo(() => buildThrowingPhases(phaseId, numWeeks, isP), [phaseId, numWeeks, isP]);
+  const demand = useMemo(() => gameDemand(posId, levelId), [posId, levelId]);
   const ramp = useMemo(() => (isP ? moundRamp(levelId, posId) : []), [isP, levelId, posId]);
+
+  // Deficiency-targeted drill links (#4) + the FULL multi-week program preview (#5).
+  const veloBad = !!(benchS.velo && (benchS.velo.status === 'def' || benchS.velo.status === 'dev'));
+  const drills = useMemo(() => deficiencyDrills({ mob, str, bio, veloBad, isP }), [mob, str, bio, veloBad, isP]);
+  const serOpts = useMemo(() => ({ mob, str, bio, isP, bench: benchS, drills }), [mob, str, bio, isP, benchS, drills]);
+  const fullProgram = useMemo(
+    () => buildProgram({ levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, weeks: numWeeks, chronic: chronicWeekly, bench: benchS }),
+    [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, numWeeks, chronicWeekly, benchS],
+  );
 
   const acuteWeekly = week.reduce((s, d) => s + d.su, 0);
   const acwr = chronicWeekly > 0 ? acuteWeekly / chronicWeekly : 0;
@@ -288,7 +331,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
         levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase,
         weeks: numWeeks, chronic: chronicWeekly, bench: benchS,
       });
-      const rows = programToProgramDays(program, { mob, str, bio, isP, bench: benchS });
+      const rows = programToProgramDays(program, serOpts);
       const { data: prog, error: pErr } = await supabase
         .from('training_programs')
         .insert({
@@ -309,6 +352,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
             d.exercises.map((x) => ({
               day_id: dayRow.id, category: x.category, name: x.name,
               description: x.description, reps: x.reps, sort_order: x.sort_order,
+              video_url: x.video_url || null,
             })),
           );
           if (exErr) throw exErr;
@@ -543,6 +587,80 @@ export default function ThrowingGenerator({ userId, userRole }) {
                   <span className="text-gray-500">wk {ph.span[0]}–{ph.span[1]} · {ph.focus}</span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Full program (all weeks) — collapsible by phase (#5) */}
+          <div className={card}>
+            <div className={eyebrow}>Full program · {numWeeks} {numWeeks === 1 ? 'week' : 'weeks'} — review before saving</div>
+            <div className="space-y-2">
+              {phasePlan.map((ph, pi) => {
+                const open = openPhase[pi];
+                const weekNums = Array.from({ length: ph.span[1] - ph.span[0] + 1 }, (_, k) => ph.span[0] + k);
+                return (
+                  <div key={pi} className="border border-gray-100 rounded-lg">
+                    <button onClick={() => setOpenPhase((o) => ({ ...o, [pi]: !o[pi] }))}
+                      className="w-full flex items-center justify-between px-3 py-2">
+                      <div className="flex items-center gap-2 text-left">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: KIND_HEX[THROW_KIND_COLOR[ph.kind]] || KIND_HEX.blue }} />
+                        <span className="font-semibold text-gray-800 text-sm">{ph.name}</span>
+                        <span className="text-xs text-gray-400">wk {ph.span[0]}–{ph.span[1]}</span>
+                      </div>
+                      {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                    </button>
+                    {open && (
+                      <div className="px-3 pb-3 space-y-3">
+                        <div className="text-xs text-gray-500">{ph.focus}</div>
+                        {weekNums.map((wnum) => {
+                          const wk = fullProgram[wnum - 1];
+                          if (!wk) return null;
+                          const dayRows = weekToProgramDays(wk.days, serOpts);
+                          return (
+                            <div key={wnum} className="border-t border-gray-100 pt-2">
+                              <div className="text-xs font-semibold text-gray-600 mb-1">
+                                Week {wnum}{wk.acwr ? ` · ACWR ${wk.acwr.toFixed(2)}` : ''}
+                              </div>
+                              <div className="space-y-1.5">
+                                {wk.days.map((d, di) => {
+                                  if (d.code === 'OFF') return null;
+                                  const row = dayRows[di];
+                                  const hot = d.intent >= 90;
+                                  const linked = row ? row.exercises.filter((ex) => ex.video_url) : [];
+                                  return (
+                                    <div key={di} className="text-xs">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-bold text-gray-700 w-8 shrink-0">{d.day}</span>
+                                        <span className={`font-semibold ${hot ? 'text-orange-600' : 'text-gray-800'}`}>{d.label}</span>
+                                        {d.mound && <span className="text-[9px] font-mono text-amber-600 border border-amber-300 rounded px-1">MOUND</span>}
+                                        <span className="font-mono text-gray-400">
+                                          {d.intent ? `${d.intent}%` : ''}{d.throws ? ` · ${d.throws} thr` : ''}
+                                        </span>
+                                      </div>
+                                      {linked.length > 0 && (
+                                        <div className="ml-10 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                                          {linked.map((ex, xi) => (
+                                            <a key={xi} href={ex.video_url} target="_blank" rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700">
+                                              <ExternalLink className="w-3 h-3" />{ex.name.replace(/^Drill: /, '')}
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-gray-400 mt-2">
+              Every week of the program is shown here before you save. Drill links open curated instruction in a new tab.
             </div>
           </div>
 

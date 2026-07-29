@@ -5,7 +5,7 @@ import {
   LEVELS, LEVEL_NAME, METRICS, BM, UNIV, KIND_COLOR,
   generatePlan, planToProgramDays,
 } from './hittingEngine';
-import { extractMetricsFromSubmission } from './assessmentMetrics';
+import { extractMetricsFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 
 /* --------------------------------------------------------------------------- *
@@ -196,22 +196,28 @@ export default function HittingGenerator({ userId, userRole }) {
         notes.push(`EV from ${evs.length} Trackman swings`);
       }
 
-      // Latest assessment -> the rest.
+      // ALL assessments (newest-first) so ball-flight, sequence & engine numbers
+      // auto-fill from whichever past assessment measured them — not just the
+      // single latest submission (#10/#11).
       const { data: subs } = await supabase
         .from('assessment_submissions')
         .select('id, assessment_date, responses, assessment_templates(name, schema)')
         .eq('player_id', p.id)
         .order('assessment_date', { ascending: false })
-        .limit(1);
-      const sub = subs && subs[0];
-      const { out, matched } = mapAssessment(sub);
-      matched.forEach((k) => { if (next[k] === '' || next[k] == null) next[k] = String(out[k]); });
+        .limit(50);
+      const subList = subs || [];
+      const matchedAll = [];
+      // Fuzzy-map each submission newest-first; keep first (most-recent) hit per key.
+      for (const sub of subList) {
+        const { out, matched } = mapAssessment(sub);
+        matched.forEach((k) => { if (next[k] === '' || next[k] == null) { next[k] = String(out[k]); matchedAll.push(k); } });
+      }
       // Structured metric_key tags are authoritative — override fuzzy/blank with tagged values.
-      const byKey = extractMetricsFromSubmission(sub);
+      const byKey = extractMetricsFromSubmissions(subList);
       const keyed = Object.keys(byKey).filter((k) => METRIC_KEYS.includes(k));
       keyed.forEach((k) => { next[k] = String(byKey[k]); });
-      const total = new Set([...matched, ...keyed]).size;
-      if (total) notes.push(`${total} metric${total > 1 ? 's' : ''} from "${sub.assessment_templates?.name || 'assessment'}"`);
+      const total = new Set([...matchedAll, ...keyed]).size;
+      if (total) notes.push(`${total} metric${total > 1 ? 's' : ''} across ${subList.length} assessment${subList.length > 1 ? 's' : ''}`);
 
       setValues(next);
       setProgramName(`${p.full_name} — Hitting Roadmap`);

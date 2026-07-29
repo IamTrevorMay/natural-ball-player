@@ -168,3 +168,22 @@ export function assessmentReadiness(submissions) {
   }
   return out;
 }
+
+/**
+ * Merge canonical metric values across MANY submissions, keeping the MOST-RECENT
+ * value for each metric key. Pass submissions NEWEST-FIRST (e.g. queried with
+ * .order('assessment_date', { ascending: false })). This lets one athlete's S&C,
+ * hitting AND throwing assessments all feed a generator at once — every metric is
+ * filled from the newest assessment that actually measured it, instead of only
+ * the single latest submission (which often screens just one domain). Returns
+ * { [metric_key]: number }.
+ */
+export function extractMetricsFromSubmissions(submissions) {
+  const out = {};
+  if (!Array.isArray(submissions)) return out;
+  for (const sub of submissions) {
+    const one = extractMetricsFromSubmission(sub);
+    for (const k in one) if (out[k] === undefined) out[k] = one[k];
+  }
+  return out;
+}

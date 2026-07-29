@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
-import { extractMetricsFromSubmission } from './assessmentMetrics';
+import { extractMetricsFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import {
   Position, Sex, makeAthlete, trainingStage, maturityBand, loadStyle,
@@ -88,6 +88,22 @@ function mapAssessmentFromSubmission(submission) {
   assign('rel_trap_bar_dl', find((l) => (l.includes('trap') || l.includes('deadlift')) && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×'))));
 
   return { assessment: out, matched };
+}
+
+// Fuzzy-map across MANY submissions (newest-first): keep the most-recent value
+// per screen field so an athlete's mobility screen, force test and any other
+// past assessment all contribute. Returns { assessment, matched[], count }.
+function mapAssessmentFromSubmissions(submissions) {
+  const out = {};
+  const matched = [];
+  if (!Array.isArray(submissions)) return { assessment: out, matched, count: 0 };
+  for (const sub of submissions) {
+    const one = mapAssessmentFromSubmission(sub);
+    for (const [k, v] of Object.entries(one.assessment)) {
+      if (out[k] === undefined) { out[k] = v; matched.push(k); }
+    }
+  }
+  return { assessment: out, matched, count: submissions.length };
 }
 
 // A blank string-keyed form (so inputs are controlled). Numbers parsed at gen.
@@ -244,24 +260,26 @@ export default function ProgramGenerator({ userId, userRole }) {
       if (pp?.position) setPosition(positionFromProfile(pp.position));
       if (pp?.training_age_months != null) setTrainingMonths(String(pp.training_age_months));
 
-      // Latest assessment submission (with schema) for auto-mapping.
+      // ALL assessment submissions (newest-first) so mobility, force and any
+      // other past screens all feed the program — each field from the newest
+      // assessment that measured it (#1/#11).
       const { data: subs } = await supabase
         .from('assessment_submissions')
         .select('id, assessment_date, responses, assessment_templates(name, schema)')
         .eq('player_id', p.id)
         .order('assessment_date', { ascending: false })
-        .limit(1);
-      const sub = subs && subs[0];
-      const { assessment: mapped, matched } = mapAssessmentFromSubmission(sub);
+        .limit(50);
+      const subList = subs || [];
+      const { assessment: mapped, matched, count } = mapAssessmentFromSubmissions(subList);
       if (matched.length) {
         setAssessment((a) => ({ ...a, ...Object.fromEntries(Object.entries(mapped).map(([k, v]) => [k, String(v)])) }));
-        setAutoNote(`Auto-filled ${matched.length} field(s) from "${sub.assessment_templates?.name || 'latest assessment'}" (${sub.assessment_date}). Review & edit below.`);
+        setAutoNote(`Auto-filled ${matched.length} field(s) across ${count} past assessment${count > 1 ? 's' : ''}. Review & edit below.`);
       } else {
         setAssessment({ ...BLANK_ASSESSMENT });
-        setAutoNote(sub ? 'Latest assessment had no auto-mappable numeric fields — enter the screen manually.' : 'No assessment on file — enter the screen manually (blank = conservative thrower-deficit assumption).');
+        setAutoNote(subList.length ? 'Past assessments had no auto-mappable numeric fields — enter the screen manually.' : 'No assessment on file — enter the screen manually (blank = conservative thrower-deficit assumption).');
       }
       // Structured metric_key tags are authoritative — override fuzzy/blank (with unit conversion).
-      const byKey = extractMetricsFromSubmission(sub);
+      const byKey = extractMetricsFromSubmissions(subList);
       const keyed = {};
       for (const [mk, [field, mult]] of Object.entries(SC_KEY_MAP)) {
         if (byKey[mk] != null) keyed[field] = String(Math.round(byKey[mk] * mult * 100) / 100);
