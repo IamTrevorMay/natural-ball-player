@@ -629,10 +629,13 @@ export default function Schedule({ userId, userRole }) {
         }
       }
     });
-    // Ensure first visible occurrence per repeating master is draggable
+    // Ensure the first occurrence visible in the current week is draggable (not an
+    // earlier-month occurrence that is outside the week view).
+    const weekStartStr = fmtLocalDate(startOfWeek);
+    const weekEndStr = fmtLocalDate(endOfWeek);
     const firstRepeatSeen = new Set();
     for (const es of expandedSlots) {
-      if (es.repeat_weekly && !firstRepeatSeen.has(es.id)) {
+      if (es.repeat_weekly && !firstRepeatSeen.has(es.id) && es.slot_date >= weekStartStr && es.slot_date <= weekEndStr) {
         es._is_virtual = false;
         firstRepeatSeen.add(es.id);
       }
