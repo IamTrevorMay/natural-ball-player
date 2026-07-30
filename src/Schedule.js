@@ -312,51 +312,18 @@ export default function Schedule({ userId, userRole }) {
     setPlayers(data || []);
   };
 
-  // Fetch schedule events for a set of players, chunked by member count.
-  // A single Supabase query caps at 1000 rows, and a very large .in() list blows the
-  // request URL length limit — both silently drop team-programmed workouts on big
-  // rosters, so mass-programmed events "don't show" (#155). Chunking keeps each query
-  // small enough to return every row and stay under the URL limit.
-  const fetchEventsForPlayers = async (playerIds, startStr, endStr) => {
-    const CHUNK = 25;
-    const all = [];
-    for (let i = 0; i < playerIds.length; i += CHUNK) {
-      const chunk = playerIds.slice(i, i + CHUNK);
-      const { data, error } = await supabase.from('schedule_events').select('*')
-        .in('player_id', chunk)
-        .gte('event_date', startStr).lte('event_date', endStr)
-        .order('event_date');
-      if (error) { console.error('Error fetching player schedule events:', error); continue; }
-      all.push(...(data || []));
-    }
-    return all;
-  };
-
   const fetchTeamEvents = async () => {
     if (!selectedTeam) return;
 
     const { startStr, endStr } = monthWeekRange(selectedDate);
 
-    // Fetch team members so we can also pull their individual events
-    const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', selectedTeam);
-    const memberIds = (members || []).map(m => m.user_id).filter(Boolean);
-
-    const [{ data: teamData }, playerData] = await Promise.all([
-      supabase.from('schedule_events').select('*')
-        .contains('team_ids', [selectedTeam])
-        .gte('event_date', startStr).lte('event_date', endStr),
-      memberIds.length > 0
-        ? fetchEventsForPlayers(memberIds, startStr, endStr)
-        : Promise.resolve([]),
-    ]);
-
-    // Merge and dedupe by id
-    const seen = new Set();
-    const merged = [];
-    for (const ev of [...(teamData || []), ...(playerData || [])]) {
-      if (!seen.has(ev.id)) { seen.add(ev.id); merged.push(ev); }
-    }
-    setEvents(merged);
+    // Team view shows only group events (team_ids contains the team) — NOT the
+    // individual player_id events of every roster member. Per-player events
+    // still show in the player-filtered views.
+    const { data: teamData } = await supabase.from('schedule_events').select('*')
+      .contains('team_ids', [selectedTeam])
+      .gte('event_date', startStr).lte('event_date', endStr);
+    setEvents(teamData || []);
   };
 
   const fetchPlayerEvents = async () => {

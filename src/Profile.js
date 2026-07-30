@@ -1631,6 +1631,14 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const profile = userData._profile;
   const canEditProfile = userRole === 'coach' || userRole === 'admin';
 
+  const handleDeleteAssessment = async (subId) => {
+    if (!window.confirm('Delete this assessment submission? This cannot be undone.')) return;
+    const { error } = await supabase.from('assessment_submissions').delete().eq('id', subId);
+    if (error) { alert('Error deleting assessment: ' + formatUserError(error)); return; }
+    setAssessmentSubmissions(prev => prev.filter(s => s.id !== subId));
+    if (expandedSubmission === subId) setExpandedSubmission(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2176,13 +2184,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   <div className="space-y-2">
                     {assessmentSubmissions.map(sub => (
                       <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
-                        <button
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
                             const expanding = expandedSubmission !== sub.id;
                             setExpandedSubmission(expanding ? sub.id : null);
                             if (expanding) fetchAgeGroupAverages(sub.template_id, sub.assessment_templates?.schema || []);
                           }}
-                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left"
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click(); }}
+                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left cursor-pointer"
                         >
                           <div className="flex items-center space-x-3">
                             <CheckCircle size={16} className="text-green-500" />
@@ -2193,8 +2204,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               </p>
                             </div>
                           </div>
-                          {expandedSubmission === sub.id ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-                        </button>
+                          <div className="flex items-center space-x-2">
+                            {canEditProfile && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteAssessment(sub.id); }}
+                                className="p-1 text-gray-400 hover:text-red-600 transition"
+                                title="Delete this assessment"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                            {expandedSubmission === sub.id ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                          </div>
+                        </div>
                         {expandedSubmission === sub.id && (
                           <div className="border-t border-gray-200 p-4 bg-gray-50">
                             {ageGroupAverages[sub.template_id] && (
