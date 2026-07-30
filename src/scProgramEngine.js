@@ -738,9 +738,9 @@ export function prescriptionFor(phase, athlete) {
   if (phase === Phase.ACCUMULATION) {
     return {
       main_intensity: rpeOrPercent(ls, 'RPE 7 (2-3 reps in reserve)', '65-75% 1RM'),
-      main_scheme: '4-5 x 6-8',
+      main_scheme: '4-5 x 5-6',
       speed_scheme: novice ? '—' : '6-8 x 3 @ 50-60% + bands',
-      accessory_reps: '4-5 x 10-15 (bias weakness tags)',
+      accessory_reps: '4-5 x 5-6 (bias weakness tags)',
       power_volume: 'med-ball 5-6 x 5, jumps 5 x 4',
       arm_reps: '3-4 x 12-20',
       core_reps: '3-4 x 10-12/side',
@@ -753,7 +753,7 @@ export function prescriptionFor(phase, athlete) {
       main_intensity: rpeOrPercent(ls, 'RPE 8 (top set, 1-2 in reserve)', '85-92%+ 1-3RM'),
       main_scheme: 'work up to a heavy 3-5RM, then 2-3 back-off x 5 (rotate ME 1-3 wk)',
       speed_scheme: novice ? '—' : '8-10 x 2 @ 50-60% + accommodating resistance',
-      accessory_reps: '4-5 x 8-12',
+      accessory_reps: '4-5 x 5-6',
       power_volume: 'med-ball 5 x 3-5 (intent high), jumps 5 x 3',
       arm_reps: '3-4 x 10-15',
       core_reps: '3-4 x 8-10/side',
@@ -766,7 +766,7 @@ export function prescriptionFor(phase, athlete) {
       main_intensity: rpeOrPercent(ls, 'RPE 7 but MOVE FAST', '50-60% for speed / 80% for strength-speed'),
       main_scheme: 'DE focus: 8-10 x 2 fast; 1 heavy top single if advanced',
       speed_scheme: '10 x 2 @ 55-60% + bands/chains',
-      accessory_reps: '4 x 6-8 (maintain, don\'t fatigue)',
+      accessory_reps: '4 x 5-6 (maintain, don\'t fatigue)',
       power_volume: 'peak intent: med-ball 5 x 3, jumps 4 x 3, oly-deriv / cleans if cleared',
       arm_reps: '3 x 10-12',
       core_reps: '3 x 6-8/side (explosive)',
@@ -1045,15 +1045,38 @@ function lowerMeDay(athlete, date, rx, ctx = {}) {
   return { name: `${WD_NAME[weekday ?? WD.MON]} · Lower — Max-Effort`, focus: 'Lower-body strength + power', weekday: weekday ?? WD.MON, blocks };
 }
 
+// Press-angle classifier: every upper day pairs one FLAT press with one
+// INCLINE/overhead press. "Incline" names win outright; otherwise a purely
+// vertical press (OHP, landmine, shoulder press) counts as the incline side.
+function pressAngle(e) {
+  if (/incline/i.test(e.name)) return 'incline';
+  if (e.targets.includes('vertical_press') && !e.targets.includes('horizontal_press')) return 'incline';
+  return 'flat';
+}
+
 function upperMeDay(athlete, date, rx, ctx = {}) {
   const { wn, n, weekday } = ctxTools(ctx);
   const thrower = isThrower(athlete);
   const mainPress = rotatePick(eligible(ALL_POOLS.ME_UPPER, athlete), date, 'meupper');
   const pressElig = eligible(ALL_POOLS.PRESS, athlete);
   // Cap pressing at 2 per upper day (1 main + 1 accessory) and keep pulls >= presses.
-  // Three heavy presses at 4-5 sets each is too much systemic pressing volume; a single
-  // rotating accessory press (either plane) plus 3 pulls keeps the day press/pull balanced.
-  const accPress = pickMix(pressElig, new Set(['horizontal_press', 'vertical_press']), 1);
+  // The accessory press must be the COMPLEMENTARY angle of the main press: flat
+  // main -> incline variety, incline/overhead main -> flat variety, so every
+  // upper day has one of each. If the ME slot rotated onto a heavy pull
+  // (weighted chin/pull-up), program one flat + one incline accessory instead.
+  const pressTags = new Set(['horizontal_press', 'vertical_press']);
+  const mainIsPress = !!mainPress && (mainPress.targets.includes('horizontal_press') || mainPress.targets.includes('vertical_press'));
+  let accPress;
+  if (mainIsPress) {
+    const want = pressAngle(mainPress) === 'flat' ? 'incline' : 'flat';
+    const subset = pressElig.filter((e) => pressAngle(e) === want);
+    accPress = pickMix(subset.length ? subset : pressElig, pressTags, 1);
+  } else {
+    accPress = [
+      ...pickMix(pressElig.filter((e) => pressAngle(e) === 'flat'), pressTags, 1),
+      ...pickMix(pressElig.filter((e) => pressAngle(e) === 'incline'), pressTags, 1),
+    ];
+  }
   const pulls = pickMix(eligible(ALL_POOLS.PULL, athlete), POST_TAGS, n(3));
   const arm = pickMix(eligible(ALL_POOLS.ARM_FARM, athlete), ARM_TAGS, n(thrower ? 3 : 2));
   const cuff = thrower ? pickN(eligible(ALL_POOLS.ARM_CARE, athlete), POST_TAGS, 1) : [];

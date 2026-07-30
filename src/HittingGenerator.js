@@ -65,13 +65,15 @@ function mapAssessment(submission) {
   assign('earlyconn', find((l) => l.includes('early') && l.includes('connection')));
   assign('impconn', find((l) => l.includes('connection') && (l.includes('impact') || l.includes('contact'))));
   assign('ttc', find((l) => l.includes('time to contact') || l.includes('time-to-contact')));
-  assign('evmax', find((l) => (l.includes('exit') && l.includes('max')) || l.includes('max ev') || l.includes('peak exit')));
+  // Ball-flight max = the assessment's front-toss EV when present (falls back to generic max-EV labels).
+  assign('evmax', find((l) => (l.includes('front toss') || l.includes('front-toss')) && (l.includes('ev') || l.includes('exit')))
+    || find((l) => (l.includes('exit') && l.includes('max')) || l.includes('max ev') || l.includes('peak exit')));
   assign('evavg', find((l) => (l.includes('exit') && (l.includes('avg') || l.includes('average'))) || l.includes('avg ev')));
   assign('xfactor', find((l) => l.includes('separation') || l.includes('x-factor') || l.includes('x factor')));
   assign('seq', find((l) => l.includes('sequence') || l.includes('kinematic')));
   assign('pelvis', find((l) => l.includes('pelvis')));
   assign('mbthrow', find((l) => l.includes('med') && l.includes('ball')));
-  assign('cmj', find((l) => l.includes('cmj') || (l.includes('vertical') && l.includes('jump')) || l.includes('counter-movement')));
+  assign('cmj', find((l) => l.includes('cmj') || (l.includes('vertical') && l.includes('jump')) || l.includes('counter-movement') || l.includes('counter movement')));
   assign('dl', find((l) => l.includes('deadlift')));
   assign('hipir', find((l) => l.includes('hip') && l.includes('ir')));
   assign('tspine', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
@@ -216,8 +218,24 @@ export default function HittingGenerator({ userId, userRole }) {
       const byKey = extractMetricsFromSubmissions(subList);
       const keyed = Object.keys(byKey).filter((k) => METRIC_KEYS.includes(k));
       keyed.forEach((k) => { next[k] = String(byKey[k]); });
+      // Ball-flight max must match the assessment's front-toss EV when one exists —
+      // it outranks the Trackman-derived max and any generic max-EV label (newest first).
+      let frontToss = null;
+      for (const sub of subList) {
+        if (frontToss != null) break;
+        const schema = sub.assessment_templates?.schema || [];
+        const responses = sub.responses || {};
+        for (const el of schema) {
+          const l = String(el?.label || '').toLowerCase();
+          if ((l.includes('front toss') || l.includes('front-toss')) && (l.includes('ev') || l.includes('exit'))) {
+            const n = parseFloat(responses[el.id]);
+            if (Number.isFinite(n)) { frontToss = n; break; }
+          }
+        }
+      }
+      if (frontToss != null) { next.evmax = String(frontToss); notes.push('ball-flight max = front-toss EV (assessment)'); }
       const total = new Set([...matchedAll, ...keyed]).size;
-      if (total) notes.push(`${total} metric${total > 1 ? 's' : ''} across ${subList.length} assessment${subList.length > 1 ? 's' : ''}`);
+      if (total) notes.push(`${total} metric${total > 1 ? 's' : ''} across ${subList.length} assessment${subList.length > 1 ? 's' : ''} — newest value per metric`);
 
       setValues(next);
       setProgramName(`${p.full_name} — Hitting Roadmap`);

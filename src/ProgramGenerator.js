@@ -82,7 +82,7 @@ function mapAssessmentFromSubmission(submission) {
   assign('hip_ir_deg', find((l) => l.includes('hip') && l.includes('ir')));
   assign('ankle_dorsiflexion_cm', find((l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('knee to wall') || l.includes('dorsi')));
   assign('tspine_rotation_deg', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
-  assign('vertical_jump_in', find((l) => l.includes('vertical') && l.includes('jump')));
+  assign('vertical_jump_in', find((l) => (l.includes('vertical') && l.includes('jump')) || l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
   assign('broad_jump_in', find((l) => l.includes('broad') && l.includes('jump')));
   assign('rel_squat', find((l) => l.includes('squat') && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×') || l.includes('x bw'))));
   assign('rel_trap_bar_dl', find((l) => (l.includes('trap') || l.includes('deadlift')) && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×'))));
@@ -270,21 +270,27 @@ export default function ProgramGenerator({ userId, userRole }) {
         .order('assessment_date', { ascending: false })
         .limit(50);
       const subList = subs || [];
-      const { assessment: mapped, matched, count } = mapAssessmentFromSubmissions(subList);
-      if (matched.length) {
-        setAssessment((a) => ({ ...a, ...Object.fromEntries(Object.entries(mapped).map(([k, v]) => [k, String(v)])) }));
-        setAutoNote(`Auto-filled ${matched.length} field(s) across ${count} past assessment${count > 1 ? 's' : ''}. Review & edit below.`);
-      } else {
-        setAssessment({ ...BLANK_ASSESSMENT });
-        setAutoNote(subList.length ? 'Past assessments had no auto-mappable numeric fields — enter the screen manually.' : 'No assessment on file — enter the screen manually (blank = conservative thrower-deficit assumption).');
-      }
-      // Structured metric_key tags are authoritative — override fuzzy/blank (with unit conversion).
+      const { assessment: mapped } = mapAssessmentFromSubmissions(subList);
+      // Structured metric_key tags (and the shared fuzzy fallback) are authoritative —
+      // they override the generator's own fuzzy map (with unit conversion).
       const byKey = extractMetricsFromSubmissions(subList);
       const keyed = {};
       for (const [mk, [field, mult]] of Object.entries(SC_KEY_MAP)) {
         if (byKey[mk] != null) keyed[field] = String(Math.round(byKey[mk] * mult * 100) / 100);
       }
-      if (Object.keys(keyed).length) setAssessment((a) => ({ ...a, ...keyed }));
+      const filledCount = new Set([...Object.keys(mapped), ...Object.keys(keyed)]).size;
+      if (filledCount) {
+        setAssessment((a) => ({
+          ...a,
+          ...Object.fromEntries(Object.entries(mapped).map(([k, v]) => [k, String(v)])),
+          ...keyed,
+        }));
+        const newest = String(subList[0]?.assessment_date || '').slice(0, 10);
+        setAutoNote(`Auto-filled ${filledCount} field(s) from the athlete's assessments (most recent ${newest || 'n/a'}; each field uses the newest assessment that measured it). Review & edit below.`);
+      } else {
+        setAssessment({ ...BLANK_ASSESSMENT });
+        setAutoNote(subList.length ? 'Past assessments had no auto-mappable numeric fields — enter the screen manually.' : 'No assessment on file — enter the screen manually (blank = conservative thrower-deficit assumption).');
+      }
       if (byKey.training_age != null) setTrainingMonths(String(Math.round(byKey.training_age)));
       setProgramName(`${p.full_name} — S&C Program`);
     } catch (e) {

@@ -104,19 +104,84 @@ export function metricsByGroup() {
  *   Scalar responses are read as responses[element.id]; table/object responses
  *   are skipped (metrics are scalars).
  */
+/**
+ * Fuzzy label → canonical key fallback for legacy template elements that carry
+ * no metric_key tag. This is the union of the per-generator fuzzy maps, so the
+ * readiness panel and every generator agree on what data is "on file" — a
+ * submission the generator can auto-fill from must never read as "Not assessed".
+ * Evaluated in order; first match wins.
+ */
+const FUZZY_LABEL_TESTS = [
+  ['batspeed', (l) => l.includes('bat speed') || l.includes('bat-speed')],
+  // Front-toss EV is the ball-flight max the hitting assessment records.
+  ['evmax', (l) => (l.includes('front toss') || l.includes('front-toss')) && (l.includes('ev') || l.includes('exit'))],
+  ['evavg', (l) => (l.includes('exit') && (l.includes('avg') || l.includes('average'))) || l.includes('avg ev')],
+  ['evmax', (l) => (l.includes('exit') && (l.includes('max') || l.includes('peak'))) || l.includes('max ev')],
+  ['rotaccel', (l) => l.includes('rotational accel') || l.includes('rot accel')],
+  ['handspeed', (l) => l.includes('hand speed')],
+  ['ope', (l) => l.includes('on-plane') || l.includes('on plane')],
+  ['attack', (l) => l.includes('attack angle')],
+  ['earlyconn', (l) => l.includes('early') && l.includes('connection')],
+  ['impconn', (l) => l.includes('connection') && (l.includes('impact') || l.includes('contact'))],
+  ['ttc', (l) => l.includes('time to contact') || l.includes('time-to-contact')],
+  ['xfactor', (l) => l.includes('separation') || l.includes('x-factor') || l.includes('x factor')],
+  ['seq', (l) => l.includes('kinematic') || l.includes('sequence')],
+  ['pelvis', (l) => l.includes('pelvis')],
+  ['mbthrow', (l) => l.includes('med') && l.includes('ball')],
+  ['cmj', (l) => l.includes('cmj') || (l.includes('vertical') && l.includes('jump')) || l.includes('counter-movement') || l.includes('counter movement')],
+  ['broad_jump', (l) => l.includes('broad') && l.includes('jump')],
+  ['dl', (l) => (l.includes('trap') || l.includes('deadlift')) ],
+  ['grip', (l) => l.includes('grip')],
+  ['shoulder_ir', (l) => l.includes('shoulder') && (l.includes(' ir') || l.includes('internal'))],
+  ['shoulder_er', (l) => l.includes('shoulder') && (l.includes(' er') || l.includes('external'))],
+  ['shoulder_rom_deficit', (l) => l.includes('total') && (l.includes('rom') || l.includes('motion'))],
+  ['hipir', (l) => l.includes('hip') && (l.includes(' ir') || l.includes('internal'))],
+  ['tspine', (l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')],
+  ['ankle', (l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('knee to wall') || l.includes('dorsi')],
+  ['training_age', (l) => l.includes('training age')],
+];
+
+// Returns { key, rank } — rank is the test's position, so earlier (more
+// specific) tests, like front-toss EV over generic max EV, win conflicts.
+function fuzzyKeyForLabel(label) {
+  const l = String(label || '').toLowerCase();
+  if (!l) return null;
+  for (let i = 0; i < FUZZY_LABEL_TESTS.length; i += 1) {
+    const [key, test] = FUZZY_LABEL_TESTS[i];
+    if (test(l)) return { key, rank: i };
+  }
+  return null;
+}
+
 export function extractMetricsFromSubmission(submission) {
   const out = {};
   if (!submission) return out;
   const responses = submission.responses || {};
   const tpl = submission.assessment_templates || submission.template || null;
   const schema = Array.isArray(tpl?.schema) ? tpl.schema : [];
+  const toNum = (raw) => {
+    if (raw === undefined || raw === null || typeof raw === 'object') return null;
+    const num = parseFloat(String(raw).replace(/[^0-9.-]/g, ''));
+    return Number.isNaN(num) ? null : num;
+  };
+  // Pass 1: explicit metric_key tags — authoritative.
   for (const el of schema) {
     const mk = el?.metric_key;
     if (!isMetricKey(mk)) continue;
-    const raw = responses[el.id];
-    if (raw === undefined || raw === null || typeof raw === 'object') continue;
-    const num = parseFloat(String(raw).replace(/[^0-9.-]/g, ''));
-    if (!Number.isNaN(num)) out[mk] = num;
+    const num = toNum(responses[el.id]);
+    if (num != null) out[mk] = num;
+  }
+  // Pass 2: fuzzy label match fills only keys the tags didn't cover. When two
+  // labels map to the same key, the earlier (more specific) test wins.
+  const fuzzyRank = {};
+  for (const el of schema) {
+    if (!el || el.metric_key) continue;
+    const hit = fuzzyKeyForLabel(el.label);
+    if (!hit) continue;
+    if (out[hit.key] !== undefined && fuzzyRank[hit.key] === undefined) continue; // tagged — authoritative
+    if (fuzzyRank[hit.key] !== undefined && fuzzyRank[hit.key] <= hit.rank) continue;
+    const num = toNum(responses[el.id]);
+    if (num != null) { out[hit.key] = num; fuzzyRank[hit.key] = hit.rank; }
   }
   return out;
 }

@@ -762,13 +762,17 @@ function dayToProgramDay(d, opts) {
 
   const ex = [];
   let so = 0;
+  // The day's intensity is reiterated next to EVERY exercise so the athlete
+  // never loses sight of today's intent while working down the list.
+  const intentTag = d.intent > 0 ? `Today: ${d.intent}% intent` : '';
+  const withIntent = (desc) => (intentTag ? (desc ? `${desc} · ${intentTag}` : intentTag) : desc);
   // 1) Movement prep on every active day (rule 10).
   if (d.code !== 'OFF') {
     ex.push({ category: 'recovery', name: 'Movement prep & mobility',
-      description: movementPrep(o.mob, o.str, o.bio).join(' · '), reps: '8–12 min', sort_order: so });
+      description: withIntent(movementPrep(o.mob, o.str, o.bio).join(' · ')), reps: '8–12 min', sort_order: so });
     so += 1;
   }
-  // 2) Main session block.
+  // 2) Main session block (bits already carries the intent %).
   let mainCat = categoryForCode(d.code);
   if (!o.isP && d.code === 'LIVE') mainCat = 'other'; // position-player game (at-bats), not pitching
   if (d.code === 'CARE') mainCat = 'recovery';
@@ -778,7 +782,7 @@ function dayToProgramDay(d, opts) {
   // 3) Plyo / drill block (rule 9) — with a curated video link (#4).
   const pl = plyoFor(d.code, o.isP, veloBad);
   if (pl) {
-    ex.push({ category: pl.category, name: pl.name, description: pl.items.join(' · '), reps: 'as prescribed', sort_order: so, video_url: pl.url || null });
+    ex.push({ category: pl.category, name: pl.name, description: withIntent(pl.items.join(' · ')), reps: 'as prescribed', sort_order: so, video_url: pl.url || null });
     so += 1;
   }
   // 4) Deficiency-targeted drills (#4) — individual clickable rows on active
@@ -786,7 +790,7 @@ function dayToProgramDay(d, opts) {
   if (d.code !== 'OFF' && d.code !== 'CARE' && Array.isArray(o.drills) && o.drills.length) {
     pickDayDrills(o.drills, `${d.day}${d.code}`, 2).forEach((dr) => {
       ex.push({ category: 'conditioning', name: `Drill: ${dr.name}`,
-        description: 'Movement / kinetic-sequence corrective — tap to watch', reps: 'video', sort_order: so, video_url: dr.url });
+        description: withIntent('Movement / kinetic-sequence corrective — tap to watch'), reps: 'video', sort_order: so, video_url: dr.url });
       so += 1;
     });
   }

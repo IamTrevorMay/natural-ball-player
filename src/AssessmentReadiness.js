@@ -66,6 +66,9 @@ export default function AssessmentReadiness({ athleteId, highlight }) {
           ? "All areas assessed — the data is in. Pick the athlete's phase below."
           : `Missing: ${missing.map((m) => m.label).join(', ')}. Add these assessments to fully inform phase selection.`}
       </div>
+      <div className="text-[11px] text-gray-400 mt-1">
+        The generator auto-fills each metric from the athlete's most recent assessment that measured it.
+      </div>
     </div>
   );
 }
