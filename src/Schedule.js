@@ -2350,7 +2350,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
       >
         <div style={{ width: scrollWidth, height: 1 }} />
       </div>
-      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-hidden overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
@@ -5292,6 +5292,11 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const eventMasterId = event._master_id || event.id;
   const occurrenceDate = event.event_date;
 
+  // Sign-ups lock 12h before the event starts (mirrors the #233 cancel cutoff).
+  const SIGNUP_CUTOFF_MS = 12 * 60 * 60 * 1000;
+  const eventStartAt = new Date(`${occurrenceDate}T${(event.start_time || '00:00').slice(0, 5)}:00`);
+  const signupsClosed = Date.now() > eventStartAt.getTime() - SIGNUP_CUTOFF_MS;
+
   // Public guest bookings (#229) for this specific occurrence.
   const [guestBookings, setGuestBookings] = useState([]);
   const [refundingId, setRefundingId] = useState(null);
@@ -5362,6 +5367,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   }, [eventMasterId, occurrenceDate]);
 
   const handleSignup = async () => {
+    if (signupsClosed) { alert('Sign-ups are closed — they close 12 hours before the event starts.'); return; }
     setSignupLoading(true);
     try {
       const { error } = await supabase.from('event_signups').insert({
@@ -5381,6 +5387,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   };
 
   const handleCancelSignup = async (signupId) => {
+    if (signupsClosed) { alert('Sign-ups are locked within 12 hours of the event and can no longer be changed.'); return; }
     if (!window.confirm('Cancel your sign up for this event?')) return;
     setSignupLoading(true);
     try {
@@ -5532,13 +5539,22 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                         <span>You're signed up</span>
                       </div>
                       {mySignup.notes && <p className="text-xs text-gray-700 whitespace-pre-wrap">Notes: {mySignup.notes}</p>}
-                      <button
-                        onClick={() => handleCancelSignup(mySignup.id)}
-                        disabled={signupLoading}
-                        className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
-                      >
-                        {signupLoading ? 'Cancelling…' : 'Cancel sign up'}
-                      </button>
+                      {signupsClosed ? (
+                        <p className="text-xs text-gray-500">Sign-ups are locked within 12 hours of the event.</p>
+                      ) : (
+                        <button
+                          onClick={() => handleCancelSignup(mySignup.id)}
+                          disabled={signupLoading}
+                          className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
+                        >
+                          {signupLoading ? 'Cancelling…' : 'Cancel sign up'}
+                        </button>
+                      )}
+                    </div>
+                  ) : signupsClosed ? (
+                    <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+                      <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                      <span>Sign-ups are closed — they close 12 hours before the event starts.</span>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -5723,6 +5739,14 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
   for (let i = 0; i < 7; i++) { const d = new Date(startOfWeek); d.setDate(startOfWeek.getDate() + i); weekDays.push(d); }
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isOwnSlots = coach.id === userId;
+  // Any staff member can SEE who's booked in any coach's slots; managing the
+  // reservations (confirm/decline/attendance) stays with the slot's coach + admin.
+  const isStaffViewer = userRole === 'admin' || userRole === 'coach';
+  const canManageRes = isOwnSlots || userRole === 'admin';
+  // Player bookings close 12h before the session starts (mirrors the #233 cancel cutoff).
+  const RESERVE_CUTOFF_MS = 12 * 60 * 60 * 1000;
+  const isBookingClosed = (slot, dateStr) =>
+    Date.now() > new Date(`${dateStr}T${(slot.start_time || '00:00').slice(0, 5)}:00`).getTime() - RESERVE_CUTOFF_MS;
   const formatLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const formatTime = (time) => {
@@ -5791,18 +5815,18 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                       <div className="font-semibold text-gray-900">{formatTime(slot.start_time)} - {formatTime(endTime)}</div>
                       <div className="text-gray-500">{slot.duration_minutes} min</div>
                       {slot.notes && <div className="text-gray-500 mt-1 truncate">{slot.notes}</div>}
-                      {isOwnSlots && slotRes.map(res => (
+                      {isStaffViewer && slotRes.map(res => (
                         <div key={res.id} className="mt-2 p-2 bg-white rounded border">
                           <div className="font-medium text-gray-900">{res.users?.full_name}</div>
                           {res.player_note && <div className="text-gray-500 mt-1">{res.player_note}</div>}
                           <div className={`inline-block px-2 py-0.5 rounded-full text-xs mt-1 ${res.status === 'confirmed' ? 'bg-green-100 text-green-700' : res.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{res.status}</div>
-                          {res.status === 'pending' && (
+                          {canManageRes && res.status === 'pending' && (
                             <div className="flex space-x-1 mt-2">
                               <button onClick={() => onConfirm(res.id)} className="flex-1 bg-green-600 text-white py-1 rounded text-xs hover:bg-green-700">Confirm</button>
                               <button onClick={() => onDecline(res.id)} className="flex-1 bg-red-600 text-white py-1 rounded text-xs hover:bg-red-700">Decline</button>
                             </div>
                           )}
-                          {res.status === 'confirmed' && onMarkAttendance && (
+                          {canManageRes && res.status === 'confirmed' && onMarkAttendance && (
                             <div className="mt-2 pt-2 border-t border-gray-100">
                               <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Attendance</div>
                               <div className="flex flex-wrap gap-1">
@@ -5820,7 +5844,7 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                           )}
                         </div>
                       ))}
-                      {isOwnSlots && pubRes.map((b, bi) => (
+                      {isStaffViewer && pubRes.map((b, bi) => (
                         <div key={`pub-${bi}`} className="mt-2 p-2 bg-white rounded border border-blue-100">
                           <div className="font-medium text-gray-900">{b.guest_name}</div>
                           <div className={`inline-block px-2 py-0.5 rounded-full text-xs mt-1 ${b.status === 'confirmed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -5829,7 +5853,11 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                         </div>
                       ))}
                       {!isOwnSlots && userRole === 'player' && !userRes && !isBooked && (
-                        <button onClick={() => onReserve({ ...slot, slot_date: dateStr })} className="mt-2 w-full bg-teal-600 text-white py-1 rounded text-xs hover:bg-teal-700 transition">Reserve</button>
+                        isBookingClosed(slot, dateStr) ? (
+                          <div className="mt-1 text-xs text-gray-400">Booking closed</div>
+                        ) : (
+                          <button onClick={() => onReserve({ ...slot, slot_date: dateStr })} className="mt-2 w-full bg-teal-600 text-white py-1 rounded text-xs hover:bg-teal-700 transition">Reserve</button>
+                        )
                       )}
                       {userRes && <div className={`mt-1 text-xs font-medium ${userRes.status === 'confirmed' ? 'text-green-600' : userRes.status === 'pending' ? 'text-yellow-600' : 'text-red-600'}`}>{userRes.status === 'confirmed' ? 'Confirmed' : userRes.status === 'pending' ? 'Pending' : 'Declined'}</div>}
                       {!isOwnSlots && isBooked && !userRes && <div className="mt-1 text-xs text-gray-400">Fully booked</div>}
@@ -6119,7 +6147,13 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
   };
 
+  // Bookings close 12h before the session starts (mirrors the #233 cancel cutoff).
+  const RESERVE_CUTOFF_MS = 12 * 60 * 60 * 1000;
+  const slotStartAt = new Date(`${slot.slot_date}T${(slot.start_time || '00:00').slice(0, 5)}:00`);
+  const bookingClosed = Date.now() > slotStartAt.getTime() - RESERVE_CUTOFF_MS;
+
   const handleReserve = async () => {
+    if (bookingClosed) { alert('Booking is closed — reservations close 12 hours before the session starts.'); return; }
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -6181,9 +6215,15 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           )}
           <div><label className="block text-sm font-medium text-gray-700 mb-1">What would you like to work on? (optional)</label><textarea value={playerNote} onChange={(e) => setPlayerNote(e.target.value)} placeholder="e.g., I want to work on my swing mechanics" rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           {slot.auto_confirm && <div className="flex items-center space-x-2 text-sm text-green-600"><Check size={16} /><span>This slot auto-confirms reservations</span></div>}
+          {bookingClosed && (
+            <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+              <span>Booking is closed — reservations close 12 hours before the session starts.</span>
+            </div>
+          )}
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleReserve} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
+            <button onClick={handleReserve} disabled={loading || bookingClosed} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
           </div>
         </div>
       </div>

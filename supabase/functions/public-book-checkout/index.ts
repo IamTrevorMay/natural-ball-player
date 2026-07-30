@@ -9,8 +9,12 @@ import {
   addMinutes,
   facilityEventOccurrences,
   fmtLocalDate,
+  occurrenceStartMs,
   trainingSlotOccurrences,
 } from "../_shared/availability.ts";
+
+// Public bookings close 12h before the occurrence starts.
+const BOOKING_CUTOFF_MS = 12 * 60 * 60 * 1000;
 
 const SQUARE_ENV = Deno.env.get("SQUARE_ENV") || "production";
 const SQUARE_BASE = SQUARE_ENV === "sandbox"
@@ -137,6 +141,10 @@ Deno.serve(async (req) => {
       endTime = start ? addMinutes(start, slot.duration_minutes) : "";
       priceCents = slot.public_price_cents;
       capacity = slot.max_players ?? 1;
+    }
+
+    if (occurrenceStartMs(occurrence_date, startTime) - BOOKING_CUTOFF_MS < Date.now()) {
+      return jsonRes(cors, 400, { error: "Bookings close 12 hours before the session starts" });
     }
 
     // --- Capacity re-check (best-effort; webhook + staff cancel are backstops)
