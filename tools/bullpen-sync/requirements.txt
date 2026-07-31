@@ -1,0 +1,7 @@
+# NBP BullpenSync — live Trackman B1 capture tool.
+# Deliberately tiny: a local FastAPI server, the scapy sniffer, and plain
+# HTTP for Supabase (no supabase-py, no PyQt). Python 3.11.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+scapy>=2.5
+requests>=2.31
