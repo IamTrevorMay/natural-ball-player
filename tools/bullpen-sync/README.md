@@ -57,6 +57,31 @@ First run bootstraps `.venv` and installs deps, then opens
 `http://127.0.0.1:8787`. Sign in with your NBP admin/coach account, set your CSV
 save folder once, search an athlete, and Start Session.
 
+## Double-clickable app (for admins)
+
+For non-technical admins, package the tool as a standalone `BullpenSync.app` — no
+terminal, no repo checkout:
+
+```
+./scripts/build_app.sh          # builds dist/BullpenSync.app
+./scripts/build_app.sh --zip    # also makes dist/BullpenSync.zip to share
+```
+
+Drop `BullpenSync.app` in `/Applications` (or anywhere). Double-clicking it
+bootstraps a private Python environment under
+`~/Library/Application Support/BullpenSync` on first run (needs Homebrew
+`python@3.11` — it prompts if missing), starts the local server, and opens the
+UI in the browser. A **Quit** button in the UI stops it cleanly.
+
+- **First launch:** because the app is ad-hoc signed (not notarized), macOS
+  Gatekeeper blocks a plain double-click — **right-click → Open → Open** once to
+  clear it. After that it opens normally.
+- The two machine prerequisites (Homebrew `python@3.11` and the passwordless
+  `rvictl` sudoers rule) still apply.
+- To fully remove the Gatekeeper step, notarize with a Developer ID cert (swap
+  the `-` identity in `build_app.sh`) — the same pending step as Triton-Vision's
+  distribution.
+
 ### Demo / dev without hardware
 
 Replay a recorded WebSocket capture (e.g. one of Triton's fixtures) — no iPad,

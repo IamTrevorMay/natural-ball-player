@@ -267,6 +267,23 @@ async def queue_drain() -> dict:
     return await asyncio.to_thread(hub.nbp.drain_queue)
 
 
+@app.post("/api/quit")
+async def quit_app() -> dict:
+    """Clean shutdown so the .app can be quit from its own UI. Refuses while a
+    session is live to avoid losing an in-progress bullpen."""
+    if hub.session is not None:
+        raise HTTPException(status_code=409, detail="End the active session first.")
+
+    async def _stop() -> None:
+        await asyncio.sleep(0.3)  # let the HTTP response flush
+        import os
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.create_task(_stop())
+    return {"ok": True}
+
+
 # ── Websocket ──
 @app.websocket("/ws")
 async def ws(ws: WebSocket) -> None:

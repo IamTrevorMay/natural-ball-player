@@ -77,6 +77,7 @@
   <span id="pill-queue" class="pill hidden"></span>
   <span id="pill-user" class="pill hidden"></span>
   <button id="btn-logout" class="btn-ghost hidden" style="padding:5px 10px;font-size:12px">Log out</button>
+  <button id="btn-quit" class="btn-ghost" style="padding:5px 10px;font-size:12px">Quit</button>
 </header>
 <main>
 
@@ -187,6 +188,13 @@ $("#btn-login").onclick = async () => {
   } catch(e) { $("#login-err").textContent = e.message; $("#login-err").classList.remove("hidden"); }
 };
 $("#btn-logout").onclick = async () => { await api("/api/logout",{method:"POST"}); location.reload(); };
+$("#btn-quit").onclick = async () => {
+  if (sessionActive) { alert("End the active session before quitting."); return; }
+  if (!confirm("Quit BullpenSync? The capture server will stop.")) return;
+  try { await api("/api/quit",{method:"POST"}); } catch(e){ alert(e.message); return; }
+  document.body.innerHTML = '<div style="max-width:420px;margin:18vh auto;text-align:center;color:#94a3b8">'
+    + '<h2 style="color:#e2e8f0">BullpenSync stopped</h2><p>You can close this tab.</p></div>';
+};
 
 function enterApp(user, queued) {
   $("#view-login").classList.add("hidden");
