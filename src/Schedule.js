@@ -4258,6 +4258,8 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   const [confirmDelete, setConfirmDelete] = useState(false); // Custom confirm modal
   const [mealData, setMealData] = useState(null);
   const [planMeals, setPlanMeals] = useState(null); // fuel-plan assignment: full meal breakdown
+  const [slotReservations, setSlotReservations] = useState([]);
+  const [slotResLoading, setSlotResLoading] = useState(false);
   const [formData, setFormData] = useState({
     title: event.title || event.opponent || '',
     event_date: event.event_date,
@@ -4286,6 +4288,42 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
       fetchPlanMeals();
     }
   }, [event]);
+
+  // For staff viewing a training slot, fetch who is booked and their active package.
+  useEffect(() => {
+    if (event.event_type !== 'training_slot' || userRole === 'player') return;
+    setSlotResLoading(true);
+    (async () => {
+      try {
+        const { data: resData } = await supabase
+          .from('slot_reservations')
+          .select('id, status, player_id, attendance, users(full_name)')
+          .eq('slot_id', event.id)
+          .eq('slot_date', event.event_date)
+          .neq('status', 'cancelled');
+        const rows = resData || [];
+        const playerIds = rows.map(r => r.player_id).filter(Boolean);
+        let pkgByPlayer = {};
+        if (playerIds.length > 0) {
+          const { data: purchases } = await supabase
+            .from('store_purchases')
+            .select('user_id, remaining_qty, expires_at, store_products(name)')
+            .in('user_id', playerIds)
+            .order('expires_at', { ascending: true });
+          const now = new Date().toISOString();
+          (purchases || []).forEach(p => {
+            const active = p.remaining_qty === null || p.remaining_qty > 0;
+            const notExpired = !p.expires_at || p.expires_at > now;
+            if (active && notExpired && !pkgByPlayer[p.user_id]) pkgByPlayer[p.user_id] = p;
+          });
+        }
+        setSlotReservations(rows.map(r => ({ ...r, _pkg: pkgByPlayer[r.player_id] || null })));
+      } catch (_) {
+        setSlotReservations([]);
+      }
+      setSlotResLoading(false);
+    })();
+  }, [event.id, event.event_date, event.event_type, userRole]);
 
   const fetchPlanMeals = async () => {
     const { data, error } = await supabase
@@ -4523,7 +4561,28 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                 </div>
               )
             ) : (
-              <div className="text-xs text-gray-400 pt-2 border-t border-gray-100">Manage this slot and attendance from the Slots tab.</div>
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                {slotResLoading ? (
+                  <div className="text-xs text-gray-400">Loading bookings…</div>
+                ) : slotReservations.length === 0 ? (
+                  <div className="text-xs text-gray-400">No bookings for this session.</div>
+                ) : (
+                  slotReservations.map(res => (
+                    <div key={res.id} className="flex items-start justify-between gap-2 bg-gray-50 rounded-lg p-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-900 truncate">{res.users?.full_name || 'Unknown'}</div>
+                        {res._pkg ? (
+                          <div className="text-gray-500 mt-0.5 truncate">{res._pkg.store_products?.name}{res._pkg.remaining_qty != null ? ` · ${res._pkg.remaining_qty} session${res._pkg.remaining_qty !== 1 ? 's' : ''} left` : ''}</div>
+                        ) : (
+                          <div className="text-gray-400 mt-0.5">No active package</div>
+                        )}
+                      </div>
+                      <span className={`flex-shrink-0 px-2 py-0.5 rounded-full font-medium ${res.status === 'confirmed' ? 'bg-green-100 text-green-700' : res.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{res.status}</span>
+                    </div>
+                  ))
+                )}
+                <div className="text-xs text-gray-400">Manage attendance from the Slots tab.</div>
+              </div>
             )}
 
             <button onClick={onClose} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
