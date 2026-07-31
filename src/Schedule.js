@@ -2295,8 +2295,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
-  const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
-  const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
+  const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current && bodyScrollRef.current.scrollLeft !== topScrollRef.current.scrollLeft) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
+  const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current && topScrollRef.current.scrollLeft !== bodyScrollRef.current.scrollLeft) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
 
   return (
     <div>
@@ -2313,11 +2313,11 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
       <div
         ref={topScrollRef}
         onScroll={syncFromTop}
-        className="overflow-x-auto overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
+        className="overflow-x-scroll overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
       >
-        <div style={{ width: scrollWidth, height: 1 }} />
+        <div style={{ width: scrollWidth, height: 16 }} />
       </div>
-      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-scroll overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
