@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X } from 'lucide-react';
+import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X, ExternalLink } from 'lucide-react';
 
 const EMBED_HOST_ALLOWLIST = new Set([
   'www.youtube.com',
@@ -418,16 +418,27 @@ function SituationalView({ userRole }) {
                                 </button>
                               )}
                               {embedUrl && videoOpen && !editingVideo && (
-                                <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 relative" style={{ paddingBottom: '56.25%', height: 0 }}>
-                                  <iframe
-                                    src={embedUrl}
-                                    title={`Example: ${play.situation}`}
-                                    className="absolute inset-0 w-full h-full"
-                                    frameBorder="0"
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    allowFullScreen
-                                  />
-                                </div>
+                                <>
+                                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 relative" style={{ paddingBottom: '56.25%', height: 0 }}>
+                                    <iframe
+                                      src={embedUrl}
+                                      title={`Example: ${play.situation}`}
+                                      className="absolute inset-0 w-full h-full"
+                                      frameBorder="0"
+                                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                      allowFullScreen
+                                    />
+                                  </div>
+                                  <a
+                                    href={play.video_url}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition"
+                                  >
+                                    <ExternalLink size={10} />
+                                    Open in YouTube
+                                  </a>
+                                </>
                               )}
                             </div>
                           </div>
