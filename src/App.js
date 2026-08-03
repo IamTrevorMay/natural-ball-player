@@ -1020,6 +1020,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
+            {/* manage-interns retained above as a deep-link alias; the sidebar now uses the merged Coaches/Interns view */}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'programming' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <Programming userId={userId} userRole={effectiveRole} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
@@ -1365,16 +1366,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
                   }`}
                 >
                   <UserCog size={18} />
-                  <span>Manage Coaches</span>
-                </button>
-                <button
-                  onClick={() => setCurrentView('manage-interns')}
-                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                    currentView === 'manage-interns' ? 'bg-blue-600' : 'hover:bg-gray-800'
-                  }`}
-                >
-                  <UserCog size={18} />
-                  <span>Manage Interns</span>
+                  <span>Manage Coaches / Interns</span>
                 </button>
               </>
             )}

@@ -60,7 +60,10 @@ const STATUS_COLORS = {
 };
 
 export default function ManageCoaches({ userId, userRole, onNavigateToProfile, mode = 'coaches' }) {
-  const isInternsMode = mode === 'interns';
+  // Coaches and interns are one view with an in-page tab toggle (#264). `mode`
+  // just seeds the initial tab.
+  const [activeMode, setActiveMode] = useState(mode);
+  const isInternsMode = activeMode === 'interns';
   const labels = isInternsMode
     ? { title: 'Manage Interns', subtitle: 'View and manage interns', empty: 'No interns yet — promote a coach by toggling the Intern flag.' }
     : { title: 'Manage Coaches', subtitle: 'View and manage coaching staff', empty: 'No coaches found.' };
@@ -76,7 +79,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
   const { options: subStatusOptions, addOption: addSubStatusOption } = useStatusOptions('sub_status');
   const isAdmin = userRole === 'admin';
 
-  useEffect(() => { fetchCoaches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [mode]);
+  useEffect(() => { fetchCoaches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeMode]);
 
   const fetchCoaches = async () => {
     setLoading(true);
@@ -154,6 +157,19 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
             </span>
           </div>
           <p className="text-gray-600 mt-1">{labels.subtitle}</p>
+        </div>
+        <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5 text-sm">
+          {[{ key: 'coaches', label: 'Coaches' }, { key: 'interns', label: 'Interns' }].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveMode(tab.key)}
+              className={`px-4 py-1.5 rounded-md font-medium transition ${
+                activeMode === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 

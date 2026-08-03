@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -502,8 +502,19 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const fetchCoaches = async () => {
-    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills').in('role', ['coach', 'admin']).order('full_name');
+    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills, show_on_facility_schedule').in('role', ['coach', 'admin']).order('full_name');
     setCoaches(data || []);
+  };
+
+  // #260: show/hide a coach on the facility calendar Staff Schedule rows.
+  // Only flips a per-user flag — role/permissions are untouched.
+  const toggleCoachSchedule = async (coachId, visible) => {
+    setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, show_on_facility_schedule: visible } : c));
+    const { error } = await supabase.from('users').update({ show_on_facility_schedule: visible }).eq('id', coachId);
+    if (error) {
+      alert(`Could not update: ${error.message}`);
+      setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, show_on_facility_schedule: !visible } : c));
+    }
   };
 
   const fetchStaffSchedule = async (dateStr) => {
@@ -1385,6 +1396,7 @@ export default function Schedule({ userId, userRole }) {
                     coachDaySlots={coachDaySlots}
                     eventPublicBookings={eventPublicBookings}
                     coaches={coaches}
+                    onToggleCoachSchedule={toggleCoachSchedule}
                   />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
@@ -2186,12 +2198,18 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [] }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
+  // #260: coaches can be hidden from the Staff Schedule rows without touching
+  // their role. The manage modal lists all coaches; the rows show only visible.
+  const [showManageCoaches, setShowManageCoaches] = useState(false);
+  const visibleCoaches = coaches.filter(c => c.show_on_facility_schedule !== false);
   const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
-  // Generate 15-minute time slots from 6:00 AM to 10:00 PM
+  // Generate 15-minute time slots from START_HOUR to 10:00 PM.
+  // START_HOUR is the origin for every slot-index calc below — keep them in sync.
+  const START_HOUR = 8;
   const timeSlots = [];
-  for (let h = 6; h <= 22; h++) {
+  for (let h = START_HOUR; h <= 22; h++) {
     for (let m = 0; m < 60; m += 15) {
       const hour = String(h).padStart(2, '0');
       const min = String(m).padStart(2, '0');
@@ -2208,7 +2226,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const timeToIndex = (timeStr) => {
     if (!timeStr) return -1;
     const [h, m] = timeStr.split(':').map(Number);
-    return (h - 6) * 4 + Math.floor(m / 15);
+    return (h - START_HOUR) * 4 + Math.floor(m / 15);
   };
 
   // Build a map: lane -> array of {startIdx, span, event}
@@ -2254,11 +2272,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const laneTracks = {};
   LANES.forEach(lane => { laneTracks[lane] = assignTracks(laneEvents[lane]); });
 
+  // Stacked hour label: number on top, am/pm underneath, so columns stay
+  // narrow and uniform (#263). Only on-the-hour slots are labeled, so minutes
+  // are always :00 and dropped.
   const formatLabel = (slot) => {
-    const [h, m] = slot.split(':').map(Number);
-    const ampm = h >= 12 ? 'PM' : 'AM';
+    const [h] = slot.split(':').map(Number);
+    const ampm = h >= 12 ? 'pm' : 'am';
     const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+    return (
+      <span className="flex flex-col items-center leading-tight">
+        <span>{hour12}</span>
+        <span className="text-[8px] text-gray-400">{ampm}</span>
+      </span>
+    );
   };
 
   const prevDay = () => {
@@ -2281,7 +2307,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     onCellClick({ date: dateStr, lane, startTime: slot, endTime: endSlot });
   };
 
-  const SLOT_WIDTH = 28; // px per 15-min slot
+  const SLOT_WIDTH = 28; // px per 15-min slot (#261; stacked hour labels fit, #263)
 
   // Mirror a horizontal scrollbar above the grid so staff can scroll time
   // without dragging to the bottom of a tall table. The two scroll containers
@@ -2407,11 +2433,20 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-teal-300 inline-block" />Session</span>
                     <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-300 inline-block" />Facility event</span>
                   </span>
+                  {canManage && onToggleCoachSchedule && (
+                    <button
+                      type="button"
+                      onClick={() => setShowManageCoaches(true)}
+                      className="ml-3 inline-flex items-center gap-1 rounded border border-indigo-300 bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 align-middle"
+                    >
+                      <UserCog size={12} /> Manage coaches
+                    </button>
+                  )}
                 </td>
               </tr>
             )}
             {/* Staff rows */}
-            {coaches.map((coach) => {
+            {visibleCoaches.map((coach) => {
               // Color/label per source so a coach's row reads at a glance.
               const KIND_STYLES = {
                 shift: 'bg-indigo-100 text-indigo-800 border-indigo-300',
@@ -2429,8 +2464,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const shiftEntries = staffEvents.filter(ev => coachEventIds.includes(ev.id)).map(ev => {
                 const start = new Date(ev.start_at);
                 const end = new Date(ev.end_at);
-                const startIdx = (start.getHours() - 6) * 4 + Math.floor(start.getMinutes() / 15);
-                const endIdx = (end.getHours() - 6) * 4 + Math.floor(end.getMinutes() / 15);
+                const startIdx = (start.getHours() - START_HOUR) * 4 + Math.floor(start.getMinutes() / 15);
+                const endIdx = (end.getHours() - START_HOUR) * 4 + Math.floor(end.getMinutes() / 15);
                 return {
                   startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), kind: 'shift',
                   title: ev.title,
@@ -2527,6 +2562,38 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
           </tbody>
         </table>
       </div>
+
+      {showManageCoaches && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowManageCoaches(false)}>
+          <div className="w-full max-w-md rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h3 className="text-lg font-semibold text-gray-900">Coaches on schedule</h3>
+              <button onClick={() => setShowManageCoaches(false)} className="p-1 hover:bg-gray-100 rounded"><X size={18} /></button>
+            </div>
+            <p className="px-4 pt-3 text-xs text-gray-500">Uncheck a coach to hide their row from the facility schedule. This doesn't change their account or access.</p>
+            <div className="max-h-80 overflow-y-auto px-4 py-3 space-y-1">
+              {coaches.length === 0 && <p className="text-sm text-gray-500">No coaches found.</p>}
+              {coaches.map((c) => {
+                const visible = c.show_on_facility_schedule !== false;
+                return (
+                  <label key={c.id} className="flex items-center gap-3 rounded px-2 py-1.5 hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={visible}
+                      onChange={(e) => onToggleCoachSchedule(c.id, e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-800">{c.full_name}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="border-t border-gray-200 px-4 py-3 text-right">
+              <button onClick={() => setShowManageCoaches(false)} className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">Done</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
