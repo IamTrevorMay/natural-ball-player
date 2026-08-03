@@ -250,16 +250,6 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
               Documents
             </button>
             <button
-              onClick={() => setActiveTab('duplicates')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
-                activeTab === 'duplicates'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              Duplicates
-            </button>
-            <button
               onClick={() => setActiveTab('trackman')}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
                 activeTab === 'trackman'
@@ -324,9 +314,6 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
           )}
           {activeTab === 'documents' && (
             <DocumentsTab players={players} waiverSignatures={waiverSignatures} contractSignatures={contractSignatures} medicalHistories={medicalHistories} />
-          )}
-          {activeTab === 'duplicates' && (
-            <DuplicatesTab users={users} refreshUsers={fetchUsers} onNavigateToProfile={onNavigateToProfile} />
           )}
           {activeTab === 'trackman' && (
             <TrackmanAdminTab users={users} userId={userId} />
@@ -893,6 +880,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   const [filterRole, setFilterRole] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [sortBy, setSortBy] = useState('name');
+  const [showDuplicates, setShowDuplicates] = useState(false);
 
   const getUserStatus = (u) => {
     if (u.role === 'player') {
@@ -988,20 +976,32 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
           <option value="age_asc">Sort: Oldest First</option>
           <option value="age_desc">Sort: Youngest First</option>
         </select>
+        <button
+          onClick={() => setShowDuplicates(d => !d)}
+          className={`border rounded-lg px-3 py-2 text-sm font-medium transition ${showDuplicates ? 'bg-orange-100 text-orange-700 border-orange-300' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+        >
+          Find Duplicates
+        </button>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-gray-500">
-        <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Active {statusCounts.Active}</span>
-        <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">Inactive {statusCounts.Inactive}</span>
-        <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Archived {statusCounts.Archived}</span>
-        <span className="ml-auto text-gray-400">{filteredUsers.length} shown</span>
-      </div>
+      {showDuplicates ? (
+        <DuplicatesTab users={users} refreshUsers={refreshUsers} onNavigateToProfile={onNavigateToProfile} />
+      ) : (
+        <>
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Active {statusCounts.Active}</span>
+            <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">Inactive {statusCounts.Inactive}</span>
+            <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Archived {statusCounts.Archived}</span>
+            <span className="ml-auto text-gray-400">{filteredUsers.length} shown</span>
+          </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {sortedUsers.map(user => (
-          <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
-        ))}
-      </div>
+          <div className="grid grid-cols-1 gap-4">
+            {sortedUsers.map(user => (
+              <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
+            ))}
+          </div>
+        </>
+      )}
 
       {showCreateUser && (
         <CreateUserModal
@@ -3730,7 +3730,8 @@ function CoachTasksTab({ coaches, userId }) {
 
   const filtered = tasks.filter(t => {
     if (filterCoach !== 'all' && t.assigned_to !== filterCoach) return false;
-    if (filterStatus !== 'all' && t.status !== filterStatus) return false;
+    if (filterStatus === 'overdue' && !isOverdue(t)) return false;
+    if (filterStatus !== 'all' && filterStatus !== 'overdue' && t.status !== filterStatus) return false;
     if (filterFrequency !== 'all' && t.frequency !== filterFrequency) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -3783,6 +3784,7 @@ function CoachTasksTab({ coaches, userId }) {
           <option value="pending">Pending</option>
           <option value="in_progress">In Progress</option>
           <option value="completed">Completed</option>
+          <option value="overdue">Overdue</option>
         </select>
         <select value={filterFrequency} onChange={e => setFilterFrequency(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
           <option value="all">All Frequencies</option>
