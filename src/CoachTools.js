@@ -3670,7 +3670,7 @@ function ViewAssessmentModal({ submission, onClose }) {
 
 function MyTasksTab({ userId }) {
   const [tasks, setTasks] = useState([]);
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('active');
   const [loading, setLoading] = useState(true);
 
   const fetchTasks = async () => {
@@ -3698,7 +3698,11 @@ function MyTasksTab({ userId }) {
   const todayStr = new Date().toISOString().split('T')[0];
   const isOverdue = (task) => task.due_date && task.due_date < todayStr && task.status !== 'completed';
 
-  const filtered = tasks.filter(t => filterStatus === 'all' || t.status === filterStatus);
+  const filtered = tasks.filter(t => {
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'active') return t.status !== 'completed';
+    return t.status === filterStatus;
+  });
 
   const priorityColors = { low: 'bg-gray-100 text-gray-700', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
   const statusColors = { pending: 'bg-yellow-100 text-yellow-700', in_progress: 'bg-blue-100 text-blue-700', completed: 'bg-green-100 text-green-700' };
@@ -3712,6 +3716,7 @@ function MyTasksTab({ userId }) {
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-900">My Tasks</h3>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="active">Active</option>
           <option value="all">All Statuses</option>
           <option value="pending">Pending</option>
           <option value="in_progress">In Progress</option>
