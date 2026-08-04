@@ -1347,16 +1347,6 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <span>Training Groups</span>
             </button>
 
-            <button
-              onClick={() => setCurrentView('manage-athletes')}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'manage-athletes' ? 'bg-blue-600' : 'hover:bg-gray-800'
-              }`}
-            >
-              <Users size={18} />
-              <span>Manage Athletes</span>
-            </button>
-
             {userRole === 'admin' && (
               <>
                 <button
