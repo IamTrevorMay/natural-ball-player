@@ -1300,8 +1300,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         .order('slot_date', { ascending: false });
       setSessionReservations(slotRes || []);
 
+      // Header-circle Sessions count (#271) — deliberately the SAME data and
+      // the SAME attended/upcoming rules as the Sessions tab above (#271's
+      // live predecessor, 8f89fd5d), so the circle can never disagree with
+      // the detail list it summarizes. Not a second fetch, not a second
+      // definition of "session" — just a rollup of slotRes.
+      const sessionStats = {
+        attended: (slotRes || []).filter(r => r.slot_date < today && (r.attendance === 'present' || r.attendance === 'late')).length,
+        upcoming: (slotRes || []).filter(r => r.slot_date >= today).length,
+      };
+
       if (allEvents.length === 0) {
-        setAttendanceStats({ practice: { attended: 0, total: 0 }, game: { attended: 0, total: 0 }, workout: { attended: 0, total: 0 } });
+        setAttendanceStats({ practice: { attended: 0, total: 0 }, game: { attended: 0, total: 0 }, workout: { attended: 0, total: 0 }, sessions: sessionStats });
         setAttendanceMap({});
         return;
       }
@@ -1330,6 +1340,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           if (rec.status === 'present') stats[type].attended += 1;
         }
       });
+      stats.sessions = sessionStats;
       setAttendanceStats(stats);
     } catch (error) {
       console.error('Error fetching attendance data:', error);
@@ -1810,6 +1821,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   practices={attendanceStats.practice}
                   games={attendanceStats.game}
                   lifts={attendanceStats.workout}
+                  sessions={attendanceStats.sessions || { attended: 0, upcoming: 0 }}
                   onToggleLog={() => setActiveProfileTab('attendance')}
                   canEdit={canEditProfile}
                 />

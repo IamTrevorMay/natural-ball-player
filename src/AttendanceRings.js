@@ -48,7 +48,29 @@ function Ring({ label, attended, total, color, size = 52 }) {
   );
 }
 
-export default function AttendanceRings({ practices, games, lifts, onToggleLog, canEdit }) {
+// Sessions counts attended + upcoming reserved individual training (hitting,
+// throwing, lessons, bullpens, slot bookings — NOT lifts/practices/games), so
+// unlike the other three it has no fixed "total scheduled" to form a ratio
+// against. Shown as a flat count rather than a percentage ring (#271).
+function SessionsCount({ attended, upcoming, size = 52 }) {
+  const total = attended + upcoming;
+  return (
+    <div className="flex flex-col items-center">
+      <div
+        className="rounded-full bg-purple-100 border-2 border-purple-500 flex items-center justify-center"
+        style={{ width: size, height: size }}
+      >
+        <span className="text-sm font-bold text-purple-700">{total}</span>
+      </div>
+      <p className="text-[10px] font-medium text-gray-600 mt-1 leading-tight text-center">Sessions</p>
+      <p className="text-[10px] text-gray-400 leading-tight">
+        {attended} attended{upcoming > 0 ? `, ${upcoming} upcoming` : ''}
+      </p>
+    </div>
+  );
+}
+
+export default function AttendanceRings({ practices, games, lifts, sessions, onToggleLog, canEdit }) {
   return (
     <div
       className={`flex items-start space-x-3 ${canEdit ? 'cursor-pointer' : ''}`}
@@ -63,6 +85,9 @@ export default function AttendanceRings({ practices, games, lifts, onToggleLog, 
       </div>
       <div className="relative">
         <Ring label="Lifts" attended={lifts.attended} total={lifts.total} color="#F59E0B" />
+      </div>
+      <div className="relative">
+        <SessionsCount attended={sessions.attended} upcoming={sessions.upcoming} />
       </div>
     </div>
   );
