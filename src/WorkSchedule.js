@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck, Repeat, CheckSquare, Copy } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck, Repeat, CheckSquare, Copy, Globe, Lock, Users as UsersIcon } from 'lucide-react';
 import { fmtLocalDate, generateOccurrenceDates, expandRecurringEvents } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -399,13 +399,23 @@ export default function WorkSchedule({ userId, userRole }) {
             >
               Day
             </button>
+            {canManage && (
+              <button
+                onClick={() => { setViewMode('coaches'); exitSelectMode(); }}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode === 'coaches' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
+              >
+                All Coaches
+              </button>
+            )}
           </div>
-          <div className="hidden md:flex items-center space-x-3 text-xs text-gray-600">
-            <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-indigo-500 inline-block" /><span>Staff</span></span>
-            <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /><span>Facility</span></span>
-            <span className="flex items-center space-x-1"><UserCheck size={12} className="text-indigo-600" /><span>Assigned to you</span></span>
-          </div>
-          {canManage && (
+          {viewMode !== 'coaches' && (
+            <div className="hidden md:flex items-center space-x-3 text-xs text-gray-600">
+              <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-indigo-500 inline-block" /><span>Staff</span></span>
+              <span className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /><span>Facility</span></span>
+              <span className="flex items-center space-x-1"><UserCheck size={12} className="text-indigo-600" /><span>Assigned to you</span></span>
+            </div>
+          )}
+          {canManage && viewMode !== 'coaches' && (
             <button
               onClick={() => { if (selecting) exitSelectMode(); else setSelecting(true); }}
               className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition ${selecting ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
@@ -414,7 +424,7 @@ export default function WorkSchedule({ userId, userRole }) {
               <span>{selecting ? 'Done' : 'Select'}</span>
             </button>
           )}
-          {canManage && (
+          {canManage && viewMode !== 'coaches' && (
             <button
               onClick={() => { setEditing(null); setShowForm(true); }}
               className="flex items-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm font-medium"
@@ -437,7 +447,9 @@ export default function WorkSchedule({ userId, userRole }) {
         </div>
       )}
 
-      {loading ? (
+      {viewMode === 'coaches' ? (
+        <CoachAvailabilityWeek weekStart={weekStart} isAdmin={isAdmin} />
+      ) : loading ? (
         <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">Loading...</div>
       ) : viewMode === 'day' ? (
         <DailyTimeline
@@ -1231,6 +1243,220 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// ALL-COACHES AVAILABILITY (training_slots) — week matrix + bulk public toggle
+// ============================================
+function formatSlotTime(time) {
+  if (!time) return '';
+  const [h, m] = time.split(':');
+  const hour = parseInt(h);
+  return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
+function formatPriceCents(cents) {
+  if (cents == null) return '';
+  const d = cents / 100;
+  return `$${Number.isInteger(d) ? d : d.toFixed(2)}`;
+}
+
+function CoachAvailabilityWeek({ weekStart, isAdmin }) {
+  const [slots, setSlots] = useState([]);
+  const [coaches, setCoaches] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    const wkStart = new Date(weekStart); wkStart.setHours(0, 0, 0, 0);
+    const wkEnd = addDays(wkStart, 6);
+    const startStr = fmtLocalDate(wkStart);
+    const endStr = fmtLocalDate(wkEnd);
+
+    const [slotRes, coachRes, resvRes] = await Promise.all([
+      supabase.from('training_slots').select('*'),
+      supabase.from('users').select('id, full_name, avatar_url').in('role', ['admin', 'coach']).order('full_name'),
+      supabase.from('slot_reservations').select('id, slot_id, slot_date, status').gte('slot_date', startStr).lte('slot_date', endStr).neq('status', 'cancelled'),
+    ]);
+
+    const raw = slotRes.data || [];
+    const expanded = [];
+    raw.forEach(slot => {
+      if (slot.recurrence_parent_id) return;
+      if (slot.repeat_weekly) {
+        const slotStart = new Date(slot.slot_date + 'T00:00:00');
+        const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : wkEnd;
+        let current = new Date(slotStart);
+        while (current <= endDate && current <= wkEnd) {
+          if (current >= wkStart) expanded.push({ ...slot, slot_date: fmtLocalDate(current) });
+          current.setDate(current.getDate() + 7);
+        }
+      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
+        expanded.push(slot);
+      }
+    });
+
+    setSlots(expanded);
+    setCoaches(coachRes.data || []);
+    setReservations(resvRes.data || []);
+    setLoading(false);
+  }, [weekStart]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const exitSelect = () => { setSelecting(false); setSelectedIds(new Set()); };
+  const toggleSelect = (slotId) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(slotId)) next.delete(slotId); else next.add(slotId);
+    return next;
+  });
+
+  const bookedCount = (slotId, dateStr) =>
+    reservations.filter(r => r.slot_id === slotId && r.slot_date === dateStr).length;
+
+  // Coaches that actually have slots this week
+  const coachesWithSlots = coaches.filter(c => slots.some(s => s.coach_id === c.id));
+
+  const applyPublic = async (makePublic) => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    let payload;
+    if (makePublic) {
+      const input = window.prompt(`Public price per session (USD) — applied to all ${ids.length} selected session(s):`, '');
+      if (input === null) return;
+      const cents = Math.round(parseFloat(input) * 100);
+      if (isNaN(cents) || cents < 0) { alert('Enter a valid price (e.g. 40).'); return; }
+      payload = { is_public: true, public_price_cents: cents };
+    } else {
+      if (!window.confirm(`Remove ${ids.length} selected session(s) from public bookings?`)) return;
+      payload = { is_public: false };
+    }
+    setBusy(true);
+    const { error } = await supabase.from('training_slots').update(payload).in('id', ids);
+    setBusy(false);
+    if (error) { alert('Update failed: ' + formatUserError(error)); return; }
+    exitSelect();
+    fetchData();
+  };
+
+  if (loading) {
+    return <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">Loading coach availability...</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center space-x-3 text-xs text-gray-600">
+          <span className="flex items-center space-x-1"><Globe size={12} className="text-green-600" /><span>Public (bookable)</span></span>
+          <span className="flex items-center space-x-1"><Lock size={12} className="text-gray-400" /><span>Private</span></span>
+        </div>
+        {isAdmin && (
+          <button
+            onClick={() => { if (selecting) exitSelect(); else setSelecting(true); }}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm font-medium transition ${selecting ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            <CheckSquare size={15} />
+            <span>{selecting ? 'Done selecting' : 'Select sessions'}</span>
+          </button>
+        )}
+      </div>
+
+      {isAdmin && selecting && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 px-3 flex items-center justify-between flex-wrap gap-2">
+          <span className="text-sm text-blue-900 font-medium">{selectedIds.size} selected</span>
+          <div className="flex items-center space-x-2">
+            <button onClick={() => applyPublic(true)} disabled={busy || selectedIds.size === 0} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-green-700 transition flex items-center space-x-1 disabled:opacity-50">
+              <Globe size={14} /><span>Make public</span>
+            </button>
+            <button onClick={() => applyPublic(false)} disabled={busy || selectedIds.size === 0} className="bg-gray-600 text-white px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-700 transition flex items-center space-x-1 disabled:opacity-50">
+              <Lock size={14} /><span>Make private</span>
+            </button>
+            <button onClick={exitSelect} className="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm font-medium hover:bg-gray-300 transition">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {coachesWithSlots.length === 0 ? (
+        <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+          <UsersIcon size={28} className="mx-auto text-gray-300 mb-2" />
+          No coach sessions scheduled this week.
+        </div>
+      ) : (
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
+          <div className="min-w-[900px]">
+            {/* Header */}
+            <div className="grid border-b border-gray-200 bg-gray-50 sticky top-0 z-10" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
+              <div className="p-2 text-xs font-semibold text-gray-500 border-r border-gray-200">Coach</div>
+              {days.map((d, i) => {
+                const isToday = fmtLocalDate(d) === fmtLocalDate(new Date());
+                return (
+                  <div key={i} className={`p-2 text-center border-r border-gray-100 ${isToday ? 'bg-indigo-50' : ''}`}>
+                    <div className="text-[11px] font-medium text-gray-500 uppercase">{DAY_LABELS[d.getDay()]}</div>
+                    <div className={`text-sm font-bold ${isToday ? 'text-indigo-700' : 'text-gray-900'}`}>{d.getDate()}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Coach rows */}
+            {coachesWithSlots.map(coach => (
+              <div key={coach.id} className="grid border-b border-gray-100" style={{ gridTemplateColumns: '150px repeat(7, 1fr)' }}>
+                <div className="border-r border-gray-200 px-2 py-2 flex items-center space-x-1.5">
+                  {coach.avatar_url ? (
+                    <img src={coach.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-6 h-6 bg-teal-600 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">{coach.full_name?.charAt(0) || '?'}</div>
+                  )}
+                  <span className="text-xs font-medium text-gray-800 truncate">{coach.full_name}</span>
+                </div>
+                {days.map((d, di) => {
+                  const dateStr = fmtLocalDate(d);
+                  const daySlots = slots
+                    .filter(s => s.coach_id === coach.id && s.slot_date === dateStr)
+                    .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
+                  return (
+                    <div key={di} className="border-r border-gray-100 p-1 space-y-1 min-h-[52px]">
+                      {daySlots.map((slot, si) => {
+                        const isSel = selectedIds.has(slot.id);
+                        const booked = bookedCount(slot.id, dateStr);
+                        const isPublic = !!slot.is_public;
+                        return (
+                          <button
+                            key={`${slot.id}-${si}`}
+                            onClick={() => { if (selecting && isAdmin) toggleSelect(slot.id); }}
+                            className={`w-full text-left rounded-md px-1.5 py-1 border text-[11px] transition ${
+                              isPublic ? 'bg-green-50 border-green-300' : 'bg-gray-50 border-gray-200'
+                            } ${isSel ? 'ring-2 ring-blue-500' : ''} ${selecting && isAdmin ? 'cursor-pointer hover:border-blue-400' : 'cursor-default'}`}
+                            title={isPublic ? `Public${slot.public_price_cents != null ? ' · ' + formatPriceCents(slot.public_price_cents) : ''}` : 'Private'}
+                          >
+                            <div className="flex items-center space-x-1">
+                              {isPublic ? <Globe size={10} className="text-green-600 flex-shrink-0" /> : <Lock size={10} className="text-gray-400 flex-shrink-0" />}
+                              <span className="font-semibold text-gray-900 truncate">{formatSlotTime(slot.start_time)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-gray-500 mt-0.5">
+                              <span>{slot.duration_minutes}m</span>
+                              {isPublic && slot.public_price_cents != null && <span className="text-green-700 font-medium">{formatPriceCents(slot.public_price_cents)}</span>}
+                            </div>
+                            <div className="text-[10px] text-gray-400">{booked}/{slot.max_players || 1} booked</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+
+# Vendor SDK binaries — NOT committed (copied in locally from the HitTrax zip)
+lib/*.dll
+lib/*.pdb
+lib/*.xml
+
+# Captured message payloads (may contain athlete data)
+captured/
+
+# Local secrets / config
+*.local.json
+bridge.config.json
+.env

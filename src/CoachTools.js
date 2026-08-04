@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { metricsByGroup } from './assessmentMetrics';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -38,8 +39,6 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
     { key: 'schedule', icon: Calendar, label: 'Schedule' },
     { key: 'stats', icon: TrendingUp, label: 'Player Stats' },
     { key: 'benchmarks', icon: Target, label: 'Assessments' },
-    { key: 'training', icon: Dumbbell, label: 'Training Programs' },
-    { key: 'meals', icon: Utensils, label: 'Meal Plans' },
     { key: 'slots', icon: Clock, label: 'Training Slots' },
     { key: 'tasks', icon: ClipboardList, label: 'My Tasks' },
   ];
@@ -65,8 +64,6 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
           {activeTab === 'stats' && <div className="text-gray-600">Coming in next update...</div>}
           {activeTab === 'benchmarks' && <AssessmentsTab players={players} userId={userId} />}
-          {activeTab === 'training' && <TrainingTab teams={teams} players={players} />}
-          {activeTab === 'meals' && <MealsTab teams={teams} players={players} />}
           {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
           {activeTab === 'tasks' && <MyTasksTab userId={userId} />}
         </div>
@@ -984,7 +981,7 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
    TRAINING PROGRAMS TAB
    ============================================ */
 
-function TrainingTab({ teams, players }) {
+export function TrainingTab({ teams, players }) {
   const [trainingSubTab, setTrainingSubTab] = useState('programs');
   const [programs, setPrograms] = useState([]);
   const [workoutTemplates, setWorkoutTemplates] = useState([]);
@@ -2445,7 +2442,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
    MEALS TAB (unchanged from previous)
    ============================================ */
 
-function MealsTab({ teams, players }) {
+export function MealsTab({ teams, players }) {
   const [mealsSubTab, setMealsSubTab] = useState('meals');
   const [meals, setMeals] = useState([]);
   const [mealPlans, setMealPlans] = useState([]);
@@ -2943,7 +2940,7 @@ function CreateSlotForm({ onClose, onSave }) {
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Duration</label><select value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option><option value={90}>90 min</option></select></div>
           </div>
-          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="10" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="50" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="ctAutoConfirm" checked={autoConfirm} onChange={(e) => setAutoConfirm(e.target.checked)} className="rounded" /><label htmlFor="ctAutoConfirm" className="text-sm text-gray-700">Auto-confirm reservations</label></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="ctRepeatWeekly" checked={repeatWeekly} onChange={(e) => setRepeatWeekly(e.target.checked)} className="rounded" /><label htmlFor="ctRepeatWeekly" className="text-sm text-gray-700">Repeat weekly</label></div>
           {repeatWeekly && <div><label className="block text-sm font-medium text-gray-700 mb-1">Repeat until</label><input type="date" value={repeatEndDate} onChange={(e) => setRepeatEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>}
@@ -2971,6 +2968,7 @@ function AssessmentsTab({ players, userId }) {
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [showFillModal, setShowFillModal] = useState(null);
   const [showViewModal, setShowViewModal] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(null);
 
   useEffect(() => { fetchTemplates(); fetchSubmissions(); }, []);
 
@@ -3107,6 +3105,9 @@ function AssessmentsTab({ players, userId }) {
                       <button onClick={() => setShowViewModal(s)} className="text-gray-400 hover:text-blue-600 transition" title="View">
                         <Eye size={16} />
                       </button>
+                      <button onClick={() => setShowEditModal(s)} className="text-gray-400 hover:text-blue-600 transition" title="Edit">
+                        <Edit2 size={16} />
+                      </button>
                       <button onClick={() => handleDeleteSubmission(s.id)} className="text-gray-400 hover:text-red-600 transition" title="Delete">
                         <Trash2 size={16} />
                       </button>
@@ -3142,6 +3143,18 @@ function AssessmentsTab({ players, userId }) {
         <ViewAssessmentModal
           submission={showViewModal}
           onClose={() => setShowViewModal(null)}
+        />
+      )}
+
+      {showEditModal && (
+        <FillAssessmentModal
+          template={templates.find(t => t.id === showEditModal.template_id) || null}
+          templates={templates}
+          players={players}
+          userId={userId}
+          editingSubmission={showEditModal}
+          onClose={() => setShowEditModal(null)}
+          onSuccess={() => { setShowEditModal(null); fetchSubmissions(); }}
         />
       )}
     </div>
@@ -3290,6 +3303,26 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
 
+                  {/* Scalar fields can be tagged with a canonical metric so program generators auto-fill from this value */}
+                  {(el.type === 'text_field' || el.type === 'combo_box') && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">
+                        Maps to metric <span className="text-gray-400 font-normal">(optional — lets S&amp;C / throwing / hitting / nutrition generators auto-fill from this field)</span>
+                      </label>
+                      <select value={el.metric_key || ''} onChange={(e) => updateElement(i, { metric_key: e.target.value || undefined })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">— none —</option>
+                        {metricsByGroup().map(g => (
+                          <optgroup key={g.group} label={g.group}>
+                            {g.items.map(m => (
+                              <option key={m.key} value={m.key}>{m.label}{m.unit ? ` (${m.unit})` : ''}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {/* Table-specific: columns and rows */}
                   {el.type === 'table' && (
                     <div className="grid grid-cols-2 gap-4">
@@ -3358,13 +3391,15 @@ function CreateAssessmentTemplateModal({ editingTemplate, onClose, onSuccess }) 
    FILL ASSESSMENT MODAL
    ============================================ */
 
-function FillAssessmentModal({ template, templates, players, userId, onClose, onSuccess }) {
+function FillAssessmentModal({ template, templates, players, userId, editingSubmission, onClose, onSuccess }) {
   useModalTracking('FillAssessmentModal');
-  const [selectedTemplate, setSelectedTemplate] = useState(template);
-  const [playerId, setPlayerId] = useState('');
-  const [assessmentDate, setAssessmentDate] = useState(fmtLocalDate(new Date()));
-  const [responses, setResponses] = useState({});
-  const [notes, setNotes] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState(
+    editingSubmission ? (templates.find(t => t.id === editingSubmission.template_id) || template) : template
+  );
+  const [playerId, setPlayerId] = useState(editingSubmission?.player_id || '');
+  const [assessmentDate, setAssessmentDate] = useState(editingSubmission?.assessment_date || fmtLocalDate(new Date()));
+  const [responses, setResponses] = useState(editingSubmission?.responses || {});
+  const [notes, setNotes] = useState(editingSubmission?.notes || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [playerSearch, setPlayerSearch] = useState('');
@@ -3389,19 +3424,21 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
   };
 
   const handleSave = async () => {
-    trackAction('submit_assessment');
+    trackAction(editingSubmission ? 'edit_assessment' : 'submit_assessment');
     if (!playerId) { setError('Please select a player'); return; }
     setLoading(true);
     setError('');
 
-    const { error: saveError } = await supabase.from('assessment_submissions').insert({
+    const payload = {
       template_id: selectedTemplate.id,
       player_id: playerId,
-      assessed_by: userId,
       assessment_date: assessmentDate,
       responses,
       notes: notes.trim() || null,
-    });
+    };
+    const { error: saveError } = editingSubmission
+      ? await supabase.from('assessment_submissions').update(payload).eq('id', editingSubmission.id)
+      : await supabase.from('assessment_submissions').insert({ ...payload, assessed_by: userId });
 
     if (saveError) {
       setError(saveError.message);
@@ -3415,7 +3452,7 @@ function FillAssessmentModal({ template, templates, players, userId, onClose, on
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
         <div className="border-b border-gray-200 p-6 flex items-center justify-between shrink-0">
-          <h3 className="text-xl font-bold text-gray-900">Fill Out Assessment</h3>
+          <h3 className="text-xl font-bold text-gray-900">{editingSubmission ? 'Edit Assessment' : 'Fill Out Assessment'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -3633,7 +3670,7 @@ function ViewAssessmentModal({ submission, onClose }) {
 
 function MyTasksTab({ userId }) {
   const [tasks, setTasks] = useState([]);
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('active');
   const [loading, setLoading] = useState(true);
 
   const fetchTasks = async () => {
@@ -3661,7 +3698,11 @@ function MyTasksTab({ userId }) {
   const todayStr = new Date().toISOString().split('T')[0];
   const isOverdue = (task) => task.due_date && task.due_date < todayStr && task.status !== 'completed';
 
-  const filtered = tasks.filter(t => filterStatus === 'all' || t.status === filterStatus);
+  const filtered = tasks.filter(t => {
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'active') return t.status !== 'completed';
+    return t.status === filterStatus;
+  });
 
   const priorityColors = { low: 'bg-gray-100 text-gray-700', medium: 'bg-blue-100 text-blue-700', high: 'bg-orange-100 text-orange-700', urgent: 'bg-red-100 text-red-700' };
   const statusColors = { pending: 'bg-yellow-100 text-yellow-700', in_progress: 'bg-blue-100 text-blue-700', completed: 'bg-green-100 text-green-700' };
@@ -3675,6 +3716,7 @@ function MyTasksTab({ userId }) {
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-900">My Tasks</h3>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="active">Active</option>
           <option value="all">All Statuses</option>
           <option value="pending">Pending</option>
           <option value="in_progress">In Progress</option>

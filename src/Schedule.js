@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -8,6 +8,7 @@ import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { COACH_SKILL_OPTIONS } from './skillOptions';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -140,6 +141,7 @@ function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
         title: planName,
         player_id: a.player_id,
         _isMealPlan: true,
+        _mealPlanId: a.meal_plan_id,
       });
     }
   }
@@ -174,6 +176,7 @@ export default function Schedule({ userId, userRole }) {
   const [selectedCoach, setSelectedCoach] = useState(null);
   const [coachSlots, setCoachSlots] = useState([]);
   const [slotReservations, setSlotReservations] = useState([]);
+  const [publicSlotBookings, setPublicSlotBookings] = useState([]);
   const [showCreateSlot, setShowCreateSlot] = useState(null);
   const [showReserveSlot, setShowReserveSlot] = useState(null);
   const [showEditSlot, setShowEditSlot] = useState(null);
@@ -181,6 +184,7 @@ export default function Schedule({ userId, userRole }) {
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
   const [laneDate, setLaneDate] = useState(fmtLocalDate(new Date()));
   const [coachesDrawerOpen, setCoachesDrawerOpen] = useState(false);
+  const [coachSkillFilter, setCoachSkillFilter] = useState('All');
   const [showPlayerAddGame, setShowPlayerAddGame] = useState(false);
   const [staffScheduleEvents, setStaffScheduleEvents] = useState([]);
   const [staffAssignments, setStaffAssignments] = useState([]);
@@ -308,51 +312,18 @@ export default function Schedule({ userId, userRole }) {
     setPlayers(data || []);
   };
 
-  // Fetch schedule events for a set of players, chunked by member count.
-  // A single Supabase query caps at 1000 rows, and a very large .in() list blows the
-  // request URL length limit — both silently drop team-programmed workouts on big
-  // rosters, so mass-programmed events "don't show" (#155). Chunking keeps each query
-  // small enough to return every row and stay under the URL limit.
-  const fetchEventsForPlayers = async (playerIds, startStr, endStr) => {
-    const CHUNK = 25;
-    const all = [];
-    for (let i = 0; i < playerIds.length; i += CHUNK) {
-      const chunk = playerIds.slice(i, i + CHUNK);
-      const { data, error } = await supabase.from('schedule_events').select('*')
-        .in('player_id', chunk)
-        .gte('event_date', startStr).lte('event_date', endStr)
-        .order('event_date');
-      if (error) { console.error('Error fetching player schedule events:', error); continue; }
-      all.push(...(data || []));
-    }
-    return all;
-  };
-
   const fetchTeamEvents = async () => {
     if (!selectedTeam) return;
 
     const { startStr, endStr } = monthWeekRange(selectedDate);
 
-    // Fetch team members so we can also pull their individual events
-    const { data: members } = await supabase.from('team_members').select('user_id').eq('team_id', selectedTeam);
-    const memberIds = (members || []).map(m => m.user_id).filter(Boolean);
-
-    const [{ data: teamData }, playerData] = await Promise.all([
-      supabase.from('schedule_events').select('*')
-        .contains('team_ids', [selectedTeam])
-        .gte('event_date', startStr).lte('event_date', endStr),
-      memberIds.length > 0
-        ? fetchEventsForPlayers(memberIds, startStr, endStr)
-        : Promise.resolve([]),
-    ]);
-
-    // Merge and dedupe by id
-    const seen = new Set();
-    const merged = [];
-    for (const ev of [...(teamData || []), ...(playerData || [])]) {
-      if (!seen.has(ev.id)) { seen.add(ev.id); merged.push(ev); }
-    }
-    setEvents(merged);
+    // Team view shows only group events (team_ids contains the team) — NOT the
+    // individual player_id events of every roster member. Per-player events
+    // still show in the player-filtered views.
+    const { data: teamData } = await supabase.from('schedule_events').select('*')
+      .contains('team_ids', [selectedTeam])
+      .gte('event_date', startStr).lte('event_date', endStr);
+    setEvents(teamData || []);
   };
 
   const fetchPlayerEvents = async () => {
@@ -531,8 +502,19 @@ export default function Schedule({ userId, userRole }) {
   };
 
   const fetchCoaches = async () => {
-    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role').in('role', ['coach', 'admin']).order('full_name');
+    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills, show_on_facility_schedule').in('role', ['coach', 'admin']).order('full_name');
     setCoaches(data || []);
+  };
+
+  // #260: show/hide a coach on the facility calendar Staff Schedule rows.
+  // Only flips a per-user flag — role/permissions are untouched.
+  const toggleCoachSchedule = async (coachId, visible) => {
+    setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, show_on_facility_schedule: visible } : c));
+    const { error } = await supabase.from('users').update({ show_on_facility_schedule: visible }).eq('id', coachId);
+    if (error) {
+      alert(`Could not update: ${error.message}`);
+      setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, show_on_facility_schedule: !visible } : c));
+    }
   };
 
   const fetchStaffSchedule = async (dateStr) => {
@@ -625,10 +607,13 @@ export default function Schedule({ userId, userRole }) {
         }
       }
     });
-    // Ensure first visible occurrence per repeating master is draggable
+    // Ensure the first occurrence visible in the current week is draggable (not an
+    // earlier-month occurrence that is outside the week view).
+    const weekStartStr = fmtLocalDate(startOfWeek);
+    const weekEndStr = fmtLocalDate(endOfWeek);
     const firstRepeatSeen = new Set();
     for (const es of expandedSlots) {
-      if (es.repeat_weekly && !firstRepeatSeen.has(es.id)) {
+      if (es.repeat_weekly && !firstRepeatSeen.has(es.id) && es.slot_date >= weekStartStr && es.slot_date <= weekEndStr) {
         es._is_virtual = false;
         firstRepeatSeen.add(es.id);
       }
@@ -636,10 +621,15 @@ export default function Schedule({ userId, userRole }) {
     setCoachSlots(expandedSlots);
     const slotIds = (slots || []).map(s => s.id);
     if (slotIds.length > 0) {
-      const { data: reservations } = await supabase.from('slot_reservations').select('*, users:player_id(full_name, email)').in('slot_id', slotIds).gte('slot_date', startStr).lte('slot_date', endStr);
-      setSlotReservations(reservations || []);
+      const [resResult, pubResult] = await Promise.all([
+        supabase.from('slot_reservations').select('*, users:player_id(full_name, email)').in('slot_id', slotIds).gte('slot_date', startStr).lte('slot_date', endStr),
+        supabase.from('public_bookings').select('source_id, occurrence_date, guest_name, status').eq('source_type', 'training_slot').in('source_id', slotIds).gte('occurrence_date', startStr).lte('occurrence_date', endStr).in('status', ['pending_payment', 'confirmed']),
+      ]);
+      setSlotReservations(resResult.data || []);
+      setPublicSlotBookings(pubResult.data || []);
     } else {
       setSlotReservations([]);
+      setPublicSlotBookings([]);
     }
   };
 
@@ -1221,6 +1211,17 @@ export default function Schedule({ userId, userRole }) {
                     <X size={18} />
                   </button>
                 </div>
+                <div className="p-3 border-b border-gray-200">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Filter by skill</label>
+                  <select
+                    value={coachSkillFilter}
+                    onChange={(e) => setCoachSkillFilter(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-teal-500 bg-white text-gray-700"
+                  >
+                    <option value="All">All skills</option>
+                    {COACH_SKILL_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
                 <div className="flex-1 overflow-y-auto">
                   {selectedCoach && (
                     <button
@@ -1230,7 +1231,9 @@ export default function Schedule({ userId, userRole }) {
                       &larr; Back to Facility Events
                     </button>
                   )}
-                  {coaches.map(coach => (
+                  {coaches
+                    .filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter))
+                    .map(coach => (
                     <button
                       key={coach.id}
                       onClick={() => {
@@ -1240,14 +1243,24 @@ export default function Schedule({ userId, userRole }) {
                       className={`w-full px-4 py-3 text-left hover:bg-gray-100 transition border-b border-gray-100 ${selectedCoach?.id === coach.id ? 'bg-teal-50 border-l-4 border-l-teal-500' : ''}`}
                     >
                       <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">{coach.full_name.charAt(0)}</div>
-                        <div>
+                        <div className="w-8 h-8 bg-teal-600 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0">{coach.full_name.charAt(0)}</div>
+                        <div className="min-w-0">
                           <div className="text-sm font-medium text-gray-900">{coach.full_name}</div>
                           {coach.title && <div className="text-xs text-gray-500">{coach.title}</div>}
+                          {coach.skills && coach.skills.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {coach.skills.map(s => (
+                                <span key={s} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${s === coachSkillFilter ? 'bg-teal-600 text-white' : 'bg-teal-50 text-teal-700'}`}>{s}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </button>
                   ))}
+                  {coaches.filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter)).length === 0 && (
+                    <div className="px-4 py-6 text-center text-sm text-gray-500">No coaches cover {coachSkillFilter}.</div>
+                  )}
                 </div>
               </aside>
             </div>
@@ -1326,6 +1339,7 @@ export default function Schedule({ userId, userRole }) {
                     selectedDate={selectedDate}
                     slots={coachSlots}
                     reservations={slotReservations}
+                    publicBookings={publicSlotBookings}
                     coach={selectedCoach}
                     userId={userId}
                     userRole={userRole}
@@ -1382,6 +1396,7 @@ export default function Schedule({ userId, userRole }) {
                     coachDaySlots={coachDaySlots}
                     eventPublicBookings={eventPublicBookings}
                     coaches={coaches}
+                    onToggleCoachSchedule={toggleCoachSchedule}
                   />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
@@ -2183,12 +2198,18 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [] }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
+  // #260: coaches can be hidden from the Staff Schedule rows without touching
+  // their role. The manage modal lists all coaches; the rows show only visible.
+  const [showManageCoaches, setShowManageCoaches] = useState(false);
+  const visibleCoaches = coaches.filter(c => c.show_on_facility_schedule !== false);
   const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
-  // Generate 15-minute time slots from 6:00 AM to 10:00 PM
+  // Generate 15-minute time slots from START_HOUR to 10:00 PM.
+  // START_HOUR is the origin for every slot-index calc below — keep them in sync.
+  const START_HOUR = 8;
   const timeSlots = [];
-  for (let h = 6; h <= 22; h++) {
+  for (let h = START_HOUR; h <= 22; h++) {
     for (let m = 0; m < 60; m += 15) {
       const hour = String(h).padStart(2, '0');
       const min = String(m).padStart(2, '0');
@@ -2205,7 +2226,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const timeToIndex = (timeStr) => {
     if (!timeStr) return -1;
     const [h, m] = timeStr.split(':').map(Number);
-    return (h - 6) * 4 + Math.floor(m / 15);
+    return (h - START_HOUR) * 4 + Math.floor(m / 15);
   };
 
   // Build a map: lane -> array of {startIdx, span, event}
@@ -2251,11 +2272,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const laneTracks = {};
   LANES.forEach(lane => { laneTracks[lane] = assignTracks(laneEvents[lane]); });
 
+  // Stacked hour label: number on top, am/pm underneath, so columns stay
+  // narrow and uniform (#263). Only on-the-hour slots are labeled, so minutes
+  // are always :00 and dropped.
   const formatLabel = (slot) => {
-    const [h, m] = slot.split(':').map(Number);
-    const ampm = h >= 12 ? 'PM' : 'AM';
+    const [h] = slot.split(':').map(Number);
+    const ampm = h >= 12 ? 'pm' : 'am';
     const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+    return (
+      <span className="flex flex-col items-center leading-tight">
+        <span>{hour12}</span>
+        <span className="text-[8px] text-gray-400">{ampm}</span>
+      </span>
+    );
   };
 
   const prevDay = () => {
@@ -2278,7 +2307,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     onCellClick({ date: dateStr, lane, startTime: slot, endTime: endSlot });
   };
 
-  const SLOT_WIDTH = 48; // px per 15-min slot
+  const SLOT_WIDTH = 20; // px per 15-min slot (#261/#266; narrower so more hours visible without scrolling)
 
   // Mirror a horizontal scrollbar above the grid so staff can scroll time
   // without dragging to the bottom of a tall table. The two scroll containers
@@ -2292,8 +2321,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
-  const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
-  const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
+  const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current && bodyScrollRef.current.scrollLeft !== topScrollRef.current.scrollLeft) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
+  const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current && topScrollRef.current.scrollLeft !== bodyScrollRef.current.scrollLeft) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
 
   return (
     <div>
@@ -2310,11 +2339,11 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
       <div
         ref={topScrollRef}
         onScroll={syncFromTop}
-        className="overflow-x-auto overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
+        className="overflow-x-scroll overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
       >
-        <div style={{ width: scrollWidth, height: 1 }} />
+        <div style={{ width: scrollWidth, height: 16 }} />
       </div>
-      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-hidden overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-scroll overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
@@ -2404,11 +2433,20 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-teal-300 inline-block" />Session</span>
                     <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-300 inline-block" />Facility event</span>
                   </span>
+                  {canManage && onToggleCoachSchedule && (
+                    <button
+                      type="button"
+                      onClick={() => setShowManageCoaches(true)}
+                      className="ml-3 inline-flex items-center gap-1 rounded border border-indigo-300 bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 align-middle"
+                    >
+                      <UserCog size={12} /> Manage coaches
+                    </button>
+                  )}
                 </td>
               </tr>
             )}
             {/* Staff rows */}
-            {coaches.map((coach) => {
+            {visibleCoaches.map((coach) => {
               // Color/label per source so a coach's row reads at a glance.
               const KIND_STYLES = {
                 shift: 'bg-indigo-100 text-indigo-800 border-indigo-300',
@@ -2426,8 +2464,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const shiftEntries = staffEvents.filter(ev => coachEventIds.includes(ev.id)).map(ev => {
                 const start = new Date(ev.start_at);
                 const end = new Date(ev.end_at);
-                const startIdx = (start.getHours() - 6) * 4 + Math.floor(start.getMinutes() / 15);
-                const endIdx = (end.getHours() - 6) * 4 + Math.floor(end.getMinutes() / 15);
+                const startIdx = (start.getHours() - START_HOUR) * 4 + Math.floor(start.getMinutes() / 15);
+                const endIdx = (end.getHours() - START_HOUR) * 4 + Math.floor(end.getMinutes() / 15);
                 return {
                   startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), kind: 'shift',
                   title: ev.title,
@@ -2524,6 +2562,38 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
           </tbody>
         </table>
       </div>
+
+      {showManageCoaches && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowManageCoaches(false)}>
+          <div className="w-full max-w-md rounded-lg bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h3 className="text-lg font-semibold text-gray-900">Coaches on schedule</h3>
+              <button onClick={() => setShowManageCoaches(false)} className="p-1 hover:bg-gray-100 rounded"><X size={18} /></button>
+            </div>
+            <p className="px-4 pt-3 text-xs text-gray-500">Uncheck a coach to hide their row from the facility schedule. This doesn't change their account or access.</p>
+            <div className="max-h-80 overflow-y-auto px-4 py-3 space-y-1">
+              {coaches.length === 0 && <p className="text-sm text-gray-500">No coaches found.</p>}
+              {coaches.map((c) => {
+                const visible = c.show_on_facility_schedule !== false;
+                return (
+                  <label key={c.id} className="flex items-center gap-3 rounded px-2 py-1.5 hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={visible}
+                      onChange={(e) => onToggleCoachSchedule(c.id, e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-800">{c.full_name}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="border-t border-gray-200 px-4 py-3 text-right">
+              <button onClick={() => setShowManageCoaches(false)} className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">Done</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4254,6 +4324,9 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   const [loading, setLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false); // Custom confirm modal
   const [mealData, setMealData] = useState(null);
+  const [planMeals, setPlanMeals] = useState(null); // fuel-plan assignment: full meal breakdown
+  const [slotReservations, setSlotReservations] = useState([]);
+  const [slotResLoading, setSlotResLoading] = useState(false);
   const [formData, setFormData] = useState({
     title: event.title || event.opponent || '',
     event_date: event.event_date,
@@ -4276,7 +4349,59 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     if (event.event_type === 'meal' && event.meal_id) {
       fetchMealData();
     }
+    // Fuel-plan assignment (no single meal_id): load the plan's meal breakdown so
+    // the schedule shows calories/macros instead of a blank/"TBD" (#12).
+    if (event._isMealPlan && event._mealPlanId) {
+      fetchPlanMeals();
+    }
   }, [event]);
+
+  // For staff viewing a training slot, fetch who is booked and their active package.
+  useEffect(() => {
+    if (event.event_type !== 'training_slot' || userRole === 'player') return;
+    setSlotResLoading(true);
+    (async () => {
+      try {
+        const { data: resData } = await supabase
+          .from('slot_reservations')
+          .select('id, status, player_id, attendance, users(full_name)')
+          .eq('slot_id', event.id)
+          .eq('slot_date', event.event_date)
+          .neq('status', 'cancelled');
+        const rows = resData || [];
+        const playerIds = rows.map(r => r.player_id).filter(Boolean);
+        let pkgByPlayer = {};
+        if (playerIds.length > 0) {
+          const { data: purchases } = await supabase
+            .from('store_purchases')
+            .select('user_id, remaining_qty, expires_at, store_products(name)')
+            .in('user_id', playerIds)
+            .order('expires_at', { ascending: true });
+          const now = new Date().toISOString();
+          (purchases || []).forEach(p => {
+            const active = p.remaining_qty === null || p.remaining_qty > 0;
+            const notExpired = !p.expires_at || p.expires_at > now;
+            if (active && notExpired && !pkgByPlayer[p.user_id]) pkgByPlayer[p.user_id] = p;
+          });
+        }
+        setSlotReservations(rows.map(r => ({ ...r, _pkg: pkgByPlayer[r.player_id] || null })));
+      } catch (_) {
+        setSlotReservations([]);
+      }
+      setSlotResLoading(false);
+    })();
+  }, [event.id, event.event_date, event.event_type, userRole]);
+
+  const fetchPlanMeals = async () => {
+    const { data, error } = await supabase
+      .from('meal_plan_items')
+      .select('sort_order, meals(name, meal_type, calories, protein_g, carbs_g, fat_g)')
+      .eq('meal_plan_id', event._mealPlanId)
+      .order('sort_order', { ascending: true });
+    if (!error && data) {
+      setPlanMeals(data.map((r) => r.meals).filter(Boolean));
+    }
+  };
 
   const fetchMealData = async () => {
     const { data, error } = await supabase
@@ -4503,7 +4628,28 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                 </div>
               )
             ) : (
-              <div className="text-xs text-gray-400 pt-2 border-t border-gray-100">Manage this slot and attendance from the Slots tab.</div>
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                {slotResLoading ? (
+                  <div className="text-xs text-gray-400">Loading bookings…</div>
+                ) : slotReservations.length === 0 ? (
+                  <div className="text-xs text-gray-400">No bookings for this session.</div>
+                ) : (
+                  slotReservations.map(res => (
+                    <div key={res.id} className="flex items-start justify-between gap-2 bg-gray-50 rounded-lg p-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-900 truncate">{res.users?.full_name || 'Unknown'}</div>
+                        {res._pkg ? (
+                          <div className="text-gray-500 mt-0.5 truncate">{res._pkg.store_products?.name}{res._pkg.remaining_qty != null ? ` · ${res._pkg.remaining_qty} session${res._pkg.remaining_qty !== 1 ? 's' : ''} left` : ''}</div>
+                        ) : (
+                          <div className="text-gray-400 mt-0.5">No active package</div>
+                        )}
+                      </div>
+                      <span className={`flex-shrink-0 px-2 py-0.5 rounded-full font-medium ${res.status === 'confirmed' ? 'bg-green-100 text-green-700' : res.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{res.status}</span>
+                    </div>
+                  ))
+                )}
+                <div className="text-xs text-gray-400">Manage attendance from the Slots tab.</div>
+              </div>
             )}
 
             <button onClick={onClose} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
@@ -4758,6 +4904,55 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                       <span className="text-orange-700 font-medium text-sm">Description:</span>
                       <p className="text-gray-900 text-sm mt-1">{mealData.description}</p>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Fuel-plan assignment — full meal breakdown with calories/macros (#12) */}
+              {event._isMealPlan && (
+                <div className="mt-4 p-4 bg-orange-50 rounded-lg border-2 border-orange-200">
+                  <h4 className="text-sm font-semibold text-orange-900 mb-3">Fuel Plan — {event.title}</h4>
+                  {planMeals === null ? (
+                    <div className="text-sm text-gray-500">Loading meals…</div>
+                  ) : planMeals.length === 0 ? (
+                    <div className="text-sm text-gray-500">No meals recorded on this plan.</div>
+                  ) : (
+                    <>
+                      {(() => {
+                        const tot = planMeals.reduce((t, m) => ({
+                          calories: t.calories + (Number(m.calories) || 0),
+                          protein_g: t.protein_g + (Number(m.protein_g) || 0),
+                          carbs_g: t.carbs_g + (Number(m.carbs_g) || 0),
+                          fat_g: t.fat_g + (Number(m.fat_g) || 0),
+                        }), { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
+                        return (
+                          <div className="grid grid-cols-4 gap-2 mb-3 text-center">
+                            {[['Calories', Math.round(tot.calories)], ['Protein', `${Math.round(tot.protein_g)}g`], ['Carbs', `${Math.round(tot.carbs_g)}g`], ['Fat', `${Math.round(tot.fat_g)}g`]].map(([l, v]) => (
+                              <div key={l} className="bg-white rounded-md py-1.5 border border-orange-200">
+                                <div className="text-sm font-bold text-gray-900">{v}</div>
+                                <div className="text-[10px] text-orange-700 uppercase tracking-wide">{l}</div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                      <div className="space-y-2">
+                        {planMeals.map((m, i) => (
+                          <div key={i} className="bg-white rounded-md p-2.5 border border-orange-100">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium text-gray-900">{m.name}</div>
+                              {m.meal_type && <span className="text-[10px] text-orange-700 capitalize">{m.meal_type}</span>}
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 text-xs text-gray-500 mt-0.5">
+                              {m.calories != null && <span>{Math.round(m.calories)} kcal</span>}
+                              {m.protein_g != null && <span>P {Math.round(m.protein_g)}g</span>}
+                              {m.carbs_g != null && <span>C {Math.round(m.carbs_g)}g</span>}
+                              {m.fat_g != null && <span>F {Math.round(m.fat_g)}g</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
               )}
@@ -5190,6 +5385,11 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const eventMasterId = event._master_id || event.id;
   const occurrenceDate = event.event_date;
 
+  // Sign-ups lock 12h before the event starts (mirrors the #233 cancel cutoff).
+  const SIGNUP_CUTOFF_MS = 12 * 60 * 60 * 1000;
+  const eventStartAt = new Date(`${occurrenceDate}T${(event.start_time || '00:00').slice(0, 5)}:00`);
+  const signupsClosed = Date.now() > eventStartAt.getTime() - SIGNUP_CUTOFF_MS;
+
   // Public guest bookings (#229) for this specific occurrence.
   const [guestBookings, setGuestBookings] = useState([]);
   const [refundingId, setRefundingId] = useState(null);
@@ -5260,6 +5460,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   }, [eventMasterId, occurrenceDate]);
 
   const handleSignup = async () => {
+    if (signupsClosed) { alert('Sign-ups are closed — they close 12 hours before the event starts.'); return; }
     setSignupLoading(true);
     try {
       const { error } = await supabase.from('event_signups').insert({
@@ -5279,6 +5480,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   };
 
   const handleCancelSignup = async (signupId) => {
+    if (signupsClosed) { alert('Sign-ups are locked within 12 hours of the event and can no longer be changed.'); return; }
     if (!window.confirm('Cancel your sign up for this event?')) return;
     setSignupLoading(true);
     try {
@@ -5430,13 +5632,22 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                         <span>You're signed up</span>
                       </div>
                       {mySignup.notes && <p className="text-xs text-gray-700 whitespace-pre-wrap">Notes: {mySignup.notes}</p>}
-                      <button
-                        onClick={() => handleCancelSignup(mySignup.id)}
-                        disabled={signupLoading}
-                        className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
-                      >
-                        {signupLoading ? 'Cancelling…' : 'Cancel sign up'}
-                      </button>
+                      {signupsClosed ? (
+                        <p className="text-xs text-gray-500">Sign-ups are locked within 12 hours of the event.</p>
+                      ) : (
+                        <button
+                          onClick={() => handleCancelSignup(mySignup.id)}
+                          disabled={signupLoading}
+                          className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
+                        >
+                          {signupLoading ? 'Cancelling…' : 'Cancel sign up'}
+                        </button>
+                      )}
+                    </div>
+                  ) : signupsClosed ? (
+                    <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+                      <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                      <span>Sign-ups are closed — they close 12 hours before the event starts.</span>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -5613,7 +5824,7 @@ const ATTENDANCE_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled', cls: 'bg-gray-500' },
 ];
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
+function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings = [], coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -5621,6 +5832,14 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
   for (let i = 0; i < 7; i++) { const d = new Date(startOfWeek); d.setDate(startOfWeek.getDate() + i); weekDays.push(d); }
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isOwnSlots = coach.id === userId;
+  // Any staff member can SEE who's booked in any coach's slots; managing the
+  // reservations (confirm/decline/attendance) stays with the slot's coach + admin.
+  const isStaffViewer = userRole === 'admin' || userRole === 'coach';
+  const canManageRes = isOwnSlots || userRole === 'admin';
+  // Player bookings close 12h before the session starts (mirrors the #233 cancel cutoff).
+  const RESERVE_CUTOFF_MS = 12 * 60 * 60 * 1000;
+  const isBookingClosed = (slot, dateStr) =>
+    Date.now() > new Date(`${dateStr}T${(slot.start_time || '00:00').slice(0, 5)}:00`).getTime() - RESERVE_CUTOFF_MS;
   const formatLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   const formatTime = (time) => {
@@ -5667,7 +5886,8 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
               <div className="p-2 space-y-2">
                 {daySlots.map((slot, si) => {
                   const slotRes = reservations.filter(r => r.slot_id === slot.id && r.slot_date === dateStr && r.status !== 'cancelled');
-                  const isBooked = slotRes.length >= (slot.max_players || 1);
+                  const pubRes = publicBookings.filter(b => b.source_id === slot.id && b.occurrence_date === dateStr);
+                  const isBooked = (slotRes.length + pubRes.length) >= (slot.max_players || 1);
                   const userRes = slotRes.find(r => r.player_id === userId);
                   const endTime = getEndTime(slot.start_time, slot.duration_minutes);
                   const isSel = selecting && selectedIds && selectedIds.has(String(slot.id));
@@ -5688,18 +5908,18 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
                       <div className="font-semibold text-gray-900">{formatTime(slot.start_time)} - {formatTime(endTime)}</div>
                       <div className="text-gray-500">{slot.duration_minutes} min</div>
                       {slot.notes && <div className="text-gray-500 mt-1 truncate">{slot.notes}</div>}
-                      {isOwnSlots && slotRes.map(res => (
+                      {isStaffViewer && slotRes.map(res => (
                         <div key={res.id} className="mt-2 p-2 bg-white rounded border">
                           <div className="font-medium text-gray-900">{res.users?.full_name}</div>
                           {res.player_note && <div className="text-gray-500 mt-1">{res.player_note}</div>}
                           <div className={`inline-block px-2 py-0.5 rounded-full text-xs mt-1 ${res.status === 'confirmed' ? 'bg-green-100 text-green-700' : res.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{res.status}</div>
-                          {res.status === 'pending' && (
+                          {canManageRes && res.status === 'pending' && (
                             <div className="flex space-x-1 mt-2">
                               <button onClick={() => onConfirm(res.id)} className="flex-1 bg-green-600 text-white py-1 rounded text-xs hover:bg-green-700">Confirm</button>
                               <button onClick={() => onDecline(res.id)} className="flex-1 bg-red-600 text-white py-1 rounded text-xs hover:bg-red-700">Decline</button>
                             </div>
                           )}
-                          {res.status === 'confirmed' && onMarkAttendance && (
+                          {canManageRes && res.status === 'confirmed' && onMarkAttendance && (
                             <div className="mt-2 pt-2 border-t border-gray-100">
                               <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Attendance</div>
                               <div className="flex flex-wrap gap-1">
@@ -5717,8 +5937,20 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, coach, userId, 
                           )}
                         </div>
                       ))}
+                      {isStaffViewer && pubRes.map((b, bi) => (
+                        <div key={`pub-${bi}`} className="mt-2 p-2 bg-white rounded border border-blue-100">
+                          <div className="font-medium text-gray-900">{b.guest_name}</div>
+                          <div className={`inline-block px-2 py-0.5 rounded-full text-xs mt-1 ${b.status === 'confirmed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {b.status === 'confirmed' ? 'Confirmed (public)' : 'Payment pending (public)'}
+                          </div>
+                        </div>
+                      ))}
                       {!isOwnSlots && userRole === 'player' && !userRes && !isBooked && (
-                        <button onClick={() => onReserve({ ...slot, slot_date: dateStr })} className="mt-2 w-full bg-teal-600 text-white py-1 rounded text-xs hover:bg-teal-700 transition">Reserve</button>
+                        isBookingClosed(slot, dateStr) ? (
+                          <div className="mt-1 text-xs text-gray-400">Booking closed</div>
+                        ) : (
+                          <button onClick={() => onReserve({ ...slot, slot_date: dateStr })} className="mt-2 w-full bg-teal-600 text-white py-1 rounded text-xs hover:bg-teal-700 transition">Reserve</button>
+                        )
                       )}
                       {userRes && <div className={`mt-1 text-xs font-medium ${userRes.status === 'confirmed' ? 'text-green-600' : userRes.status === 'pending' ? 'text-yellow-600' : 'text-red-600'}`}>{userRes.status === 'confirmed' ? 'Confirmed' : userRes.status === 'pending' ? 'Pending' : 'Declined'}</div>}
                       {!isOwnSlots && isBooked && !userRes && <div className="mt-1 text-xs text-gray-400">Fully booked</div>}
@@ -5763,6 +5995,32 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   // Public booking (#229): let outside customers book & pay for this session.
   const [isPublic, setIsPublic] = useState(existingSlot?.is_public || false);
   const [publicPrice, setPublicPrice] = useState(existingSlot?.public_price_cents != null ? (existingSlot.public_price_cents / 100).toFixed(2) : '');
+  // Subscription session (#244): tie the slot to a Square subscription/package
+  // product so subscribers can join. Products come from store_products.
+  const [isSubscriptionSession, setIsSubscriptionSession] = useState(existingSlot?.is_subscription_session || false);
+  // #249: a session can accept MULTIPLE subscription/package plans, stored as a
+  // uuid[] (mirrors team_ids). store_product_id stays as primary/legacy = ids[0].
+  const [storeProductIds, setStoreProductIds] = useState(
+    existingSlot?.store_product_ids?.length ? existingSlot.store_product_ids
+      : (existingSlot?.store_product_id ? [existingSlot.store_product_id] : [])
+  );
+  const [subProducts, setSubProducts] = useState([]);
+
+  const toggleProduct = (id) => {
+    setStoreProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from('store_products')
+        .select('id, name, price_cents, recurring')
+        .eq('kind', 'package')
+        .eq('active', true)
+        .order('sort_order');
+      setSubProducts(data || []);
+    })();
+  }, []);
 
   // Keep the slot's own weekday selected when slotDate changes.
   useEffect(() => {
@@ -5787,10 +6045,16 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   };
 
   const handleSave = async () => {
-    if (isPublic && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
+    // #249: allow $0 (free) sessions — reject only blank / negative / non-numeric.
+    if (isPublic && !(parseFloat(publicPrice) >= 0)) return alert('Enter a price for public booking (0 for free)');
+    if (isSubscriptionSession && storeProductIds.length === 0) return alert('Choose at least one subscription for this session');
     const publicFields = {
       is_public: isPublic,
       public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
+      is_subscription_session: isSubscriptionSession,
+      // #249: accept N plans. Keep store_product_id = ids[0] as primary/legacy.
+      store_product_ids: isSubscriptionSession ? storeProductIds : [],
+      store_product_id: isSubscriptionSession ? (storeProductIds[0] || null) : null,
     };
     setLoading(true);
     try {
@@ -5847,7 +6111,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Duration</label><select value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option><option value={90}>90 min</option></select></div>
           </div>
-          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="10" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="50" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="autoConfirm" checked={autoConfirm} onChange={(e) => setAutoConfirm(e.target.checked)} className="rounded" /><label htmlFor="autoConfirm" className="text-sm text-gray-700">Auto-confirm reservations</label></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="repeatWeekly" checked={repeatWeekly} onChange={(e) => setRepeatWeekly(e.target.checked)} className="rounded" /><label htmlFor="repeatWeekly" className="text-sm text-gray-700">Repeat weekly</label></div>
           {repeatWeekly && (
@@ -5891,7 +6155,31 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
                   <input type="number" min="0" step="0.01" value={publicPrice} onChange={(e) => setPublicPrice(e.target.value)} placeholder="0.00" className="w-full pl-6 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500" />
                 </div>
-                <p className="text-xs text-gray-400 mt-1.5">Outside customers can book & pay for this session on the public /book page (up to Max Players spots).</p>
+                <p className="text-xs text-gray-400 mt-1.5">Outside customers can book this session on the public /book page (up to Max Players spots). Enter <span className="font-medium">0</span> for a free session — guests are confirmed instantly with no payment.</p>
+              </div>
+            )}
+          </div>
+          <div className="border border-gray-200 rounded-lg p-3">
+            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
+              <input type="checkbox" checked={isSubscriptionSession} onChange={(e) => setIsSubscriptionSession(e.target.checked)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+              <span>Subscription session</span>
+            </label>
+            {isSubscriptionSession && (
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Which subscriptions? (accept one or more)</label>
+                {subProducts.length === 0 ? (
+                  <p className="text-xs text-amber-600 mt-1.5">No subscription products found. Add them in the Store (Work Portal) or sync from Square.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                    {subProducts.map(p => (
+                      <label key={p.id} className="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
+                        <input type="checkbox" checked={storeProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                        <span>{p.name}{p.price_cents != null ? ` — $${(p.price_cents / 100).toFixed(2)}${p.recurring ? '/mo' : ''}` : ''}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-1.5">Athletes with an active subscription on any selected plan can join this session — no per-session fee.</p>
               </div>
             )}
           </div>
@@ -5913,6 +6201,8 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
+  // #244/#249: names of the subscription plan(s) this session accepts (if any).
+  const [subNames, setSubNames] = useState([]);
 
   useEffect(() => {
     (async () => {
@@ -5924,7 +6214,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           .select('id, product_name_snapshot, remaining_qty, product_kind')
           .eq('user_id', user.id)
           .in('product_kind', ['package', 'bundle'])
-          .eq('status', 'active')
+          .in('status', ['active', 'paid'])
           .or(`expires_at.is.null,expires_at.gt.${today}`);
         const active = (data || []).find(p => p.remaining_qty === null || p.remaining_qty > 0);
         setPkgCheck({ checking: false, pkg: active || null });
@@ -5934,6 +6224,15 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     })();
   }, []);
 
+  useEffect(() => {
+    const ids = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
+    if (!slot?.is_subscription_session || ids.length === 0) { setSubNames([]); return; }
+    (async () => {
+      const { data } = await supabase.from('store_products').select('name').in('id', ids);
+      setSubNames((data || []).map(d => d.name).filter(Boolean));
+    })();
+  }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
+
   const formatTime = (time) => {
     if (!time) return '';
     const [h, m] = time.split(':');
@@ -5941,7 +6240,13 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
   };
 
+  // Bookings close 12h before the session starts (mirrors the #233 cancel cutoff).
+  const RESERVE_CUTOFF_MS = 12 * 60 * 60 * 1000;
+  const slotStartAt = new Date(`${slot.slot_date}T${(slot.start_time || '00:00').slice(0, 5)}:00`);
+  const bookingClosed = Date.now() > slotStartAt.getTime() - RESERVE_CUTOFF_MS;
+
   const handleReserve = async () => {
+    if (bookingClosed) { alert('Booking is closed — reservations close 12 hours before the session starts.'); return; }
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -5967,12 +6272,25 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           <div className="bg-teal-50 rounded-lg p-4">
             <div className="text-sm font-semibold text-teal-900">{coach?.full_name}</div>
             {coach?.title && <div className="text-xs text-teal-600">{coach.title}</div>}
+            {coach?.skills && coach.skills.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {coach.skills.map(s => (
+                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-white text-teal-700 border border-teal-200">{s}</span>
+                ))}
+              </div>
+            )}
             <div className="mt-2 text-sm text-gray-700">
               <div>{new Date(slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
               <div>{formatTime(slot.start_time)} - {slot.duration_minutes} min</div>
             </div>
             {slot.notes && <div className="mt-2 text-xs text-gray-500">{slot.notes}</div>}
           </div>
+          {slot.is_subscription_session && (
+            <div className="flex items-start space-x-2 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-sm text-teal-800">
+              <ClipboardList size={16} className="mt-0.5 shrink-0 text-teal-600" />
+              <span>Subscription session{subNames.length ? <> — included with: <span className="font-medium">{subNames.join(', ')}</span>.</> : '.'} Members on an active subscription can join.</span>
+            </div>
+          )}
           {!pkgCheck.checking && (
             pkgCheck.pkg ? (
               <div className="flex items-start space-x-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-800">
@@ -5990,9 +6308,15 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           )}
           <div><label className="block text-sm font-medium text-gray-700 mb-1">What would you like to work on? (optional)</label><textarea value={playerNote} onChange={(e) => setPlayerNote(e.target.value)} placeholder="e.g., I want to work on my swing mechanics" rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           {slot.auto_confirm && <div className="flex items-center space-x-2 text-sm text-green-600"><Check size={16} /><span>This slot auto-confirms reservations</span></div>}
+          {bookingClosed && (
+            <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+              <span>Booking is closed — reservations close 12 hours before the session starts.</span>
+            </div>
+          )}
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleReserve} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
+            <button onClick={handleReserve} disabled={loading || bookingClosed} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
           </div>
         </div>
       </div>

@@ -124,3 +124,29 @@ export function addMinutes(startTime: string, mins: number): string {
   const total = h * 60 + m + mins;
   return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
+
+// Occurrence start as epoch ms. Event/slot times are stored as facility-local
+// wall clock with no zone, while edge functions run in UTC — so convert via the
+// facility IANA timezone (matches the Square checkout timezone).
+const FACILITY_TZ = Deno.env.get("FACILITY_TIMEZONE") || "America/Chicago";
+
+export function occurrenceStartMs(dateStr: string, timeStr?: string | null): number {
+  const t = (timeStr || "00:00").slice(0, 5);
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const [h, mi] = t.split(":").map(Number);
+  const wallUtc = Date.UTC(y, mo - 1, d, h, mi);
+  // Start from the UTC guess, then correct by the offset Intl reports for that
+  // instant; a second pass settles instants that straddle a DST transition.
+  let ts = wallUtc;
+  for (let i = 0; i < 2; i++) {
+    const parts: Record<string, string> = {};
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: FACILITY_TZ,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(ts)).forEach((p) => { parts[p.type] = p.value; });
+    const asIf = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute);
+    ts += wallUtc - asIf;
+  }
+  return ts;
+}

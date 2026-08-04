@@ -11,10 +11,13 @@ import {
   addMinutes,
   facilityEventOccurrences,
   fmtLocalDate,
+  occurrenceStartMs,
   trainingSlotOccurrences,
 } from "../_shared/availability.ts";
 
 const ACTIVE_BOOKING_STATES = ["pending_payment", "confirmed"];
+// Public bookings close 12h before the occurrence starts.
+const BOOKING_CUTOFF_MS = 12 * 60 * 60 * 1000;
 
 function jsonRes(cors: Record<string, string>, status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -122,6 +125,7 @@ Deno.serve(async (req) => {
       const dates = facilityEventOccurrences(ev, today, rangeEnd);
       for (const date of dates) {
         if (date < todayStr || date > rangeEndStr) continue;
+        if (occurrenceStartMs(date, ev.start_time) - BOOKING_CUTOFF_MS < Date.now()) continue;
         if (tombstones.has(`${ev.id}_${date}`)) continue;
         const booked = bookedCount.get(`facility_event:${ev.id}:${date}`) || 0;
         const remaining = capacity - booked;
@@ -152,6 +156,7 @@ Deno.serve(async (req) => {
       const dates = trainingSlotOccurrences(slot, today, rangeEnd);
       for (const date of dates) {
         if (date < todayStr || date > rangeEndStr) continue;
+        if (occurrenceStartMs(date, slot.start_time) - BOOKING_CUTOFF_MS < Date.now()) continue;
         const booked = bookedCount.get(`training_slot:${slot.id}:${date}`) || 0;
         const reserved = reservedCount.get(`${slot.id}:${date}`) || 0;
         const remaining = capacity - booked - reserved;

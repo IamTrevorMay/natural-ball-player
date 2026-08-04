@@ -18,7 +18,7 @@ const fnHeaders = {
   Authorization: `Bearer ${supabaseAnonKey}`,
 };
 
-const money = (cents) => `$${((cents || 0) / 100).toFixed(2)}`;
+const money = (cents) => (cents ? `$${(cents / 100).toFixed(2)}` : 'Free');
 
 // Prefix the event title with its booking Type when one is set (facility events
 // carry booking_type; coach sessions don't).
@@ -97,6 +97,18 @@ function buildWeekDays(anchor) {
   return Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
 }
 
+// Stable wrapper — defined outside the component so its identity never changes
+// between renders (an inline component would cause full remounts on every
+// state update, re-firing autoFocus and resetting focus to the first field).
+function BookingWrap({ embedded, wide, signedIn, children }) {
+  if (embedded) return <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>;
+  return (
+    <Shell wide={wide} signedIn={signedIn}>
+      <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>
+    </Shell>
+  );
+}
+
 // Props:
 //   embedded  — render without the outer page Shell (for use inside the logged-in
 //               public mini-portal); also suppresses the welcome popup.
@@ -124,6 +136,7 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [freeBooked, setFreeBooked] = useState(false); // #249: inline confirm for $0 sessions
   const [showWelcome, setShowWelcome] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
 
@@ -202,12 +215,16 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Could not start checkout');
+      // #249: free session — no Square redirect, booking is already confirmed.
+      if (data.free) { setFreeBooked(true); setSubmitting(false); return; }
       window.location.href = data.checkout_url;
     } catch (err) {
       setSubmitError(err.message);
       setSubmitting(false);
     }
   };
+
+  const closeBooking = () => { setSelected(null); setFreeBooked(false); setSubmitError(''); };
 
   // --- Post-payment confirmation --------------------------------------------
   if (returnedBooking) {
@@ -228,7 +245,7 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
     );
   }
 
-  const openBooking = (s) => { setSelected(s); setSubmitError(''); };
+  const openBooking = (s) => { setSelected(s); setSubmitError(''); setFreeBooked(false); };
 
   const visible = slots.filter((s) => {
     if (filter !== 'all' && s.kind !== filter) return false;
@@ -350,12 +367,8 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
     );
   };
 
-  const Wrap = embedded
-    ? ({ children }) => <div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div>
-    : ({ children }) => <Shell wide={view === 'month'} signedIn={signedIn}><div className={`${view === 'month' ? 'max-w-7xl' : 'max-w-3xl'} mx-auto`}>{children}</div></Shell>;
-
   return (
-    <Wrap>
+    <BookingWrap embedded={embedded} wide={view === 'month'} signedIn={signedIn}>
       {showWelcome && <WelcomePopup onClose={dismissWelcome} />}
       <div>
         {!embedded && <h1 className="text-3xl font-bold text-gray-900 mb-1">Book Facility Time</h1>}
@@ -467,8 +480,16 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
       {selected && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {freeBooked ? (
+              <div className="p-6 text-center">
+                <CheckCircle size={48} className="mx-auto text-green-500 mb-3" />
+                <h3 className="text-xl font-bold text-gray-900 mb-1">You're booked!</h3>
+                <p className="text-sm text-gray-600 mb-5">This free session is confirmed. We've got you down for {dateDisplay(selected.occurrence_date)}{selected.start_time ? ` at ${timeDisplay(selected.start_time)}` : ''}.</p>
+                <button onClick={closeBooking} className="w-full bg-teal-600 text-white py-2.5 rounded-lg hover:bg-teal-700 transition font-medium">Done</button>
+              </div>
+            ) : (
             <div className="p-6">
-              <button onClick={() => setSelected(null)} className="flex items-center text-sm text-gray-500 hover:text-gray-700 mb-4">
+              <button onClick={closeBooking} className="flex items-center text-sm text-gray-500 hover:text-gray-700 mb-4">
                 <ArrowLeft size={16} className="mr-1" /> Back
               </button>
               <h3 className="text-xl font-bold text-gray-900">{eventLabel(selected)}</h3>
@@ -501,14 +522,17 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
               {submitError && <p className="text-sm text-red-600 mt-3">{submitError}</p>}
 
               <button onClick={handleBook} disabled={submitting} className="mt-5 w-full bg-teal-600 text-white py-2.5 rounded-lg hover:bg-teal-700 transition font-medium disabled:opacity-50 flex items-center justify-center">
-                {submitting ? <><Loader2 size={18} className="animate-spin mr-2" /> Redirecting to payment…</> : `Continue to payment · ${money(selected.price_cents)}`}
+                {submitting
+                  ? <><Loader2 size={18} className="animate-spin mr-2" /> {selected.price_cents ? 'Redirecting to payment…' : 'Booking…'}</>
+                  : (selected.price_cents ? `Continue to payment · ${money(selected.price_cents)}` : 'Reserve · Free')}
               </button>
-              <p className="text-xs text-gray-400 text-center mt-2">You'll pay securely via Square. No account needed.</p>
+              <p className="text-xs text-gray-400 text-center mt-2">{selected.price_cents ? "You'll pay securely via Square. No account needed." : 'No payment needed — you\'re confirmed instantly.'}</p>
             </div>
+            )}
           </div>
         </div>
       )}
-    </Wrap>
+    </BookingWrap>
   );
 }
 

@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NBP BullpenSync</title>
+<style>
+  :root {
+    --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --line:#334155;
+    --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --good:#22c55e;
+    --warn:#f59e0b; --bad:#ef4444; --chip:#0b1220;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; letter-spacing:.3px; }
+  header .spacer { flex:1; }
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; background:var(--chip);
+          border:1px solid var(--line); color:var(--muted); }
+  .pill.good { color:var(--good); border-color:#166534; }
+  .pill.warn { color:var(--warn); border-color:#854d0e; }
+  .pill.bad  { color:var(--bad); border-color:#991b1b; }
+  main { max-width:1100px; margin:0 auto; padding:18px 16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:0 0 5px; }
+  input, select, button { font:inherit; }
+  input[type=text], input[type=email], input[type=password], select {
+    width:100%; padding:9px 11px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:8px; color:var(--text); }
+  button { cursor:pointer; border:none; border-radius:8px; padding:9px 14px; font-weight:600; }
+  .btn-primary { background:var(--accent); color:#00263a; }
+  .btn-danger { background:var(--bad); color:#fff; }
+  .btn-ghost { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:12px; align-items:end; }
+  .row > * { flex:1; }
+  .row > .fit { flex:0 0 auto; }
+  .hidden { display:none !important; }
+  .muted { color:var(--muted); }
+  .results { border:1px solid var(--line); border-radius:8px; margin-top:6px; max-height:220px;
+             overflow:auto; background:var(--panel2); }
+  .results div { padding:8px 11px; cursor:pointer; border-bottom:1px solid var(--line); }
+  .results div:hover { background:#31435c; }
+  .ptypes { display:flex; flex-wrap:wrap; gap:8px; }
+  .ptype { padding:8px 14px; border-radius:8px; background:var(--panel2);
+           border:1px solid var(--line); color:var(--text); font-weight:600; }
+  .ptype.active { background:var(--accent); color:#00263a; border-color:var(--accent); }
+  table { width:100%; border-collapse:collapse; margin-top:6px; }
+  th, td { text-align:right; padding:8px 10px; border-bottom:1px solid var(--line);
+           font-variant-numeric:tabular-nums; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align:left; }
+  thead th { color:var(--muted); font-size:12px; font-weight:600; position:sticky; top:0;
+             background:var(--panel); }
+  tbody tr:last-child td { border-bottom:none; }
+  .tbl-wrap { max-height:52vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  .flash { animation:flash 1s ease; }
+  @keyframes flash { from { background:#164e63; } to { background:transparent; } }
+  .typecell { background:var(--chip); border:1px solid var(--line); color:var(--text);
+              border-radius:6px; padding:3px 6px; }
+  .banner { padding:11px 14px; border-radius:8px; margin-bottom:14px; font-weight:600; }
+  .banner.good { background:#052e16; color:#86efac; border:1px solid #166534; }
+  .banner.bad { background:#3f1414; color:#fca5a5; border:1px solid #991b1b; }
+  .big { font-size:22px; font-weight:700; }
+  .kv { display:flex; gap:22px; flex-wrap:wrap; }
+  .kv div span { display:block; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚾ NBP BullpenSync</h1>
+  <span class="spacer"></span>
+  <span id="pill-ipad" class="pill">iPad: —</span>
+  <span id="pill-sniffer" class="pill">Sniffer: —</span>
+  <span id="pill-queue" class="pill hidden"></span>
+  <span id="pill-user" class="pill hidden"></span>
+  <button id="btn-logout" class="btn-ghost hidden" style="padding:5px 10px;font-size:12px">Log out</button>
+  <button id="btn-quit" class="btn-ghost" style="padding:5px 10px;font-size:12px">Quit</button>
+</header>
+<main>
+
+  <!-- Login -->
+  <section id="view-login" class="card" style="max-width:380px;margin:8vh auto">
+    <h2 style="margin-top:0">Sign in</h2>
+    <p class="muted" style="margin-top:-6px">Use your NBP admin/coach account.</p>
+    <label>Email</label>
+    <input id="in-email" type="email" autocomplete="username" />
+    <label style="margin-top:10px">Password</label>
+    <input id="in-pass" type="password" autocomplete="current-password" />
+    <div id="login-err" class="banner bad hidden" style="margin-top:12px"></div>
+    <button id="btn-login" class="btn-primary" style="width:100%;margin-top:14px">Sign in</button>
+  </section>
+
+  <!-- Main -->
+  <section id="view-main" class="hidden">
+
+    <!-- Settings + athlete + start (pre-session) -->
+    <div id="setup" class="card">
+      <div class="row">
+        <div>
+          <label>Save folder (CSV auto-saves here)</label>
+          <input id="in-folder" type="text" placeholder="/Users/you/Documents/BullpenSync" />
+        </div>
+        <div class="fit"><button id="btn-save-folder" class="btn-ghost">Save</button></div>
+      </div>
+      <div style="margin-top:16px">
+        <label>Athlete</label>
+        <input id="in-athlete" type="text" placeholder="Search athletes by name or email…" autocomplete="off" />
+        <div id="athlete-results" class="results hidden"></div>
+        <div id="athlete-chosen" class="muted" style="margin-top:8px"></div>
+      </div>
+      <button id="btn-start" class="btn-primary" style="margin-top:16px" disabled>Start Session</button>
+    </div>
+
+    <!-- Live session -->
+    <div id="live" class="hidden">
+      <div id="end-banner"></div>
+      <div class="card">
+        <div class="row" style="align-items:center">
+          <div class="kv">
+            <div><span>Athlete</span><b id="live-athlete">—</b></div>
+            <div><span>Pitches</span><b id="live-count" class="big">0</b></div>
+          </div>
+          <div class="fit"><button id="btn-end" class="btn-danger">End Session</button></div>
+        </div>
+        <div style="margin-top:16px">
+          <label>Current pitch type — new pitches tag with this (Auto = guess from physics)</label>
+          <div id="ptypes" class="ptypes"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr>
+              <th>#</th><th>Type</th><th>Velo</th><th>Spin</th>
+              <th>IVB</th><th>HB</th><th>Plate H</th><th>Plate S</th>
+            </tr></thead>
+            <tbody id="tbody"><tr><td colspan="8" class="muted" style="text-align:center;padding:24px">
+              Waiting for pitches…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const PTYPES = ["FB","SI","CT","SL","CB","CH","SP"];
+const $ = s => document.querySelector(s);
+let chosenAthlete = null, sessionActive = false, ws = null;
+
+async function api(path, opts={}) {
+  const r = await fetch(path, {headers:{"Content-Type":"application/json"}, ...opts});
+  if (!r.ok) { const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail || r.statusText); }
+  return r.json();
+}
+
+// ── status pills ──
+function setPill(id, label, cls) {
+  const el = $(id); el.textContent = label; el.className = "pill" + (cls?(" "+cls):"");
+}
+function renderSniffer(s) {
+  if (s === "connected") setPill("#pill-sniffer","Sniffer: connected","good");
+  else if (s && s.startsWith("error")) setPill("#pill-sniffer","Sniffer: error","bad");
+  else setPill("#pill-sniffer","Sniffer: "+(s||"—"), s==="starting"?"warn":"");
+}
+function renderIpad(s) {
+  if (s === "rvi0:ready") setPill("#pill-ipad","iPad: mirrored","good");
+  else if (s && s.startsWith("rvi0:error")) setPill("#pill-ipad","iPad: rvictl error","bad");
+  else if (s && s.startsWith("ipad:") && s!=="ipad:gone") setPill("#pill-ipad","iPad: detected","warn");
+  else setPill("#pill-ipad","iPad: —","");
+}
+function renderQueue(n) {
+  const el = $("#pill-queue");
+  if (n>0) { el.classList.remove("hidden"); el.textContent = `⏳ ${n} pending upload`; el.className="pill warn"; }
+  else el.classList.add("hidden");
+}
+
+// ── login ──
+$("#btn-login").onclick = async () => {
+  $("#login-err").classList.add("hidden");
+  try {
+    const {user, queued} = await api("/api/login", {method:"POST",
+      body: JSON.stringify({email:$("#in-email").value, password:$("#in-pass").value})});
+    enterApp(user, queued);
+  } catch(e) { $("#login-err").textContent = e.message; $("#login-err").classList.remove("hidden"); }
+};
+$("#btn-logout").onclick = async () => { await api("/api/logout",{method:"POST"}); location.reload(); };
+$("#btn-quit").onclick = async () => {
+  if (sessionActive) { alert("End the active session before quitting."); return; }
+  if (!confirm("Quit BullpenSync? The capture server will stop.")) return;
+  try { await api("/api/quit",{method:"POST"}); } catch(e){ alert(e.message); return; }
+  document.body.innerHTML = '<div style="max-width:420px;margin:18vh auto;text-align:center;color:#94a3b8">'
+    + '<h2 style="color:#e2e8f0">BullpenSync stopped</h2><p>You can close this tab.</p></div>';
+};
+
+function enterApp(user, queued) {
+  $("#view-login").classList.add("hidden");
+  $("#view-main").classList.remove("hidden");
+  $("#pill-user").classList.remove("hidden"); $("#pill-user").textContent = user.name || user.role;
+  $("#btn-logout").classList.remove("hidden");
+  renderQueue(queued||0);
+  loadSettings(); buildPtypes(); connectWs(); refreshStatus();
+}
+
+// ── settings ──
+async function loadSettings() { const s = await api("/api/settings"); $("#in-folder").value = s.save_folder || ""; }
+$("#btn-save-folder").onclick = async () => {
+  const s = await api("/api/settings",{method:"POST",body:JSON.stringify({save_folder:$("#in-folder").value})});
+  $("#in-folder").value = s.save_folder; flashSaved();
+};
+function flashSaved(){ const b=$("#btn-save-folder"); const t=b.textContent; b.textContent="Saved ✓"; setTimeout(()=>b.textContent=t,1200); }
+
+// ── athlete search ──
+let searchTimer=null;
+$("#in-athlete").oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(doSearch, 250);
+};
+async function doSearch() {
+  const q = $("#in-athlete").value.trim();
+  try {
+    const {athletes} = await api("/api/athletes?q="+encodeURIComponent(q));
+    const box = $("#athlete-results"); box.innerHTML="";
+    if (!athletes.length) { box.classList.add("hidden"); return; }
+    athletes.forEach(a => {
+      const d = document.createElement("div");
+      d.innerHTML = `<b>${esc(a.full_name||"(no name)")}</b> <span class="muted">${esc(a.email||"")}</span>`;
+      d.onclick = () => chooseAthlete(a);
+      box.appendChild(d);
+    });
+    box.classList.remove("hidden");
+  } catch(e){ console.warn(e); }
+}
+function chooseAthlete(a) {
+  chosenAthlete = a;
+  $("#athlete-results").classList.add("hidden");
+  $("#in-athlete").value = a.full_name || a.email;
+  $("#athlete-chosen").textContent = "Selected: " + (a.full_name||a.email);
+  $("#btn-start").disabled = false;
+}
+
+// ── session ──
+$("#btn-start").onclick = async () => {
+  if (!chosenAthlete) return;
+  try {
+    await api("/api/session/start",{method:"POST",body:JSON.stringify({athlete:{id:chosenAthlete.id, full_name:chosenAthlete.full_name}})});
+    sessionActive = true; startUI();
+  } catch(e){ alert(e.message); }
+};
+function startUI() {
+  $("#setup").classList.add("hidden");
+  $("#live").classList.remove("hidden");
+  $("#end-banner").innerHTML = "";
+  $("#live-athlete").textContent = chosenAthlete.full_name || chosenAthlete.email;
+  $("#live-count").textContent = "0";
+  $("#tbody").innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Waiting for pitches…</td></tr>`;
+  setActivePtype(null);
+}
+
+function buildPtypes() {
+  const box = $("#ptypes"); box.innerHTML="";
+  const mk = (code, label) => {
+    const b = document.createElement("button");
+    b.className="ptype"; b.dataset.code = code===null?"":code; b.textContent = label;
+    b.onclick = () => setCurrentType(code);
+    box.appendChild(b);
+  };
+  mk(null, "Auto");
+  PTYPES.forEach(p => mk(p, p));
+}
+async function setCurrentType(code) {
+  await api("/api/session/current-type",{method:"POST",body:JSON.stringify({type:code})});
+  setActivePtype(code);
+}
+function setActivePtype(code) {
+  document.querySelectorAll(".ptype").forEach(b => b.classList.toggle("active", b.dataset.code===(code||"")));
+}
+
+$("#btn-end").onclick = async () => {
+  if (!confirm("End session and upload to NBP?")) return;
+  $("#btn-end").disabled = true;
+  try {
+    const r = await api("/api/session/end",{method:"POST"});
+    sessionActive = false;
+    showEndResult(r);
+  } catch(e){ alert(e.message); }
+  $("#btn-end").disabled = false;
+};
+function showEndResult(r) {
+  $("#live").classList.add("hidden");
+  $("#setup").classList.remove("hidden");
+  chosenAthlete=null; $("#in-athlete").value=""; $("#athlete-chosen").textContent=""; $("#btn-start").disabled=true;
+  const cls = r.uploaded ? "good":"bad";
+  const retry = r.uploaded ? "" : ` <button id="btn-retry" class="btn-ghost" style="margin-left:10px;padding:5px 10px;font-size:12px">Retry upload</button>`;
+  const banner = document.createElement("div");
+  banner.className = "banner "+cls;
+  banner.innerHTML = `${r.uploaded?"✅":"⚠️"} ${r.pitch_count} pitches — ${esc(r.message)}<br>
+    <span class="muted" style="font-weight:400">CSV saved: ${esc(r.csv_path)}</span>${retry}`;
+  $("#setup").prepend(banner);
+  renderQueue(r.queued||0);
+  if (!r.uploaded) $("#btn-retry").onclick = drainQueue;
+}
+async function drainQueue() {
+  const r = await api("/api/queue/drain",{method:"POST"});
+  renderQueue(r.remaining||0);
+  alert(`Retry: ${r.sent} sent, ${r.failed} still failing.`);
+}
+
+// ── live table ──
+function upsertRow(row) {
+  const tb = $("#tbody");
+  if (tb.querySelector("td[colspan]")) tb.innerHTML="";
+  let tr = tb.querySelector(`tr[data-uid="${row.pitch_uid}"]`);
+  if (!tr) { tr = document.createElement("tr"); tr.dataset.uid = row.pitch_uid; tb.appendChild(tr); }
+  const f = (v,d=1) => (v===null||v===undefined) ? "—" : Number(v).toFixed(d);
+  tr.innerHTML = `
+    <td>${row.pitch_no??"—"}</td>
+    <td>${typeCell(row)}</td>
+    <td>${f(row.rel_speed)}</td>
+    <td>${f(row.spin_rate,0)}</td>
+    <td>${f(row.induced_vert_break)}</td>
+    <td>${f(row.horz_break)}</td>
+    <td>${f(row.plate_loc_height,2)}</td>
+    <td>${f(row.plate_loc_side,2)}</td>`;
+  tr.classList.remove("flash"); void tr.offsetWidth; tr.classList.add("flash");
+  const sel = tr.querySelector("select");
+  sel.onchange = () => editRowType(row.pitch_uid, sel.value);
+  tb.scrollTop = tb.scrollHeight;
+}
+function typeCell(row) {
+  const cur = row.tagged_pitch_type || "";
+  const opts = ["",...PTYPES].map(p => `<option value="${p}" ${p===cur?"selected":""}>${p||"—"}</option>`).join("");
+  return `<select class="typecell">${opts}</select>`;
+}
+async function editRowType(uid, type) {
+  await api("/api/session/row-type",{method:"POST",body:JSON.stringify({pitch_uid:uid, type})});
+}
+
+// ── websocket ──
+function connectWs() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type==="pitch") { upsertRow(m.row); $("#live-count").textContent = m.count; }
+    else if (m.type==="sniffer_status") renderSniffer(m.status);
+    else if (m.type==="ipad_status") renderIpad(m.status);
+  };
+  ws.onclose = () => setTimeout(connectWs, 2000);
+  setInterval(()=>{ try{ ws.readyState===1 && ws.send("ping"); }catch(e){} }, 15000);
+}
+
+async function refreshStatus() {
+  const s = await api("/api/status");
+  renderSniffer(s.sniffer); renderIpad(s.ipad); renderQueue(s.queued);
+  if (s.session) { // recover an in-progress session on reload
+    sessionActive = true; chosenAthlete = {full_name:s.session.athlete};
+    startUI(); setActivePtype(s.session.current_pitch_type);
+    $("#live-count").textContent = s.session.pitch_count;
+    (s.session.rows||[]).forEach(upsertRow);
+  }
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+// Boot: if already authed (e.g. reload), skip login.
+(async () => {
+  try { const s = await api("/api/status"); if (s.authed) enterApp(s.user, s.queued); } catch(e){}
+})();
+</script>
+</body>
+</html>

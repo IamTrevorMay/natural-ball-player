@@ -3,6 +3,7 @@ import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
+import Programming from './Programming';
 import Profile from './Profile';
 import Schedule from './Schedule';
 import Messages from './Messages';
@@ -19,13 +20,11 @@ import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import PublicBookingPage from './PublicBookingPage';
 import PublicPortal from './PublicPortal';
-import Leads from './Leads';
 import NotificationBell from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
-import UsageDashboard from './UsageDashboard';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
-import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, UserPlus } from 'lucide-react';
+import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, Dumbbell } from 'lucide-react';
 import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -74,8 +73,8 @@ export default function App() {
     // player landing on manage-athletes/settings, or a coach on a usage/manage-coaches
     // view. Those render blocks fail their gates and show a blank page with no
     // redirect, so reset to the role's default instead.
-    const adminOnly = ['manage-coaches', 'manage-interns', 'usage', 'leads'];
-    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'settings'];
+    const adminOnly = ['manage-coaches', 'manage-interns'];
+    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'programming', 'settings'];
     const forbidden =
       (userRole !== 'admin' && adminOnly.includes(currentView)) ||
       (userRole === 'player' && staffOnly.includes(currentView));
@@ -890,10 +889,10 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
       const { data: equip } = await supabase.from('equipment_sizes').select('id').eq('user_id', userId).limit(1);
       if (cancelled) return;
       if (!equip || equip.length === 0) missing.push('Equipment Sizes');
-      // 3. Goals & notes
-      const { data: goals } = await supabase.from('player_notes').select('id').eq('player_id', userId).limit(1);
+      // 3. Goals — check user_goals (player-authored) not player_notes (staff-only)
+      const { data: goals } = await supabase.from('user_goals').select('id').eq('user_id', userId).limit(1);
       if (cancelled) return;
-      if (!goals || goals.length === 0) missing.push('Goals & Notes');
+      if (!goals || goals.length === 0) missing.push('Goals');
       // 4. Documents (waiver)
       if (!waiverSigned) missing.push('Documents (waiver not signed)');
 
@@ -1063,16 +1062,16 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
             {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('manage-athletes')} />}
-            {currentView === 'leads' && userRole === 'admin' && <Leads />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={openProfileFrom('manage-coaches')} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={openProfileFrom('manage-interns')} />}
+            {/* manage-interns retained above as a deep-link alias; the sidebar now uses the merged Coaches/Interns view */}
             {currentView === 'coach-tools' && <CoachTools userRole={effectiveRole} userId={userId} onNavigateToProfile={openProfileFrom('coach-tools')} />}
+            {currentView === 'programming' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <Programming userId={userId} userRole={effectiveRole} />}
             {currentView === 'waiver' && <WaiverPage userId={userId} userRole={effectiveRole} onSigned={() => setWaiverSigned(true)} />}
             {currentView === 'contract' && <ContractPage userId={userId} userRole={effectiveRole} onSigned={() => setContractSigned(true)} />}
             {currentView === 'loi' && <LetterOfIntentPage userId={userId} userRole={effectiveRole} onSigned={() => setLoiSigned(true)} />}
             {currentView === 'facility-fine' && <FacilityFinePage userId={userId} onSigned={() => setFacilityFineSigned(true)} />}
             {currentView === 'settings' && (userRole === 'admin' || userRole === 'coach') && <AdminSettings userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('settings')} />}
-            {currentView === 'usage' && userRole === 'admin' && <UsageDashboard />}
           </div>
         </div>
       </div>
@@ -1392,27 +1391,8 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <span>Training Groups</span>
             </button>
 
-            <button
-              onClick={() => setCurrentView('manage-athletes')}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'manage-athletes' ? 'bg-blue-600' : 'hover:bg-gray-800'
-              }`}
-            >
-              <Users size={18} />
-              <span>Manage Athletes</span>
-            </button>
-
             {userRole === 'admin' && (
               <>
-                <button
-                  onClick={() => setCurrentView('leads')}
-                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                    currentView === 'leads' ? 'bg-blue-600' : 'hover:bg-gray-800'
-                  }`}
-                >
-                  <UserPlus size={18} />
-                  <span>Leads</span>
-                </button>
                 <button
                   onClick={() => setCurrentView('manage-coaches')}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
@@ -1420,16 +1400,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
                   }`}
                 >
                   <UserCog size={18} />
-                  <span>Manage Coaches</span>
-                </button>
-                <button
-                  onClick={() => setCurrentView('manage-interns')}
-                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                    currentView === 'manage-interns' ? 'bg-blue-600' : 'hover:bg-gray-800'
-                  }`}
-                >
-                  <UserCog size={18} />
-                  <span>Manage Interns</span>
+                  <span>Manage Coaches / Interns</span>
                 </button>
               </>
             )}
@@ -1443,6 +1414,15 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <Wrench size={18} />
               <span>Coach Tools</span>
             </button>
+            <button
+              onClick={() => setCurrentView('programming')}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                currentView === 'programming' ? 'bg-blue-600' : 'hover:bg-gray-800'
+              }`}
+            >
+              <Dumbbell size={18} />
+              <span>Programming</span>
+            </button>
 
             <button
               onClick={() => setCurrentView('settings')}
@@ -1454,17 +1434,6 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <span>Settings</span>
             </button>
 
-            {userRole === 'admin' && (
-              <button
-                onClick={() => setCurrentView('usage')}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                  currentView === 'usage' ? 'bg-blue-600' : 'hover:bg-gray-800'
-                }`}
-              >
-                <BarChart3 size={18} />
-                <span>Usage (V2 research)</span>
-              </button>
-            )}
           </>
         )}
       </nav>

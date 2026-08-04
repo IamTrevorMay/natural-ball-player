@@ -1,7 +1,55 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Search, Check } from 'lucide-react';
+import { Users, Search, Check, ChevronDown } from 'lucide-react';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
+import { COACH_SKILL_OPTIONS } from './skillOptions';
+
+// Inline skills editor for the coach roster (#245). Admins get a toggle
+// dropdown; everyone else sees read-only chips.
+function SkillsCell({ skills, isAdmin, onToggle }) {
+  const [open, setOpen] = useState(false);
+  const selected = skills || [];
+  if (!isAdmin) {
+    return selected.length > 0 ? (
+      <div className="flex flex-wrap gap-1">
+        {selected.map(s => <span key={s} className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700 font-medium">{s}</span>)}
+      </div>
+    ) : <span className="text-gray-400 text-xs">—</span>;
+  }
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 flex-wrap text-left min-w-[120px] hover:opacity-80"
+      >
+        {selected.length > 0 ? (
+          selected.map(s => <span key={s} className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700 font-medium">{s}</span>)
+        ) : <span className="text-gray-400 text-xs">Set skills</span>}
+        <ChevronDown size={12} className="text-gray-400" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+            {COACH_SKILL_OPTIONS.map(skill => {
+              const active = selected.includes(skill);
+              return (
+                <button
+                  key={skill}
+                  onClick={() => onToggle(skill)}
+                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  <span>{skill}</span>
+                  {active && <Check size={14} className="text-teal-600" />}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 const STATUS_COLORS = {
   'Active': 'bg-green-500 text-white',
@@ -12,7 +60,10 @@ const STATUS_COLORS = {
 };
 
 export default function ManageCoaches({ userId, userRole, onNavigateToProfile, mode = 'coaches' }) {
-  const isInternsMode = mode === 'interns';
+  // Coaches and interns are one view with an in-page tab toggle (#264). `mode`
+  // just seeds the initial tab.
+  const [activeMode, setActiveMode] = useState(mode);
+  const isInternsMode = activeMode === 'interns';
   const labels = isInternsMode
     ? { title: 'Manage Interns', subtitle: 'View and manage interns', empty: 'No interns yet — promote a coach by toggling the Intern flag.' }
     : { title: 'Manage Coaches', subtitle: 'View and manage coaching staff', empty: 'No coaches found.' };
@@ -28,13 +79,13 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
   const { options: subStatusOptions, addOption: addSubStatusOption } = useStatusOptions('sub_status');
   const isAdmin = userRole === 'admin';
 
-  useEffect(() => { fetchCoaches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [mode]);
+  useEffect(() => { fetchCoaches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeMode]);
 
   const fetchCoaches = async () => {
     setLoading(true);
     let query = supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, coach_status, coach_sub_status, is_intern, team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, coach_status, coach_sub_status, is_intern, skills, team_members(team_id, teams(name))')
       .or('role.eq.coach,secondary_role.eq.coach');
     if (isInternsMode) query = query.eq('is_intern', true);
     query = query.order('full_name');
@@ -56,6 +107,12 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
     } else {
       setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, [field]: value } : c));
     }
+  };
+
+  const handleToggleSkill = (coach, skill) => {
+    const current = coach.skills || [];
+    const next = current.includes(skill) ? current.filter(s => s !== skill) : [...current, skill];
+    handleInlineUpdate(coach.id, 'skills', next);
   };
 
   const splitName = (fullName) => {
@@ -101,6 +158,19 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
           </div>
           <p className="text-gray-600 mt-1">{labels.subtitle}</p>
         </div>
+        <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5 text-sm">
+          {[{ key: 'coaches', label: 'Coaches' }, { key: 'interns', label: 'Interns' }].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveMode(tab.key)}
+              className={`px-4 py-1.5 rounded-md font-medium transition ${
+                activeMode === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow">
@@ -145,6 +215,7 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Team</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Status</th>
                 <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Sub Status</th>
+                <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Skills</th>
                 {isAdmin && <th className="text-left py-3 px-3 font-semibold text-gray-500 text-xs uppercase tracking-wider">Intern Status</th>}
               </tr>
             </thead>
@@ -189,6 +260,9 @@ export default function ManageCoaches({ userId, userRole, onNavigateToProfile, m
                         onAddOption={addSubStatusOption}
                         isAdmin={isAdmin}
                       />
+                    </td>
+                    <td className="py-3 px-3">
+                      <SkillsCell skills={coach.skills} isAdmin={isAdmin} onToggle={(skill) => handleToggleSkill(coach, skill)} />
                     </td>
                     {isAdmin && (
                       <td className="py-3 px-3">

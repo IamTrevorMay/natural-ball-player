@@ -1,0 +1,833 @@
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { supabase } from './supabaseClient';
+import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { extractMetricsFromSubmissions } from './assessmentMetrics';
+import AssessmentReadiness from './AssessmentReadiness';
+import {
+  LEVELS, POSITIONS, PHASES, PHASE_ORDER, ATHLETE_TYPES,
+  gameDemand, readiness, assessmentGates, stressUnits, moundRamp, buildWeek, seedLog,
+  buildProgram, programToProgramDays, weekToProgramDays, buildThrowingPhases, THROW_KIND_COLOR,
+  THROW_METRICS, gradeThrowing, deficiencyDrills,
+} from './throwingEngine';
+
+/* --------------------------------------------------------------------------- *
+ *  Throwing Program Generator — "The Ramp" (engine #2).
+ *
+ *  Position/level-aware throwing microcycles with Pitch Smart caps, ACWR
+ *  workload, assessment gates and daily readiness. Fully wired: auto-fills
+ *  readiness from the athlete's latest whoop_cycles, the chronic-load baseline
+ *  and the velocity/spin/extension benchmarks from their trackman_pitches
+ *  history, grades them vs level, then builds a multi-week (1-16) program with
+ *  real week-over-week progression and saves it into the training-program
+ *  library on absolute calendar-day offsets.
+ * --------------------------------------------------------------------------- */
+
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const age = Math.floor((new Date() - new Date(dob + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000));
+  return Number.isFinite(age) ? age : null;
+};
+
+function levelFromAge(age) {
+  if (age == null) return '17-18';
+  if (age < 11) return '9-10';
+  if (age < 13) return '11-12';
+  if (age < 15) return '13-14';
+  if (age < 17) return '15-16';
+  if (age < 19) return '17-18';
+  if (age < 23) return '19-22';
+  return 'pro';
+}
+
+function posKeyFromProfile(pos) {
+  const p = String(pos || '').toLowerCase();
+  if (/two.?way/.test(p)) return 'TW';
+  if (/relief|\brp\b/.test(p)) return 'RP';
+  if (/pitch|\bp\b|rhp|lhp|\bsp\b/.test(p)) return 'SP';
+  if (/catch|\bc\b/.test(p)) return 'C';
+  if (/short|\bss\b|2b|second|middle|\bmif\b/.test(p)) return 'MIF';
+  if (/first|1b|third|3b|corner|\bcif\b/.test(p)) return 'CIF';
+  if (/field|\bof\b|lf|cf|rf/.test(p)) return 'OF';
+  return 'OF';
+}
+
+const iso = (d) => d.toISOString().slice(0, 10);
+
+// Derive the mobility / strength assessment-gate scores (0-100) from aggregated
+// assessment metrics so the high-intent gates react to real screen data instead
+// of manual slider defaults (#9). Each sub-metric is scored vs a coaching-default
+// threshold band and the available ones are averaged; missing groups return null
+// so the existing slider value is left untouched. Tunable defaults, not clinical.
+function deriveGateScores(byKey) {
+  const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
+  const lin = (v, lo, hi) => ((v - lo) / (hi - lo)) * 100; // lo->0, hi->100
+  const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+
+  // ---- Mobility: hip IR, T-spine rot, ankle DF, shoulder total-ROM deficit ----
+  const mobParts = [];
+  if (byKey.hipir != null) mobParts.push(lin(byKey.hipir, 10, 40));
+  if (byKey.tspine != null) mobParts.push(lin(byKey.tspine, 25, 50));
+  if (byKey.ankle != null) mobParts.push(lin(byKey.ankle, 5, 12));
+  if (byKey.shoulder_rom_deficit != null) mobParts.push(100 - lin(byKey.shoulder_rom_deficit, 0, 15)); // lower deficit = better
+  const mob = mobParts.length ? clamp(avg(mobParts)) : null;
+
+  // ---- Strength: trap-bar DL (xBW), relative back-squat, CMJ, broad jump, grip ----
+  const strParts = [];
+  if (byKey.dl != null) strParts.push(lin(byKey.dl, 0.8, 1.8));
+  if (byKey.back_squat != null && byKey.body_weight) strParts.push(lin(byKey.back_squat / byKey.body_weight, 0.8, 1.8));
+  if (byKey.cmj != null) strParts.push(lin(byKey.cmj, 10, 26));
+  if (byKey.broad_jump != null) strParts.push(lin(byKey.broad_jump, 60, 110));
+  if (byKey.grip != null) strParts.push(lin(byKey.grip, 25, 55));
+  const str = strParts.length ? clamp(avg(strParts)) : null;
+
+  return { mob, str, mobCount: mobParts.length, strCount: strParts.length };
+}
+
+// Status/zone -> Tailwind accent classes.
+const READY_CLR = { GO: 'green', MODIFY: 'amber', CAUTION: 'red', REST: 'red' };
+const clr = {
+  green: { text: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-500' },
+  amber: { text: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', dot: 'bg-amber-500' },
+  red: { text: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', dot: 'bg-red-500' },
+  blue: { text: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-500' },
+};
+const KIND_HEX = { blue: '#3b82f6', green: '#22c55e', amber: '#f59e0b', red: '#ef4444', gray: '#9ca3af' };
+const STATUS_CLR = { good: 'text-green-600', dev: 'text-amber-600', def: 'text-red-600' };
+
+// Dev/good zone bar for one graded (up-direction) throwing metric.
+function ThrowMetricBar({ mkey, s }) {
+  if (!s) return null;
+  const label = THROW_METRICS.find((m) => m.key === mkey)?.label || mkey;
+  const min = s.dev[0] * 0.8;
+  const max = s.good * 1.25;
+  const span = max - min || 1;
+  const clamp = (x) => Math.max(0, Math.min(100, ((x - min) / span) * 100));
+  const devL = clamp(s.dev[0]);
+  const devR = clamp(s.dev[1]);
+  const goodL = clamp(s.good);
+  const pos = clamp(s.value);
+  return (
+    <div className="mb-2.5">
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-gray-500">{label}</span>
+        <span className={`font-mono font-bold ${STATUS_CLR[s.status]}`}>{Math.round(s.value * 100) / 100}{s.unit}</span>
+      </div>
+      <div className="relative h-2 rounded bg-gray-100">
+        <div className="absolute h-full bg-amber-200 rounded" style={{ left: `${devL}%`, width: `${Math.max(0, devR - devL)}%` }} />
+        <div className="absolute h-full bg-green-300 rounded" style={{ left: `${goodL}%`, width: `${Math.max(0, 100 - goodL)}%` }} />
+        <div className="absolute w-1 h-3 -top-0.5 bg-gray-900 rounded" style={{ left: `calc(${pos}% - 2px)` }} />
+      </div>
+      <div className="text-[10px] text-gray-400 mt-0.5">dev {s.dev[0]}–{s.dev[1]}{s.unit} · target ≥{s.good}{s.unit}</div>
+    </div>
+  );
+}
+
+export default function ThrowingGenerator({ userId, userRole }) {
+  const [players, setPlayers] = useState([]);
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [selectedName, setSelectedName] = useState('');
+  const [autoNote, setAutoNote] = useState('');
+
+  const [levelId, setLevelId] = useState('17-18');
+  const [posId, setPosId] = useState('SP');
+  const [phaseId, setPhaseId] = useState('VELO');
+  const [typeId, setTypeId] = useState('intermediate');
+  const [weekInPhase, setWeekInPhase] = useState(2);
+  const [weeks, setWeeks] = useState('4');
+  const [mob, setMob] = useState(72);
+  const [str, setStr] = useState(68);
+  const [bio, setBio] = useState(70);
+  const [whoop, setWhoop] = useState(74);
+  const [hrv, setHrv] = useState('flat');
+  const [soreness, setSoreness] = useState('none');
+  const [benchVals, setBenchVals] = useState({ velo: '', spin: '', ext: '' });
+
+  const [log, setLog] = useState(seedLog);
+  const [autoChronic, setAutoChronic] = useState(true);
+  const [manualChronic, setManualChronic] = useState(180);
+
+  const [programName, setProgramName] = useState('');
+  const [assignAthlete, setAssignAthlete] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
+  const [error, setError] = useState('');
+  const [openPhase, setOpenPhase] = useState({}); // full-program preview accordion
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: e } = await supabase
+        .from('users')
+        .select('id, full_name, player_profiles!player_profiles_user_id_fkey(position)')
+        .in('role', ['player', 'coach', 'admin'])
+        .order('full_name');
+      if (e) { setError(e.message); return; }
+      let filtered = data || [];
+      if (userRole === 'coach') {
+        const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
+        const teamIds = (coachTeams || []).map((t) => t.team_id);
+        const { data: members } = await supabase.from('team_members').select('user_id')
+          .in('team_id', teamIds.length ? teamIds : ['00000000-0000-0000-0000-000000000000']);
+        const allowed = new Set((members || []).map((m) => m.user_id));
+        filtered = filtered.filter((p) => allowed.has(p.id));
+      }
+      setPlayers(filtered);
+    })();
+  }, [userId, userRole]);
+
+  const selectAthlete = useCallback(async (p) => {
+    setSelectedId(p.id);
+    setSelectedName(p.full_name);
+    setSearch('');
+    setError('');
+    setSaveMsg('');
+    const notes = [];
+    try {
+      // Demographics -> level + position.
+      const { data: u } = await supabase
+        .from('users')
+        .select('date_of_birth, player_profiles!player_profiles_user_id_fkey(position, training_age_months)')
+        .eq('id', p.id).single();
+      const pp = Array.isArray(u?.player_profiles) ? u.player_profiles[0] : u?.player_profiles;
+      const age = ageFromDob(u?.date_of_birth);
+      const lvl = levelFromAge(age);
+      const pos = posKeyFromProfile(pp?.position);
+      setLevelId(lvl);
+      setPosId(pos);
+      // Training age -> athlete-type tolerance.
+      if (pp?.training_age_months != null) {
+        const ta = Number(pp.training_age_months);
+        setTypeId(ta < 12 ? 'novice' : ta <= 36 ? 'intermediate' : 'advanced');
+        notes.push('training age');
+      }
+
+      // WHOOP readiness auto-fill (staff read-all RLS).
+      const { data: cycles } = await supabase
+        .from('whoop_cycles')
+        .select('cycle_date, recovery_score, hrv_rmssd')
+        .eq('athlete_id', p.id)
+        .order('cycle_date', { ascending: false })
+        .limit(30);
+      if (cycles && cycles.length) {
+        const latest = cycles[0];
+        if (latest.recovery_score != null) { setWhoop(Math.round(latest.recovery_score)); notes.push('WHOOP recovery'); }
+        const hist = cycles.slice(1).map((c) => c.hrv_rmssd).filter((v) => v != null);
+        if (latest.hrv_rmssd != null && hist.length >= 3) {
+          const mean = hist.reduce((a, b) => a + b, 0) / hist.length;
+          setHrv(latest.hrv_rmssd > mean * 1.03 ? 'up' : latest.hrv_rmssd < mean * 0.97 ? 'down' : 'flat');
+          notes.push('HRV trend');
+        }
+      }
+
+      // Trackman workload -> chronic baseline + velo/spin/extension benchmarks (pitchers).
+      const since = iso(new Date(Date.now() - 28 * 24 * 60 * 60 * 1000));
+      const { data: pitches } = await supabase
+        .from('trackman_pitches')
+        .select('thrown_date, rel_speed, spin_rate, extension')
+        .eq('pitcher_user_id', p.id)
+        .gte('thrown_date', since);
+      const nb = { velo: '', spin: '', ext: '' };
+      if (pitches && pitches.length) {
+        const byDate = {};
+        pitches.forEach((r) => { byDate[r.thrown_date] = (byDate[r.thrown_date] || 0) + 1; });
+        const today = new Date(iso(new Date()) + 'T00:00:00');
+        const built = Object.entries(byDate).map(([d, count]) => ({
+          id: `tm${d}`,
+          dayAgo: Math.round((today - new Date(d + 'T00:00:00')) / (24 * 60 * 60 * 1000)),
+          throws: count, intent: 100, mound: true,
+        })).filter((e) => e.dayAgo >= 0 && e.dayAgo < 28);
+        if (built.length) { setLog(built); setAutoChronic(true); notes.push(`${built.length}d Trackman load`); }
+
+        const velos = pitches.map((r) => r.rel_speed).filter((v) => v != null).map(Number);
+        const spins = pitches.map((r) => r.spin_rate).filter((v) => v != null).map(Number);
+        const exts = pitches.map((r) => r.extension).filter((v) => v != null).map(Number);
+        if (velos.length) { nb.velo = String(Math.round(Math.max(...velos) * 10) / 10); notes.push('velocity benchmark'); }
+        if (spins.length) nb.spin = String(Math.round(spins.reduce((a, b) => a + b, 0) / spins.length));
+        if (exts.length) nb.ext = String(Math.round((exts.reduce((a, b) => a + b, 0) / exts.length) * 10) / 10);
+      } else {
+        setLog(seedLog());
+      }
+
+      // ALL assessments (newest-first) so throwing velo AND the mobility/strength
+      // gate metrics all resolve from whichever past screen measured them (#9/#11).
+      const { data: subs } = await supabase
+        .from('assessment_submissions')
+        .select('responses, assessment_templates(name, schema)')
+        .eq('player_id', p.id)
+        .order('assessment_date', { ascending: false })
+        .limit(50);
+      const byKey = extractMetricsFromSubmissions(subs || []);
+      if (!nb.velo && (byKey.throwing_velo_max != null || byKey.fb_velo != null)) {
+        nb.velo = String(byKey.throwing_velo_max != null ? byKey.throwing_velo_max : byKey.fb_velo);
+        notes.push('velo (assessment)');
+      }
+      setBenchVals(nb);
+
+      // Drive the mobility / strength / biomech assessment gates from real screen
+      // data (#9). Prefer a directly-tagged readiness score; otherwise DERIVE the
+      // gate from the raw mobility / strength metrics across all assessments.
+      const clamp100 = (v) => Math.max(0, Math.min(100, Math.round(Number(v))));
+      const gs = deriveGateScores(byKey);
+      if (byKey.mobility_score != null) { setMob(clamp100(byKey.mobility_score)); notes.push('mobility gate'); }
+      else if (gs.mob != null) { setMob(gs.mob); notes.push('mobility gate'); }
+      if (byKey.strength_score != null) { setStr(clamp100(byKey.strength_score)); notes.push('strength gate'); }
+      else if (gs.str != null) { setStr(gs.str); notes.push('strength gate'); }
+      if (byKey.biomech_score != null) { setBio(clamp100(byKey.biomech_score)); notes.push('biomech gate'); }
+
+      setProgramName(`${p.full_name} — Throwing (${PHASES[phaseId].label})`);
+      setAutoNote(notes.length
+        ? `Auto-filled from live data: ${notes.join(', ')}. Review & adjust below.`
+        : 'No WHOOP/Trackman data on file — using manual defaults + a seeded chronic baseline.');
+    } catch (e) {
+      setError(e.message || 'Failed to load athlete.');
+    }
+  }, [phaseId]);
+
+  const ready = useMemo(() => readiness(whoop, hrv, soreness), [whoop, hrv, soreness]);
+  const gates = useMemo(() => assessmentGates(mob, str, bio), [mob, str, bio]);
+  const benchS = useMemo(() => gradeThrowing(benchVals, levelId), [benchVals, levelId]);
+
+  const logStats = useMemo(() => {
+    const su = (e) => stressUnits(e.throws, e.intent || 1, e.mound);
+    const last7 = log.filter((e) => e.dayAgo < 7).reduce((s, e) => s + su(e), 0);
+    const last28 = log.reduce((s, e) => s + su(e), 0);
+    return { acute7: Math.round(last7), chronicWk: Math.round(last28 / 4) };
+  }, [log]);
+  const chronicWeekly = autoChronic ? Math.max(1, logStats.chronicWk) : manualChronic;
+
+  // Post-ACWR-adjustment week (chronic drives the feedback loop inside buildWeek).
+  const week = useMemo(() => buildWeek({ levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, chronic: chronicWeekly, bench: benchS }),
+    [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, chronicWeekly, benchS]);
+  const numWeeks = Math.max(1, Math.min(16, parseInt(weeks, 10) || 1));
+  const isP = POSITIONS[posId].group === 'P';
+  const phasePlan = useMemo(() => buildThrowingPhases(phaseId, numWeeks, isP), [phaseId, numWeeks, isP]);
+  const demand = useMemo(() => gameDemand(posId, levelId), [posId, levelId]);
+  const ramp = useMemo(() => (isP ? moundRamp(levelId, posId) : []), [isP, levelId, posId]);
+
+  // Deficiency-targeted drill links (#4) + the FULL multi-week program preview (#5).
+  const veloBad = !!(benchS.velo && (benchS.velo.status === 'def' || benchS.velo.status === 'dev'));
+  const drills = useMemo(() => deficiencyDrills({ mob, str, bio, veloBad, isP }), [mob, str, bio, veloBad, isP]);
+  const serOpts = useMemo(() => ({ mob, str, bio, isP, bench: benchS, drills }), [mob, str, bio, isP, benchS, drills]);
+  const fullProgram = useMemo(
+    () => buildProgram({ levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, weeks: numWeeks, chronic: chronicWeekly, bench: benchS }),
+    [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, numWeeks, chronicWeekly, benchS],
+  );
+
+  const acuteWeekly = week.reduce((s, d) => s + d.su, 0);
+  const acwr = chronicWeekly > 0 ? acuteWeekly / chronicWeekly : 0;
+  const phase = PHASES[phaseId];
+  const totalThrows = week.reduce((s, d) => s + d.throws, 0);
+  const highDays = week.filter((d) => d.intent >= 90).length;
+
+  const acwrZone = acwr < phase.acwr[0] ? { label: 'UNDERLOADED', c: 'blue' }
+    : acwr <= phase.acwr[1] ? { label: 'IN RANGE', c: 'green' }
+      : acwr <= 1.5 ? { label: 'CAUTION', c: 'amber' } : { label: 'HIGH RISK', c: 'red' };
+
+  const save = async () => {
+    if (!week) return;
+    setSaving(true); setError(''); setSaveMsg('');
+    try {
+      const program = buildProgram({
+        levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase,
+        weeks: numWeeks, chronic: chronicWeekly, bench: benchS,
+      });
+      const rows = programToProgramDays(program, serOpts);
+      const { data: prog, error: pErr } = await supabase
+        .from('training_programs')
+        .insert({
+          name: programName || `${selectedName} — Throwing`,
+          description: `${phase.label} · ${numWeeks}-week ramp · ${phase.goal} (generated ${iso(new Date())})`,
+          duration_weeks: numWeeks, created_by: userId,
+        }).select('id').single();
+      if (pErr) throw pErr;
+      for (let i = 0; i < rows.length; i += 1) {
+        const d = rows[i];
+        const { data: dayRow, error: dErr } = await supabase
+          .from('training_days')
+          .insert({ program_id: prog.id, day_number: d.day_number, title: d.title, notes: d.notes })
+          .select('id').single();
+        if (dErr) throw dErr;
+        if (d.exercises.length) {
+          const { error: exErr } = await supabase.from('training_exercises').insert(
+            d.exercises.map((x) => ({
+              day_id: dayRow.id, category: x.category, name: x.name,
+              description: x.description, reps: x.reps, sort_order: x.sort_order,
+              video_url: x.video_url || null,
+            })),
+          );
+          if (exErr) throw exErr;
+        }
+      }
+      if (assignAthlete && selectedId) {
+        const { error: aErr } = await supabase.from('training_program_assignments').insert({
+          program_id: prog.id, player_id: selectedId, start_date: iso(new Date()), assigned_by: userId,
+        });
+        if (aErr) throw aErr;
+      }
+      setSaveMsg(`Saved "${programName}" (${numWeeks} wk, ${rows.length} sessions)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.`);
+    } catch (e) {
+      setError(e.message || 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const filteredPlayers = players
+    .filter((p) => p.full_name?.toLowerCase().includes(search.toLowerCase())).slice(0, 8);
+
+  const card = 'bg-white rounded-lg border border-gray-200 p-5';
+  const label = 'block text-xs font-medium text-gray-500 mb-1';
+  const eyebrow = 'text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3';
+  const inp = 'w-full border border-gray-300 rounded px-2 py-1.5 text-sm';
+  const chip = (active, color = 'blue') => `px-3 py-1.5 rounded-full text-xs font-medium border ${active
+    ? `${clr[color].dot} text-white border-transparent` : 'bg-white text-gray-500 border-gray-300'}`;
+
+  const Slider = ({ text, value, set }) => (
+    <div className="mb-3">
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-gray-500 font-medium">{text}</span>
+        <span className="font-mono font-bold text-gray-700">{value}</span>
+      </div>
+      <input type="range" min={0} max={100} value={value} onChange={(e) => set(Number(e.target.value))} className="w-full" />
+    </div>
+  );
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 md:p-6">
+      <div className="flex items-center gap-3 mb-1">
+        <Zap className="w-7 h-7 text-orange-500" />
+        <h1 className="text-2xl font-bold text-gray-900">Throwing Program Generator</h1>
+      </div>
+      <p className="text-sm text-gray-500 mb-6">
+        Position- and level-aware throwing microcycles — Pitch Smart caps, ACWR workload and daily readiness.
+        Auto-fills WHOOP recovery, Trackman load & velocity benchmarks, then builds a multi-week program.
+      </p>
+
+      {error && <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* -------------------------------- LEFT -------------------------------- */}
+        <div className="space-y-5">
+          <div className={card}>
+            <div className={eyebrow}>Athlete</div>
+            <div className="relative">
+              <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-2.5" />
+              <input className="w-full border border-gray-300 rounded pl-8 pr-3 py-2 text-sm"
+                placeholder="Search athletes…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              {search && filteredPlayers.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded shadow-lg">
+                  {filteredPlayers.map((p) => (
+                    <button key={p.id} onClick={() => selectAthlete(p)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                      <User className="w-4 h-4 text-gray-400" />{p.full_name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selectedName && <div className="mt-3 text-sm font-semibold text-gray-900">{selectedName}</div>}
+            {autoNote && <div className="mt-2 text-xs text-orange-600 bg-orange-50 rounded p-2">{autoNote}</div>}
+          </div>
+
+          {selectedId && <AssessmentReadiness athleteId={selectedId} highlight="throwing" />}
+
+          <div className={card}>
+            <div className={eyebrow}>Setup</div>
+            <span className={label}>Competition level</span>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {LEVELS.map((l) => (
+                <button key={l.id} onClick={() => setLevelId(l.id)} className={chip(levelId === l.id, 'blue')}>{l.label}</button>
+              ))}
+            </div>
+            <span className={label}>Position</span>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {Object.entries(POSITIONS).map(([id, p]) => (
+                <button key={id} onClick={() => setPosId(id)}
+                  className={chip(posId === id, p.group === 'P' ? 'red' : 'blue')}>
+                  {p.label.replace(/ \(.*\)/, '')}
+                </button>
+              ))}
+            </div>
+            <span className={label}>Training age</span>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(ATHLETE_TYPES).map(([id, a]) => (
+                <button key={id} onClick={() => setTypeId(id)} className={chip(typeId === id, 'green')}>{a.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className={card}>
+            <div className={eyebrow}>Training phase</div>
+            <div className="flex flex-wrap gap-2">
+              {PHASE_ORDER.map((id) => (
+                <button key={id} onClick={() => setPhaseId(id)} className={chip(phaseId === id, 'amber')}>{PHASES[id].label}</button>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className={label + ' mb-0'}>Start week in phase</span>
+              {[1, 2, 3, 4, 5, 6].map((w) => (
+                <button key={w} onClick={() => setWeekInPhase(w)}
+                  className={`w-7 h-7 rounded text-xs font-bold border ${weekInPhase === w
+                    ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-300'}`}>{w}</button>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <span className={label + ' mb-0'}>Program length</span>
+              <input type="number" min={1} max={16} value={weeks}
+                onChange={(e) => setWeeks(e.target.value)}
+                className="w-20 border border-gray-300 rounded px-2 py-1.5 text-sm" />
+              <span className="text-xs text-gray-400">weeks (1–16, true week-over-week progression)</span>
+            </div>
+          </div>
+
+          <div className={card}>
+            <div className={eyebrow}>Assessment gates</div>
+            <Slider text="Mobility (shoulder / hip / T-spine)" value={mob} set={setMob} />
+            <Slider text="Strength (relative + posterior chain)" value={str} set={setStr} />
+            <Slider text="Biomechanics (efficiency / low stress)" value={bio} set={setBio} />
+          </div>
+
+          <div className={card}>
+            <div className={eyebrow}>Throwing benchmarks (vs level)</div>
+            <div className="grid grid-cols-3 gap-3">
+              {THROW_METRICS.map((m) => (
+                <div key={m.key}>
+                  <span className={label}>{m.label} ({m.unit})</span>
+                  <input className={inp} type="number" value={benchVals[m.key]}
+                    onChange={(e) => setBenchVals((v) => ({ ...v, [m.key]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-gray-400 mt-2">Blank = not measured. Auto-fills from Trackman when available. A deficient velo grade biases in extra velo exposure & corrective plyo emphasis.</div>
+          </div>
+
+          <div className={card}>
+            <div className={eyebrow}>Today's readiness</div>
+            <Slider text="WHOOP recovery %" value={whoop} set={setWhoop} />
+            <span className={label}>HRV trend</span>
+            <div className="flex gap-2 mb-3">
+              {['up', 'flat', 'down'].map((h) => (
+                <button key={h} onClick={() => setHrv(h)} className={chip(hrv === h, 'blue')}>{h}</button>
+              ))}
+            </div>
+            <span className={label}>Arm soreness</span>
+            <div className="flex gap-2">
+              {['none', 'mild', 'moderate', 'high'].map((s) => (
+                <button key={s} onClick={() => setSoreness(s)}
+                  className={chip(soreness === s, s === 'high' ? 'red' : s === 'moderate' ? 'amber' : 'green')}>{s}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="w-full flex items-center justify-center gap-2 bg-gray-100 text-gray-500 text-xs rounded-lg py-2">
+            <Wand2 className="w-4 h-4" /> Plan updates live as you edit
+          </div>
+        </div>
+
+        {/* -------------------------------- RIGHT ------------------------------- */}
+        <div className="space-y-5">
+          {/* Readiness */}
+          <div className={`${card} ${clr[READY_CLR[ready.status]].border} ${clr[READY_CLR[ready.status]].bg}`}>
+            <div className="flex items-center gap-4">
+              <div className={`w-14 h-14 rounded-full grid place-items-center text-white font-bold ${clr[READY_CLR[ready.status]].dot}`}>
+                {ready.status[0]}
+              </div>
+              <div>
+                <div className={`text-xs font-semibold uppercase tracking-wide ${clr[READY_CLR[ready.status]].text}`}>
+                  Readiness — {ready.status} · score {ready.score}
+                </div>
+                <div className="font-bold text-gray-900">{ready.headline}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{ready.detail}</div>
+                <div className="text-[10px] text-gray-400 mt-1 font-mono">
+                  vol ×{ready.volMult.toFixed(2)} · intent ×{ready.intentMult.toFixed(2)} (geometric WHOOP scaling)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Game demand */}
+          <div className={card}>
+            <div className={eyebrow}>Measured game demand · {POSITIONS[posId].label} · {LEVELS.find((l) => l.id === levelId).label}</div>
+            <div className="flex flex-wrap gap-6">
+              <Stat label={isP ? 'Pitches / outing' : 'Competitive throws'} value={isP ? demand.pitches : demand.active} />
+              <Stat label="Total throw-equiv." value={demand.total} />
+              <Stat label="Mean intent" value={`${demand.meanIntent}%`} />
+              <Stat label="Max distance" value={typeof demand.dist === 'number' ? `${demand.dist}'` : demand.dist} />
+            </div>
+            <div className="text-xs text-gray-400 mt-3">{demand.note}.</div>
+          </div>
+
+          {/* Benchmarks vs data */}
+          {Object.keys(benchS).length > 0 && (
+            <div className={card}>
+              <div className={eyebrow}>Benchmarks vs {LEVELS.find((l) => l.id === levelId).label}</div>
+              {THROW_METRICS.filter((m) => benchS[m.key]).map((m) => <ThrowMetricBar key={m.key} mkey={m.key} s={benchS[m.key]} />)}
+            </div>
+          )}
+
+          {/* Phase plan */}
+          <div className={card}>
+            <div className={eyebrow}>Phase plan · {numWeeks} {numWeeks === 1 ? 'week' : 'weeks'}</div>
+            <div className="flex rounded overflow-hidden h-8 mb-2">
+              {phasePlan.map((ph, i) => {
+                const w = (ph.span[1] - ph.span[0] + 1) / numWeeks * 100;
+                return (
+                  <div key={i} title={ph.name} className="flex items-center justify-center text-[9px] text-white font-semibold"
+                    style={{ width: `${w}%`, background: KIND_HEX[THROW_KIND_COLOR[ph.kind]] || KIND_HEX.blue }}>
+                    {ph.span[1] - ph.span[0] + 1}w
+                  </div>
+                );
+              })}
+            </div>
+            <div className="space-y-1.5">
+              {phasePlan.map((ph, i) => (
+                <div key={i} className="text-xs flex gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full mt-0.5 shrink-0" style={{ background: KIND_HEX[THROW_KIND_COLOR[ph.kind]] || KIND_HEX.blue }} />
+                  <span className="font-semibold text-gray-700 w-36 shrink-0">{ph.name}</span>
+                  <span className="text-gray-500">wk {ph.span[0]}–{ph.span[1]} · {ph.focus}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Full program (all weeks) — collapsible by phase (#5) */}
+          <div className={card}>
+            <div className={eyebrow}>Full program · {numWeeks} {numWeeks === 1 ? 'week' : 'weeks'} — review before saving</div>
+            <div className="space-y-2">
+              {phasePlan.map((ph, pi) => {
+                const open = openPhase[pi];
+                const weekNums = Array.from({ length: ph.span[1] - ph.span[0] + 1 }, (_, k) => ph.span[0] + k);
+                return (
+                  <div key={pi} className="border border-gray-100 rounded-lg">
+                    <button onClick={() => setOpenPhase((o) => ({ ...o, [pi]: !o[pi] }))}
+                      className="w-full flex items-center justify-between px-3 py-2">
+                      <div className="flex items-center gap-2 text-left">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: KIND_HEX[THROW_KIND_COLOR[ph.kind]] || KIND_HEX.blue }} />
+                        <span className="font-semibold text-gray-800 text-sm">{ph.name}</span>
+                        <span className="text-xs text-gray-400">wk {ph.span[0]}–{ph.span[1]}</span>
+                      </div>
+                      {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                    </button>
+                    {open && (
+                      <div className="px-3 pb-3 space-y-3">
+                        <div className="text-xs text-gray-500">{ph.focus}</div>
+                        {weekNums.map((wnum) => {
+                          const wk = fullProgram[wnum - 1];
+                          if (!wk) return null;
+                          const dayRows = weekToProgramDays(wk.days, serOpts);
+                          return (
+                            <div key={wnum} className="border-t border-gray-100 pt-2">
+                              <div className="text-xs font-semibold text-gray-600 mb-1">
+                                Week {wnum}{wk.acwr ? ` · ACWR ${wk.acwr.toFixed(2)}` : ''}
+                              </div>
+                              <div className="space-y-1.5">
+                                {wk.days.map((d, di) => {
+                                  if (d.code === 'OFF') return null;
+                                  const row = dayRows[di];
+                                  const hot = d.intent >= 90;
+                                  const linked = row ? row.exercises.filter((ex) => ex.video_url) : [];
+                                  return (
+                                    <div key={di} className="text-xs">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-bold text-gray-700 w-8 shrink-0">{d.day}</span>
+                                        <span className={`font-semibold ${hot ? 'text-orange-600' : 'text-gray-800'}`}>{d.label}</span>
+                                        {d.mound && <span className="text-[9px] font-mono text-amber-600 border border-amber-300 rounded px-1">MOUND</span>}
+                                        <span className="font-mono text-gray-400">
+                                          {d.intent ? `${d.intent}%` : ''}{d.throws ? ` · ${d.throws} thr` : ''}
+                                        </span>
+                                      </div>
+                                      {linked.length > 0 && (
+                                        <div className="ml-10 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                                          {linked.map((ex, xi) => (
+                                            <a key={xi} href={ex.video_url} target="_blank" rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700">
+                                              <ExternalLink className="w-3 h-3" />{ex.name.replace(/^Drill: /, '')}
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-gray-400 mt-2">
+              Every week of the program is shown here before you save. Drill links open curated instruction in a new tab.
+            </div>
+          </div>
+
+          {/* Microcycle */}
+          <div className={card}>
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+              <div className={eyebrow + ' mb-0'}>Weekly microcycle · {phase.label} · wk {weekInPhase}</div>
+              <div className="text-xs font-mono text-gray-500">{totalThrows} throws · {highDays} high-intent {highDays === 1 ? 'day' : 'days'}</div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-400 uppercase tracking-wide">
+                    {['Day', 'Session', 'Intent', 'Vol', 'Dist', 'Focus'].map((h) => <th key={h} className="py-1.5 pr-3 font-medium">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {week.map((d, i) => {
+                    const off = d.intent === 0;
+                    const hot = d.intent >= 90;
+                    return (
+                      <tr key={i} className="border-t border-gray-100">
+                        <td className={`py-2 pr-3 font-mono font-bold ${off ? 'text-gray-300' : 'text-gray-800'}`}>{d.day}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`font-semibold ${off ? 'text-gray-300' : hot ? 'text-orange-600' : 'text-gray-800'}`}>{d.label}</span>
+                          {d.mound && <span className="ml-1.5 text-[9px] font-mono text-amber-600 border border-amber-300 rounded px-1">MOUND</span>}
+                        </td>
+                        <td className={`py-2 pr-3 font-mono font-bold ${off ? 'text-gray-300' : hot ? 'text-orange-600' : d.intent >= 80 ? 'text-amber-600' : 'text-green-600'}`}>{off ? '—' : `${d.intent}%`}</td>
+                        <td className="py-2 pr-3 font-mono text-gray-600">{d.throws || '—'}</td>
+                        <td className="py-2 pr-3 font-mono text-xs text-gray-500">{d.distance || '—'}</td>
+                        <td className="py-2 text-xs text-gray-500">{d.focus}
+                          {d.ps && <div className={`font-mono text-[10px] ${d.ps.capped ? 'text-red-600' : 'text-gray-400'}`}>
+                            ~{d.ps.pitches} pitches · cap {d.ps.max}{d.ps.capped ? ` · CAPPED to ${d.ps.max}` : ` · needs ${d.ps.rest}d rest`}</div>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mound ramp */}
+          {isP && (
+            <div className={card}>
+              <div className={eyebrow}>Mound / bullpen pitch-count ramp → {demand.pitches} pitches</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-400 uppercase tracking-wide">
+                      {['Wk', 'Session', 'Pitches', 'Intent', 'Rest', 'Detail'].map((h) => <th key={h} className="py-1.5 pr-3 font-medium">{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ramp.map((s, i) => (
+                      <tr key={i} className="border-t border-gray-100">
+                        <td className="py-2 pr-3 font-mono text-gray-500">{s.wk}</td>
+                        <td className={`py-2 pr-3 font-semibold ${s.intent >= 100 ? 'text-orange-600' : 'text-gray-800'}`}>{s.day}</td>
+                        <td className={`py-2 pr-3 font-mono font-bold ${s.over ? 'text-red-600' : 'text-gray-700'}`}>{s.pitches}{s.over ? '⚠' : ''}</td>
+                        <td className={`py-2 pr-3 font-mono ${s.intent >= 95 ? 'text-orange-600' : s.intent >= 85 ? 'text-amber-600' : 'text-green-600'}`}>{s.intent}%</td>
+                        <td className="py-2 pr-3 font-mono text-gray-400">{s.rest}d</td>
+                        <td className="py-2 text-xs text-gray-500">{s.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Workload */}
+          <div className="grid grid-cols-2 gap-5">
+            <div className={card}>
+              <div className={eyebrow}>Acute : Chronic (ACWR)</div>
+              <div className={`text-4xl font-mono font-bold ${clr[acwrZone.c].text}`}>{acwr.toFixed(2)}</div>
+              <div className={`text-xs font-mono tracking-wide ${clr[acwrZone.c].text}`}>{acwrZone.label}</div>
+              <div className="mt-2 h-2 rounded bg-gray-100 overflow-hidden">
+                <div className={`h-full ${clr[acwrZone.c].dot}`} style={{ width: `${Math.min(100, (acwr / 2) * 100)}%` }} />
+              </div>
+              <div className="text-xs text-gray-400 mt-2 font-mono">
+                acute {Math.round(acuteWeekly)} / chronic {chronicWeekly} · target {phase.acwr[0]}–{phase.acwr[1]}
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1">Auto-adjusted: volume is scaled into the phase band after building.</div>
+              <label className="flex items-center gap-2 mt-3 text-xs text-gray-500 cursor-pointer">
+                <input type="checkbox" checked={autoChronic} onChange={(e) => setAutoChronic(e.target.checked)} />
+                auto chronic from Trackman
+              </label>
+              {!autoChronic && (
+                <input type="range" min={40} max={400} value={manualChronic}
+                  onChange={(e) => setManualChronic(Number(e.target.value))} className="w-full mt-2" />
+              )}
+            </div>
+            <div className={card}>
+              <div className={eyebrow}>Daily load</div>
+              <div className="flex items-end gap-1.5 h-28">
+                {week.map((d, i) => {
+                  const mx = Math.max(...week.map((x) => x.su), 1);
+                  const h = (d.su / mx) * 100;
+                  const c = d.intent >= 90 ? 'bg-orange-500' : d.intent >= 80 ? 'bg-amber-500' : d.su > 0 ? 'bg-green-500' : 'bg-gray-200';
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                      <div className={`w-full rounded-t ${c}`} style={{ height: `${Math.max(3, h)}%` }} />
+                      <div className="text-[9px] font-mono text-gray-400 mt-1">{d.day[0]}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="text-xs text-gray-400 mt-2">Bars = arm-stress units (throws × intent^1.6 × mound).</div>
+            </div>
+          </div>
+
+          {/* Development path */}
+          <div className={card}>
+            <div className={`${eyebrow} ${gates.canVelo ? 'text-green-600' : 'text-amber-600'}`}>
+              Development path — {gates.canVelo ? 'cleared for high-intent' : 'high-intent gated'}
+            </div>
+            <ul className="space-y-1.5">
+              {gates.priorities.map((p, i) => (
+                <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-orange-500 mt-0.5">▸</span><span>{p}</span></li>
+              ))}
+            </ul>
+            {gates.notes.length > 0 && (
+              <div className="mt-3 p-3 bg-amber-50 border-l-2 border-amber-400 rounded text-xs text-gray-600 space-y-1">
+                {gates.notes.map((n, i) => <div key={i}>{n}</div>)}
+              </div>
+            )}
+            <div className="mt-3 flex items-start gap-2 text-xs text-gray-400">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              Ceiling this week: {Math.min(phase.intentCap, POSITIONS[posId].intentCap, gates.maxIntentTier)}% intent · {POSITIONS[posId].note}
+            </div>
+          </div>
+
+          {/* Save */}
+          <div className={card}>
+            <div className={eyebrow}>Save to library</div>
+            <label className={label}>Program name</label>
+            <input className={inp} value={programName} onChange={(e) => setProgramName(e.target.value)}
+              placeholder={selectedName ? `${selectedName} — Throwing` : 'Select an athlete first'} />
+            <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={assignAthlete} onChange={(e) => setAssignAthlete(e.target.checked)} />
+              Assign to {selectedName || 'athlete'} (appears on their profile)
+            </label>
+            <button onClick={save} disabled={saving || !selectedId}
+              className="mt-4 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg">
+              <Save className="w-4 h-4" /> {saving ? 'Saving…' : `Save ${numWeeks}-Week Program`}
+            </button>
+            {saveMsg && (
+              <div className="mt-3 p-3 rounded bg-green-50 border border-green-200 text-green-700 text-sm flex gap-2">
+                <Check className="w-4 h-4 mt-0.5 shrink-0" />{saveMsg}
+              </div>
+            )}
+            <div className="mt-3 flex items-start gap-2 text-xs text-gray-400">
+              <Calendar className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              Saves {numWeeks} week{numWeeks === 1 ? '' : 's'} on absolute calendar-day offsets (weeks land on the correct days when dropped). Not medical advice — return-to-throw must be cleared clinically.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }) {
+  return (
+    <div>
+      <div className="text-2xl font-mono font-bold text-gray-900 leading-none">{value}</div>
+      <div className="text-[10px] text-gray-500 mt-1 uppercase tracking-wide">{label}</div>
+    </div>
+  );
+}

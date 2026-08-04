@@ -3,6 +3,7 @@ import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { COACH_SKILL_OPTIONS } from './skillOptions';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -249,16 +250,6 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
               Documents
             </button>
             <button
-              onClick={() => setActiveTab('duplicates')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
-                activeTab === 'duplicates'
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              Duplicates
-            </button>
-            <button
               onClick={() => setActiveTab('trackman')}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition ${
                 activeTab === 'trackman'
@@ -323,9 +314,6 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
           )}
           {activeTab === 'documents' && (
             <DocumentsTab players={players} waiverSignatures={waiverSignatures} contractSignatures={contractSignatures} medicalHistories={medicalHistories} />
-          )}
-          {activeTab === 'duplicates' && (
-            <DuplicatesTab users={users} refreshUsers={fetchUsers} onNavigateToProfile={onNavigateToProfile} />
           )}
           {activeTab === 'trackman' && (
             <TrackmanAdminTab users={users} userId={userId} />
@@ -608,6 +596,25 @@ function CoachCard({ coach, refreshUsers }) {
     setSaving(false);
   };
 
+  const handleToggleSkill = async (skill) => {
+    const current = coach.skills || [];
+    const next = current.includes(skill)
+      ? current.filter(s => s !== skill)
+      : [...current, skill];
+    setSaving(true);
+    const { error } = await supabase
+      .from('users')
+      .update({ skills: next })
+      .eq('id', coach.id);
+    if (error) {
+      console.error('Error updating skills:', error);
+      alert('Error updating skills: ' + formatUserError(error));
+    } else {
+      await refreshUsers();
+    }
+    setSaving(false);
+  };
+
   return (
     <div className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition">
       <div className="flex items-center justify-between">
@@ -661,6 +668,25 @@ function CoachCard({ coach, refreshUsers }) {
                   </button>
                 </div>
               )}
+            </div>
+            {/* Skills the coach can cover for booking (#245) */}
+            <div className="mt-2">
+              <p className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">Skills covered</p>
+              <div className="flex flex-wrap gap-1.5">
+                {COACH_SKILL_OPTIONS.map(skill => {
+                  const active = (coach.skills || []).includes(skill);
+                  return (
+                    <button
+                      key={skill}
+                      onClick={() => handleToggleSkill(skill)}
+                      disabled={saving}
+                      className={`text-xs px-2 py-0.5 rounded-full border transition disabled:opacity-50 ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}`}
+                    >
+                      {skill}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             {coach.team_members && coach.team_members.length > 0 && (
               <p className="text-xs text-gray-500 mt-1">
@@ -856,6 +882,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   // Inactive, Archived and "All Statuses" are still one click away below.
   const [filterStatus, setFilterStatus] = useState('Active');
   const [sortBy, setSortBy] = useState('name');
+  const [showDuplicates, setShowDuplicates] = useState(false);
 
   const getUserStatus = (u) => {
     if (u.role === 'player') {
@@ -963,20 +990,32 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
           <option value="age_asc">Sort: Oldest First</option>
           <option value="age_desc">Sort: Youngest First</option>
         </select>
+        <button
+          onClick={() => setShowDuplicates(d => !d)}
+          className={`border rounded-lg px-3 py-2 text-sm font-medium transition ${showDuplicates ? 'bg-orange-100 text-orange-700 border-orange-300' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+        >
+          Find Duplicates
+        </button>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-gray-500">
-        <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Active {statusCounts.Active}</span>
-        <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">Inactive {statusCounts.Inactive}</span>
-        <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Archived {statusCounts.Archived}</span>
-        <span className="ml-auto text-gray-400">{filteredUsers.length} shown</span>
-      </div>
+      {showDuplicates ? (
+        <DuplicatesTab users={users} refreshUsers={refreshUsers} onNavigateToProfile={onNavigateToProfile} />
+      ) : (
+        <>
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Active {statusCounts.Active}</span>
+            <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">Inactive {statusCounts.Inactive}</span>
+            <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Archived {statusCounts.Archived}</span>
+            <span className="ml-auto text-gray-400">{filteredUsers.length} shown</span>
+          </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {sortedUsers.map(user => (
-          <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
-        ))}
-      </div>
+          <div className="grid grid-cols-1 gap-4">
+            {sortedUsers.map(user => (
+              <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
+            ))}
+          </div>
+        </>
+      )}
 
       {showCreateUser && (
         <CreateUserModal
@@ -3705,7 +3744,8 @@ function CoachTasksTab({ coaches, userId }) {
 
   const filtered = tasks.filter(t => {
     if (filterCoach !== 'all' && t.assigned_to !== filterCoach) return false;
-    if (filterStatus !== 'all' && t.status !== filterStatus) return false;
+    if (filterStatus === 'overdue' && !isOverdue(t)) return false;
+    if (filterStatus !== 'all' && filterStatus !== 'overdue' && t.status !== filterStatus) return false;
     if (filterFrequency !== 'all' && t.frequency !== filterFrequency) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -3758,6 +3798,7 @@ function CoachTasksTab({ coaches, userId }) {
           <option value="pending">Pending</option>
           <option value="in_progress">In Progress</option>
           <option value="completed">Completed</option>
+          <option value="overdue">Overdue</option>
         </select>
         <select value={filterFrequency} onChange={e => setFilterFrequency(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
           <option value="all">All Frequencies</option>

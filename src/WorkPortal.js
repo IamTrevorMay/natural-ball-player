@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import {
-  Briefcase, Home, Calendar, MessageSquare, DollarSign, Clock, Plane,
+  Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
-  ShoppingBag
+  ShoppingBag, UserPlus, BarChart3
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -20,6 +20,8 @@ import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
 import WorkInvoices from './WorkInvoices';
 import WorkStore from './WorkStore';
+import Leads from './Leads';
+import UsageDashboard from './UsageDashboard';
 import NotificationBell from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
@@ -27,6 +29,7 @@ const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
   'work-schedule':              { title: 'Staff Schedule',         description: 'Shifts, meetings, and the Facility view in one place.' },
   'work-messages':              { title: 'Messages',               description: 'Channels and DMs with file/image attachments and real-time updates.' },
+  'work-pay-hub':               { title: 'Pay & Hours',            description: 'Your pay, invoices, hours, and time off in one place.' },
   'work-pay':                   { title: 'My Pay',                 description: 'Your paystubs and tax documents.' },
   'work-hours':                 { title: 'My Hours',               description: 'Submit and track the hours you work.' },
   'work-time-off':              { title: 'Time Off',               description: 'Request time off and check the status of your requests.' },
@@ -41,7 +44,42 @@ const PAGE_META = {
   'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
   'work-admin-invoices':        { title: 'Coach Invoices',         description: 'Review and manage coach-submitted invoices.' },
   'work-admin-store':           { title: 'Store',                  description: 'Manage Square catalog and view all purchases.' },
+  'work-admin-leads':           { title: 'Leads',                  description: 'Outside customers who signed up to book & pay for sessions.' },
+  'work-admin-usage':           { title: 'Usage (V2 research)',    description: 'Anonymous product-usage analytics.' },
 };
+
+function WorkMyFinancesHub({ userId, userRole }) {
+  const [tab, setTab] = useState('pay');
+  const TABS = [
+    { id: 'pay',      label: 'My Pay' },
+    { id: 'invoices', label: 'My Invoices' },
+    { id: 'hours',    label: 'My Hours' },
+    { id: 'time-off', label: 'Time Off' },
+  ];
+  return (
+    <div>
+      <div className="flex border-b border-gray-200 mb-6">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
+              tab === t.id
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'pay'      && <WorkMyPay userId={userId} />}
+      {tab === 'invoices' && <WorkInvoices userId={userId} userRole={userRole} />}
+      {tab === 'hours'    && <WorkMyHours userId={userId} />}
+      {tab === 'time-off' && <WorkTimeOff userId={userId} />}
+    </div>
+  );
+}
 
 function ComingSoon({ viewKey }) {
   const meta = PAGE_META[viewKey] || { title: 'Coming Soon', description: '' };
@@ -81,12 +119,11 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkDirectory />;
       case 'work-docs':
         return <WorkDocs />;
+      case 'work-pay-hub':
       case 'work-pay':
-        return <WorkMyPay userId={userId} />;
       case 'work-hours':
-        return <WorkMyHours userId={userId} />;
       case 'work-time-off':
-        return <WorkTimeOff userId={userId} />;
+        return <WorkMyFinancesHub userId={userId} userRole={userRole} />;
       case 'work-schedule':
         return <WorkSchedule userId={userId} userRole={userRole} />;
       case 'work-messages':
@@ -102,11 +139,15 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
       case 'work-admin-time-off':
         return userRole === 'admin' ? <WorkAdminTimeOff userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-invoices':
-        return <WorkInvoices userId={userId} userRole={userRole} />;
+        return <WorkMyFinancesHub userId={userId} userRole={userRole} />;
       case 'work-admin-invoices':
         return userRole === 'admin' ? <WorkInvoices userId={userId} userRole={userRole} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-store':
         return userRole === 'admin' ? <WorkStore /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-leads':
+        return userRole === 'admin' ? <Leads /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-usage':
+        return userRole === 'admin' ? <UsageDashboard /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
@@ -167,11 +208,11 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
   const isAdmin = userRole === 'admin';
   const [adminExpanded, setAdminExpanded] = useState(true);
 
-  const NavItem = ({ id, icon: Icon, label }) => (
+  const NavItem = ({ id, icon: Icon, label, matchIds }) => (
     <button
       onClick={() => setCurrentView(id)}
       className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-        currentView === id ? 'bg-indigo-600' : 'hover:bg-gray-800'
+        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-600' : 'hover:bg-gray-800'
       }`}
     >
       <Icon size={18} />
@@ -228,10 +269,8 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         <NavItem id="work-home"      icon={Home}          label="Home" />
         <NavItem id="work-schedule"  icon={Calendar}      label="Schedule" />
         <NavItem id="work-messages"  icon={MessageSquare} label="Messages" />
-        <NavItem id="work-pay"       icon={DollarSign}    label="My Pay" />
-        <NavItem id="work-invoices"  icon={FileText}      label="My Invoices" />
-        <NavItem id="work-hours"     icon={Clock}         label="My Hours" />
-        <NavItem id="work-time-off"  icon={Plane}         label="Time Off" />
+        <NavItem id="work-pay-hub" icon={DollarSign} label="Pay & Hours"
+          matchIds={['work-pay', 'work-invoices', 'work-hours', 'work-time-off']} />
         <NavItem id="work-docs"      icon={FileText}      label="Documents" />
         <NavItem id="work-directory" icon={Users}         label="Directory" />
         <NavItem id="work-roadmap"   icon={Map}           label="Roadmap" />
@@ -253,6 +292,8 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-docs"           icon={FolderOpen}  label="Manage Documents" />
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
+                <SubNavItem id="work-admin-leads"          icon={UserPlus}    label="Leads" />
+                <SubNavItem id="work-admin-usage"          icon={BarChart3}   label="Usage (V2 research)" />
                 <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>
             )}

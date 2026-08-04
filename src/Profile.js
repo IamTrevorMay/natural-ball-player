@@ -13,7 +13,7 @@ import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import AssignPackageModal from './AssignPackageModal';
 import PackagesModal from './PackagesModal';
-import { BadgePercent, CreditCard } from 'lucide-react';
+import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { assignDefaultProProgram } from './defaultProgram';
@@ -378,6 +378,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         weight: data.weight || '',
         date_of_birth: data.date_of_birth || '',
         sport: profile?.sport || '',
+        training_age_years: profile?.training_age_months != null ? String(Math.round((profile.training_age_months / 12) * 10) / 10) : '',
         instagram: data.instagram || '',
         twitter: data.twitter || '',
         organization: data.organization || '',
@@ -441,9 +442,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       // Update sport in player_profiles
       const profile = userData._profile;
       if (profile) {
+        // Training age is entered in years on the profile (single source of truth for the
+        // generators) but stored as months in player_profiles.training_age_months.
+        const taYears = parseFloat(editForm.training_age_years);
+        const trainingAgeMonths = Number.isFinite(taYears) ? Math.max(0, Math.round(taYears * 12)) : null;
         const { error: profileError } = await supabase
           .from('player_profiles')
-          .update({ sport: editForm.sport || null })
+          .update({ sport: editForm.sport || null, training_age_months: trainingAgeMonths })
           .eq('user_id', userId);
 
         if (profileError) throw profileError;
@@ -1071,12 +1076,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       const mealPlayerQ = supabase
         .from('meal_plan_assignments')
-        .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description)')
+        .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description, meal_plan_items(sort_order, meals(id, name, meal_type, description, calories, protein_g, carbs_g, fat_g)))')
         .eq('player_id', userId);
       const mealTeamQ = teamIds.length > 0
         ? supabase
             .from('meal_plan_assignments')
-            .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description)')
+            .select('id, meal_plan_id, team_id, start_date, end_date, created_at, meal_plans(id, name, description, meal_plan_items(sort_order, meals(id, name, meal_type, description, calories, protein_g, carbs_g, fat_g)))')
             .in('team_id', teamIds)
         : Promise.resolve({ data: [] });
 
@@ -1627,6 +1632,14 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const profile = userData._profile;
   const canEditProfile = userRole === 'coach' || userRole === 'admin';
 
+  const handleDeleteAssessment = async (subId) => {
+    if (!window.confirm('Delete this assessment submission? This cannot be undone.')) return;
+    const { error } = await supabase.from('assessment_submissions').delete().eq('id', subId);
+    if (error) { alert('Error deleting assessment: ' + formatUserError(error)); return; }
+    setAssessmentSubmissions(prev => prev.filter(s => s.id !== subId));
+    if (expandedSubmission === subId) setExpandedSubmission(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2172,13 +2185,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   <div className="space-y-2">
                     {assessmentSubmissions.map(sub => (
                       <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
-                        <button
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={() => {
                             const expanding = expandedSubmission !== sub.id;
                             setExpandedSubmission(expanding ? sub.id : null);
                             if (expanding) fetchAgeGroupAverages(sub.template_id, sub.assessment_templates?.schema || []);
                           }}
-                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left"
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click(); }}
+                          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left cursor-pointer"
                         >
                           <div className="flex items-center space-x-3">
                             <CheckCircle size={16} className="text-green-500" />
@@ -2189,8 +2205,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               </p>
                             </div>
                           </div>
-                          {expandedSubmission === sub.id ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-                        </button>
+                          <div className="flex items-center space-x-2">
+                            {canEditProfile && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteAssessment(sub.id); }}
+                                className="p-1 text-gray-400 hover:text-red-600 transition"
+                                title="Delete this assessment"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                            {expandedSubmission === sub.id ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                          </div>
+                        </div>
                         {expandedSubmission === sub.id && (
                           <div className="border-t border-gray-200 p-4 bg-gray-50">
                             {ageGroupAverages[sub.template_id] && (
@@ -3548,6 +3575,40 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               {a.team_id && <div className="mt-0.5 inline-block px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Team</div>}
                             </div>
                           </div>
+                          {(() => {
+                            const items = [...(a.meal_plans?.meal_plan_items || [])]
+                              .sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0))
+                              .map(it => it.meals).filter(Boolean);
+                            if (items.length === 0) return null;
+                            const tot = items.reduce((s, m) => ({
+                              cal: s.cal + (m.calories || 0), p: s.p + (m.protein_g || 0),
+                              c: s.c + (m.carbs_g || 0), f: s.f + (m.fat_g || 0),
+                            }), { cal: 0, p: 0, c: 0, f: 0 });
+                            return (
+                              <div className="mt-2 pt-2 border-t border-gray-100">
+                                <div className="flex flex-wrap gap-1.5 mb-2 text-[11px]">
+                                  <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 font-medium">{Math.round(tot.cal)} kcal</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">P {Math.round(tot.p)}g</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">C {Math.round(tot.c)}g</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-700">F {Math.round(tot.f)}g</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                  {items.map(m => (
+                                    <div key={m.id} className="flex items-start justify-between gap-2 text-xs">
+                                      <div className="min-w-0">
+                                        <span className="font-medium text-gray-800">{m.meal_type ? `${m.meal_type}: ` : ''}</span>
+                                        <span className="text-gray-700">{m.name}</span>
+                                        {m.description && <div className="text-gray-400">{m.description}</div>}
+                                      </div>
+                                      <div className="text-gray-500 whitespace-nowrap flex-shrink-0">
+                                        {Math.round(m.calories || 0)} kcal · {Math.round(m.protein_g || 0)}/{Math.round(m.carbs_g || 0)}/{Math.round(m.fat_g || 0)}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -3871,6 +3932,33 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   )}
                 </div>
               </div>
+
+              {userData.role === 'player' && (
+                <div className="flex items-center space-x-3">
+                  <Dumbbell className="text-gray-400" size={20} />
+                  <div className="flex-1">
+                    <p className="text-sm text-gray-600">Training age (years lifting)</p>
+                    {editing ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={editForm.training_age_years}
+                        onChange={(e) => setEditForm({...editForm, training_age_years: e.target.value})}
+                        placeholder="e.g., 2"
+                        className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <p className="text-gray-900">
+                        {userData._profile?.training_age_months != null
+                          ? `${Math.round((userData._profile.training_age_months / 12) * 10) / 10} yrs`
+                          : 'Not set'}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-gray-400 mt-0.5">Years of consistent resistance training — used by the program generators.</p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center space-x-3">
                 <Calendar className="text-gray-400" size={20} />

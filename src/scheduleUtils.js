@@ -27,12 +27,15 @@ export function generateOccurrenceDates(startDate, rule, rangeStart, rangeEnd) {
   const interval = rule.interval || 1;
   const maxCount = rule.count || 365;
   const until = rule.until ? new Date(rule.until + 'T23:59:59') : null;
+  const rangeStartStr = fmtLocalDate(rangeStart);
+  const rangeEndStr = fmtLocalDate(rangeEnd);
   let current = new Date(start);
   let count = 0;
   while (count < maxCount) {
     if (until && current > until) break;
-    if (current > rangeEnd) break;
-    if (current >= rangeStart && current <= rangeEnd) {
+    const currentStr = fmtLocalDate(current);
+    if (currentStr > rangeEndStr) break;
+    if (currentStr >= rangeStartStr && currentStr <= rangeEndStr) {
       dates.push(new Date(current));
     }
     switch (rule.freq) {

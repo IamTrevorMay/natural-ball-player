@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin } from 'lucide-react';
+import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X, ExternalLink } from 'lucide-react';
 
 const EMBED_HOST_ALLOWLIST = new Set([
   'www.youtube.com',
@@ -210,7 +210,7 @@ export default function KnowledgeBase({ userId, userRole }) {
             <AIAssistant userId={userId} />
           )}
           {activeView === 'situational' && (
-            <SituationalView />
+            <SituationalView userRole={userRole} />
           )}
         </div>
       </div>
@@ -233,10 +233,34 @@ const STATIC_POSITIONS = [
   { code: 'TEAM', label: 'Team Plays' },
 ];
 
-function SituationalView() {
+function SituationalView({ userRole }) {
   const [plays, setPlays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePosition, setActivePosition] = useState(null);
+  const isStaff = userRole === 'admin' || userRole === 'coach';
+  // Per-play video UI: which play's embed is open, which is being edited.
+  const [openVideoId, setOpenVideoId] = useState(null);
+  const [editingVideoId, setEditingVideoId] = useState(null);
+  const [videoDraft, setVideoDraft] = useState('');
+  const [savingVideo, setSavingVideo] = useState(false);
+
+  const saveVideoUrl = async (play) => {
+    const raw = videoDraft.trim();
+    if (raw && !toSafeEmbedUrl(raw)) {
+      alert('That link can\'t be embedded. Paste a standard YouTube link (https://www.youtube.com/watch?v=...), or a Vimeo/Loom link.');
+      return;
+    }
+    setSavingVideo(true);
+    const { error } = await supabase
+      .from('situational_plays')
+      .update({ video_url: raw || null })
+      .eq('id', play.id);
+    setSavingVideo(false);
+    if (error) { alert('Error saving video link: ' + error.message); return; }
+    setPlays(prev => prev.map(p => (p.id === play.id ? { ...p, video_url: raw || null } : p)));
+    setEditingVideoId(null);
+    if (!raw && openVideoId === play.id) setOpenVideoId(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -331,19 +355,96 @@ function SituationalView() {
                     {group.label}
                   </div>
                   <div className="space-y-3">
-                    {group.items.map((play, i) => (
-                      <div key={play.id} className="bg-white border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
-                            {i + 1}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-semibold text-gray-900">{play.situation}</div>
-                            <div className="text-sm text-gray-600 mt-1">{play.responsibility}</div>
+                    {group.items.map((play, i) => {
+                      const embedUrl = toSafeEmbedUrl(play.video_url);
+                      const videoOpen = openVideoId === play.id;
+                      const editingVideo = editingVideoId === play.id;
+                      return (
+                        <div key={play.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">
+                              {i + 1}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="font-semibold text-gray-900">{play.situation}</div>
+                                {isStaff && (
+                                  <button
+                                    onClick={() => {
+                                      if (editingVideo) { setEditingVideoId(null); return; }
+                                      setEditingVideoId(play.id);
+                                      setVideoDraft(play.video_url || '');
+                                    }}
+                                    className="shrink-0 p-1 text-gray-300 hover:text-blue-600 transition"
+                                    title={play.video_url ? 'Edit example video link' : 'Add example video link'}
+                                  >
+                                    <Pencil size={13} />
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-600 mt-1">{play.responsibility}</div>
+                              {editingVideo && (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <input
+                                    type="url"
+                                    value={videoDraft}
+                                    onChange={(e) => setVideoDraft(e.target.value)}
+                                    placeholder="https://www.youtube.com/watch?v=..."
+                                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  />
+                                  <button
+                                    onClick={() => saveVideoUrl(play)}
+                                    disabled={savingVideo}
+                                    className="px-2.5 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition disabled:opacity-50"
+                                  >
+                                    {savingVideo ? 'Saving…' : 'Save'}
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingVideoId(null)}
+                                    className="p-1.5 text-gray-400 hover:text-gray-600 transition"
+                                    title="Cancel"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              )}
+                              {embedUrl && !editingVideo && (
+                                <button
+                                  onClick={() => setOpenVideoId(videoOpen ? null : play.id)}
+                                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition"
+                                >
+                                  <Play size={12} className={videoOpen ? 'rotate-90 transition-transform' : 'transition-transform'} />
+                                  <span>{videoOpen ? 'Hide example' : 'Watch example'}</span>
+                                </button>
+                              )}
+                              {embedUrl && videoOpen && !editingVideo && (
+                                <>
+                                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 relative" style={{ paddingBottom: '56.25%', height: 0 }}>
+                                    <iframe
+                                      src={embedUrl}
+                                      title={`Example: ${play.situation}`}
+                                      className="absolute inset-0 w-full h-full"
+                                      frameBorder="0"
+                                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                      allowFullScreen
+                                    />
+                                  </div>
+                                  <a
+                                    href={play.video_url}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition"
+                                  >
+                                    <ExternalLink size={10} />
+                                    Open in YouTube
+                                  </a>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
