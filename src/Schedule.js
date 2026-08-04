@@ -2307,7 +2307,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     onCellClick({ date: dateStr, lane, startTime: slot, endTime: endSlot });
   };
 
-  const SLOT_WIDTH = 28; // px per 15-min slot (#261; stacked hour labels fit, #263)
+  const SLOT_WIDTH = 20; // px per 15-min slot (#261/#266; narrower so more hours visible without scrolling)
 
   // Mirror a horizontal scrollbar above the grid so staff can scroll time
   // without dragging to the bottom of a tall table. The two scroll containers
