@@ -845,10 +845,10 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
       const { data: equip } = await supabase.from('equipment_sizes').select('id').eq('user_id', userId).limit(1);
       if (cancelled) return;
       if (!equip || equip.length === 0) missing.push('Equipment Sizes');
-      // 3. Goals & notes
-      const { data: goals } = await supabase.from('player_notes').select('id').eq('player_id', userId).limit(1);
+      // 3. Goals — check user_goals (player-authored) not player_notes (staff-only)
+      const { data: goals } = await supabase.from('user_goals').select('id').eq('user_id', userId).limit(1);
       if (cancelled) return;
-      if (!goals || goals.length === 0) missing.push('Goals & Notes');
+      if (!goals || goals.length === 0) missing.push('Goals');
       // 4. Documents (waiver)
       if (!waiverSigned) missing.push('Documents (waiver not signed)');
 
