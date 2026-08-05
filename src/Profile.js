@@ -232,6 +232,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [attendanceMap, setAttendanceMap] = useState({});
   const [attendanceFilter, setAttendanceFilter] = useState('all');
   const [savingAttendance, setSavingAttendance] = useState({});
+  const [sessionReservations, setSessionReservations] = useState([]);
   const [assessmentTemplates, setAssessmentTemplates] = useState([]);
   const [assessmentSubmissions, setAssessmentSubmissions] = useState([]);
   const [medicalHistory, setMedicalHistory] = useState(null);
@@ -1290,6 +1291,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       allEvents.sort((a, b) => b.event_date.localeCompare(a.event_date));
       setAttendanceEvents(allEvents);
 
+      // Fetch training slot reservations (sessions) for this player
+      const { data: slotRes } = await supabase
+        .from('slot_reservations')
+        .select('id, slot_id, slot_date, status, attendance, training_slots(start_time, end_time, duration_minutes, notes)')
+        .eq('player_id', userId)
+        .neq('status', 'cancelled')
+        .order('slot_date', { ascending: false });
+      setSessionReservations(slotRes || []);
+
       if (allEvents.length === 0) {
         setAttendanceStats({ practice: { attended: 0, total: 0 }, game: { attended: 0, total: 0 }, workout: { attended: 0, total: 0 } });
         setAttendanceMap({});
@@ -2014,6 +2024,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   { value: 'practice', label: 'Practices', color: 'bg-green-100 text-green-700' },
                   { value: 'game', label: 'Games', color: 'bg-blue-100 text-blue-700' },
                   { value: 'workout', label: 'Lifts', color: 'bg-amber-100 text-amber-700' },
+                  { value: 'session', label: 'Sessions', color: 'bg-purple-100 text-purple-700' },
                 ].map(f => (
                   <button
                     key={f.value}
@@ -2030,73 +2041,127 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               </div>
 
               <div className="space-y-2">
-                {attendanceEvents
-                  .filter(ev => attendanceFilter === 'all' || ev.event_type === attendanceFilter)
-                  .length === 0 && (
-                  <p className="text-sm text-gray-500 italic text-center py-8">No past events found.</p>
-                )}
-                {attendanceEvents
-                  .filter(ev => attendanceFilter === 'all' || ev.event_type === attendanceFilter)
-                  .map(ev => {
-                    const rec = attendanceMap[ev.id];
-                    const currentStatus = rec?.status || null;
-                    const isSaving = savingAttendance[ev.id];
-                    const typeBadge = ev.event_type === 'practice'
-                      ? 'bg-green-100 text-green-700'
-                      : ev.event_type === 'game'
-                        ? 'bg-blue-100 text-blue-700'
-                        : 'bg-amber-100 text-amber-700';
-                    const typeLabel = ev.event_type === 'practice' ? 'Practice' : ev.event_type === 'game' ? 'Game' : 'Lift';
-                    const displayName = ev.title || ev.opponent || typeLabel;
-                    const dateStr = new Date(ev.event_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                {attendanceFilter !== 'session' && (
+                  <>
+                    {attendanceEvents
+                      .filter(ev => attendanceFilter === 'all' || ev.event_type === attendanceFilter)
+                      .length === 0 && (
+                      <p className="text-sm text-gray-500 italic text-center py-8">No past events found.</p>
+                    )}
+                    {attendanceEvents
+                      .filter(ev => attendanceFilter === 'all' || ev.event_type === attendanceFilter)
+                      .map(ev => {
+                        const rec = attendanceMap[ev.id];
+                        const currentStatus = rec?.status || null;
+                        const isSaving = savingAttendance[ev.id];
+                        const typeBadge = ev.event_type === 'practice'
+                          ? 'bg-green-100 text-green-700'
+                          : ev.event_type === 'game'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-amber-100 text-amber-700';
+                        const typeLabel = ev.event_type === 'practice' ? 'Practice' : ev.event_type === 'game' ? 'Game' : 'Lift';
+                        const displayName = ev.title || ev.opponent || typeLabel;
+                        const dateStr = new Date(ev.event_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-                    return (
-                      <div key={ev.id} className="flex items-center justify-between border border-gray-200 rounded-lg p-3">
-                        <div className="flex items-center space-x-3 min-w-0">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${typeBadge}`}>{typeLabel}</span>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{displayName}</p>
-                            <p className="text-xs text-gray-500">{dateStr}</p>
+                        return (
+                          <div key={ev.id} className="flex items-center justify-between border border-gray-200 rounded-lg p-3">
+                            <div className="flex items-center space-x-3 min-w-0">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${typeBadge}`}>{typeLabel}</span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">{displayName}</p>
+                                <p className="text-xs text-gray-500">{dateStr}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-1 flex-shrink-0">
+                              <button
+                                onClick={() => handleMarkAttendance(ev.id, 'present')}
+                                disabled={isSaving}
+                                className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                  currentStatus === 'present'
+                                    ? 'bg-green-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'
+                                } disabled:opacity-50`}
+                              >
+                                Present
+                              </button>
+                              <button
+                                onClick={() => handleMarkAttendance(ev.id, 'absent')}
+                                disabled={isSaving}
+                                className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                  currentStatus === 'absent'
+                                    ? 'bg-red-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-red-100 hover:text-red-700'
+                                } disabled:opacity-50`}
+                              >
+                                Absent
+                              </button>
+                              <button
+                                onClick={() => handleMarkAttendance(ev.id, 'excused')}
+                                disabled={isSaving}
+                                className={`px-2.5 py-1 rounded text-xs font-medium transition ${
+                                  currentStatus === 'excused'
+                                    ? 'bg-yellow-500 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-yellow-100 hover:text-yellow-700'
+                                } disabled:opacity-50`}
+                              >
+                                Excused
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center space-x-1 flex-shrink-0">
-                          <button
-                            onClick={() => handleMarkAttendance(ev.id, 'present')}
-                            disabled={isSaving}
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition ${
-                              currentStatus === 'present'
-                                ? 'bg-green-600 text-white'
-                                : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'
-                            } disabled:opacity-50`}
-                          >
-                            Present
-                          </button>
-                          <button
-                            onClick={() => handleMarkAttendance(ev.id, 'absent')}
-                            disabled={isSaving}
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition ${
-                              currentStatus === 'absent'
-                                ? 'bg-red-600 text-white'
-                                : 'bg-gray-100 text-gray-600 hover:bg-red-100 hover:text-red-700'
-                            } disabled:opacity-50`}
-                          >
-                            Absent
-                          </button>
-                          <button
-                            onClick={() => handleMarkAttendance(ev.id, 'excused')}
-                            disabled={isSaving}
-                            className={`px-2.5 py-1 rounded text-xs font-medium transition ${
-                              currentStatus === 'excused'
-                                ? 'bg-yellow-500 text-white'
-                                : 'bg-gray-100 text-gray-600 hover:bg-yellow-100 hover:text-yellow-700'
-                            } disabled:opacity-50`}
-                          >
-                            Excused
-                          </button>
-                        </div>
+                        );
+                      })}
+                  </>
+                )}
+                {attendanceFilter === 'session' && (
+                  sessionReservations.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic text-center py-8">No sessions found.</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center space-x-3 px-3 py-2 bg-purple-50 rounded-lg text-sm">
+                        <span className="text-purple-700 font-medium">
+                          {sessionReservations.filter(r => r.slot_date < fmtLocalDate(new Date()) && (r.attendance === 'present' || r.attendance === 'late')).length} attended
+                        </span>
+                        <span className="text-gray-400">·</span>
+                        <span className="text-blue-600 font-medium">
+                          {sessionReservations.filter(r => r.slot_date >= fmtLocalDate(new Date())).length} upcoming
+                        </span>
                       </div>
-                    );
-                  })}
+                      {sessionReservations.map(r => {
+                        const slot = r.training_slots;
+                        const today = fmtLocalDate(new Date());
+                        const isFuture = r.slot_date >= today;
+                        const dateStr = new Date(r.slot_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                        const timeStr = slot?.start_time ? (() => {
+                          const [h, m] = slot.start_time.split(':').map(Number);
+                          return `${h % 12 || 12}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+                        })() : null;
+                        const attBadge = r.attendance === 'present' ? 'bg-green-100 text-green-700'
+                          : r.attendance === 'late' ? 'bg-yellow-100 text-yellow-700'
+                          : r.attendance === 'no_show' ? 'bg-red-100 text-red-700'
+                          : isFuture ? 'bg-blue-100 text-blue-700'
+                          : 'bg-gray-100 text-gray-500';
+                        const attLabel = r.attendance === 'present' ? 'Present'
+                          : r.attendance === 'late' ? 'Late'
+                          : r.attendance === 'no_show' ? 'No Show'
+                          : isFuture ? (r.status === 'confirmed' ? 'Confirmed' : 'Pending')
+                          : 'No Record';
+                        return (
+                          <div key={r.id} className="flex items-center justify-between border border-gray-200 rounded-lg p-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-900">{dateStr}{timeStr ? ` · ${timeStr}` : ''}</p>
+                              {slot?.notes && (
+                                <p className="text-xs text-gray-500 truncate">
+                                  {slot.notes.split('--- Exercises ---')[0].trim().split('\n')[0]}
+                                </p>
+                              )}
+                            </div>
+                            <span className={`ml-3 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap flex-shrink-0 ${attBadge}`}>{attLabel}</span>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )
+                )}
               </div>
             </div>
           )}
