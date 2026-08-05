@@ -985,7 +985,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
         onSwitchRole={hasSecondary ? () => { setViewMode(viewMode === userRole ? secondaryRole : userRole); setSidebarOpen(false); } : null}
         mobileOpen={sidebarOpen}
       />
-      <div className="flex-1 md:ml-64">
+      <div className="flex-1 min-w-0 md:ml-64">
         <div className="sticky top-0 z-30 bg-white border-b px-4 md:px-8 py-3 flex items-center justify-between">
           <button onClick={() => setSidebarOpen(true)} className="md:hidden p-1 text-gray-600 hover:text-gray-900">
             <Menu size={24} />

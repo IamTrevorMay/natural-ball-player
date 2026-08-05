@@ -1333,7 +1333,7 @@ export default function Schedule({ userId, userRole }) {
                 </div>
                 )}
               </div>
-              <div className="p-6">
+              <div className={viewMode === 'lanes' ? 'p-3' : 'p-6'}>
                 {selectedCoach ? (
                   <CoachSlotsWeekView
                     selectedDate={selectedDate}
@@ -2307,13 +2307,66 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     onCellClick({ date: dateStr, lane, startTime: slot, endTime: endSlot });
   };
 
-  const SLOT_WIDTH = 20; // px per 15-min slot (#261/#266; narrower so more hours visible without scrolling)
+  const LANE_COL_WIDTH = 76; // px, lane-name column — sticky, needs a real width (#273)
 
   // Mirror a horizontal scrollbar above the grid so staff can scroll time
   // without dragging to the bottom of a tall table. The two scroll containers
   // stay in sync; the top one just holds a spacer the width of the table.
   const topScrollRef = useRef(null);
   const bodyScrollRef = useRef(null);
+
+  // Every time column gets the SAME exact integer pixel width, computed here
+  // and applied via <colgroup> below — letting the browser split leftover
+  // width itself (the previous approach) drops a stray extra pixel on some
+  // columns and not others, so the grid boxes weren't quite even (#273,
+  // Cordell). A ResizeObserver (not a one-time mount measure) keeps this
+  // correct across window resizes and any other layout change to the
+  // container. Floored, with an 8px minimum, so the table is never a
+  // fraction of a column wider than the container — being a few px short is
+  // fine and invisible; being over means horizontal scroll.
+  //
+  // Flooring 60 columns leaves up to 59px of leftover width unclaimed by any
+  // column, which used to show up as a visible gap at the right edge. That
+  // remainder goes to the lane-name column instead (laneCol) so the grid
+  // still ends flush with the container — the time columns stay exactly
+  // equal either way. On the rare narrow-screen case where the 8px floor
+  // already makes the table wider than the container, remainder goes
+  // negative; laneCol is clamped so it never shrinks below the base 76px.
+  //
+  // Two feedback-loop guards (#273): (1) a 4px safety margin is subtracted
+  // from the measured width before computing anything, so the table is
+  // always a little narrower than its container, never wider — sizing the
+  // table to EXACTLY the measured width let the flex-child container grow
+  // to fit the table, which made the next measurement wider, which grew the
+  // table again, etc. (2) the setters only fire when the computed value
+  // actually changed, using the functional updater form so the comparison
+  // is against the real latest state rather than this effect's stale
+  // closure — otherwise an identical re-measurement still triggers a
+  // render, which is what let the loop keep going instead of settling.
+  const [slotWidth, setSlotWidth] = useState(8);
+  const [laneCol, setLaneCol] = useState(LANE_COL_WIDTH);
+  useEffect(() => {
+    const el = bodyScrollRef.current;
+    if (!el) return;
+    const compute = (containerWidth) => {
+      const usable = containerWidth - 4;
+      const raw = Math.floor((usable - LANE_COL_WIDTH) / timeSlots.length);
+      const slot = Math.max(raw, 8);
+      const remainder = usable - LANE_COL_WIDTH - slot * timeSlots.length;
+      const nextLaneCol = LANE_COL_WIDTH + Math.max(remainder, 0);
+      setSlotWidth(prev => (prev === slot ? prev : slot));
+      setLaneCol(prev => (prev === nextLaneCol ? prev : nextLaneCol));
+    };
+    compute(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) compute(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // scrollWidth here is purely cosmetic: it sizes the spacer in the mirrored
+  // top scrollbar to match the real table.
   const [scrollWidth, setScrollWidth] = useState(0);
   useEffect(() => {
     const measure = () => { if (bodyScrollRef.current) setScrollWidth(bodyScrollRef.current.scrollWidth); };
@@ -2339,15 +2392,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
       <div
         ref={topScrollRef}
         onScroll={syncFromTop}
-        className="overflow-x-scroll overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
+        className="overflow-x-auto overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
       >
         <div style={{ width: scrollWidth, height: 16 }} />
       </div>
-      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-scroll overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
-        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
+      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 230px)' }}>
+        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: laneCol + slotWidth * timeSlots.length, minWidth: LANE_COL_WIDTH + 8 * timeSlots.length }}>
+          <colgroup>
+            <col style={{ width: laneCol }} />
+            {timeSlots.map((slot) => <col key={slot} style={{ width: slotWidth }} />)}
+          </colgroup>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
-              <th className="border border-gray-200 bg-gray-50 px-2 py-2 text-left text-xs font-semibold text-gray-700 sticky left-0 z-30" style={{ width: 130, minWidth: 130 }}>
+              <th className="border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-left text-[9px] font-semibold text-gray-700 sticky left-0 z-30 truncate" style={{ width: laneCol, minWidth: laneCol }} title="Lane">
                 Lane
               </th>
               {timeSlots.map((slot) => {
@@ -2355,8 +2412,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                 return (
                   <th
                     key={slot}
-                    className={`border border-gray-200 px-0 py-1 text-center text-[10px] font-medium text-gray-600 ${isHour ? 'bg-gray-100' : 'bg-gray-50'}`}
-                    style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH }}
+                    className={`border-y border-r border-gray-100 ${isHour ? 'border-l border-l-gray-300' : 'border-l border-l-gray-100'} px-0 py-1 text-center text-[9px] font-medium text-gray-600 ${isHour ? 'bg-gray-100' : 'bg-gray-50'}`}
                   >
                     {isHour ? formatLabel(slot) : ''}
                   </th>
@@ -2369,12 +2425,13 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const tracks = laneTracks[lane];
               const renderTracks = tracks.length === 0 ? [[]] : tracks;
               return renderTracks.map((track, trackIdx) => (
-                <tr key={`${lane}-${trackIdx}`}>
+                <tr key={`${lane}-${trackIdx}`} className="h-[26px] max-h-[26px]" style={{ height: 26 }}>
                   {trackIdx === 0 && (
                     <td
                       rowSpan={renderTracks.length}
-                      className="border border-gray-200 bg-gray-50 px-2 py-2 text-xs font-semibold text-gray-700 sticky left-0 z-10"
-                      style={{ width: 130, minWidth: 130 }}
+                      className="border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] font-semibold text-gray-700 sticky left-0 z-10 truncate leading-none"
+                      style={{ width: laneCol, minWidth: laneCol }}
+                      title={lane}
                     >
                       {lane}
                     </td>
@@ -2383,23 +2440,23 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
                       const colorClasses = getFacilityColorClasses(entry.event.color, 'lane');
+                      const entryIsHourStart = timeSlots[entry.startIdx].endsWith(':00');
+                      const entryTitle = entry.event.title || entry.event.opponent;
+                      const entryStart = entry.event.start_time || entry.event.event_time;
+                      const entryTimeRange = entryStart ? `${formatTimeDisplay(entryStart)}${entry.event.end_time ? `–${formatTimeDisplay(entry.event.end_time)}` : ''}` : '';
                       return (
                         <td
                           key={slot}
                           colSpan={entry.span}
-                          className="border border-gray-200 p-0.5 align-top"
-                          style={{ width: SLOT_WIDTH * entry.span }}
+                          className={`border-y border-r border-gray-100 ${entryIsHourStart ? 'border-l border-l-gray-300' : 'border-l border-l-gray-100'} p-0 overflow-hidden`}
                         >
                           <button
                             type="button"
                             onClick={() => onEventClick && onEventClick(entry.event)}
-                            className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
+                            title={entryTimeRange ? `${entryTitle} - ${entryTimeRange}` : entryTitle}
+                            className={`${colorClasses} rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}
                           >
-                            <div className="font-semibold truncate text-xs">{entry.event.title || entry.event.opponent}</div>
-                            <div className="truncate text-[10px] opacity-80">
-                              {formatTimeDisplay(entry.event.start_time || entry.event.event_time)}
-                              {entry.event.end_time ? `–${formatTimeDisplay(entry.event.end_time)}` : ''}
-                            </div>
+                            <span className="truncate text-[8px] font-semibold leading-none">{entryTitle}</span>
                           </button>
                         </td>
                       );
@@ -2412,8 +2469,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                       <td
                         key={slot}
                         onClick={() => handleEmptyClick(lane, slot)}
-                        className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
-                        style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                        className={`border-y border-r border-gray-100 ${isHour ? 'border-l border-l-gray-300 bg-gray-50/40' : 'border-l border-l-gray-100'} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
+                        style={{ height: 26 }}
                       />
                     );
                   })}
@@ -2510,12 +2567,13 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const renderTracks = tracks.length === 0 ? [[]] : tracks;
 
               return renderTracks.map((track, trackIdx) => (
-                <tr key={`staff-${coach.id}-${trackIdx}`}>
+                <tr key={`staff-${coach.id}-${trackIdx}`} className="h-[26px] max-h-[26px]" style={{ height: 26 }}>
                   {trackIdx === 0 && (
                     <td
                       rowSpan={renderTracks.length}
-                      className="border border-indigo-200 bg-indigo-50 px-2 py-2 text-xs font-semibold text-indigo-700 sticky left-0 z-10"
-                      style={{ width: 130, minWidth: 130 }}
+                      className="border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700 sticky left-0 z-10 truncate leading-none"
+                      style={{ width: laneCol, minWidth: laneCol }}
+                      title={coach.full_name}
                     >
                       {coach.full_name.split(' ')[0]}
                     </td>
@@ -2523,24 +2581,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   {timeSlots.map((slot, slotIdx) => {
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
-                      const inner = (
-                        <>
-                          <div className="font-semibold truncate text-xs">{entry.title}</div>
-                          <div className="truncate text-[10px] opacity-80">{entry.timeLabel}</div>
-                          {entry.info && <div className="truncate text-[10px] font-medium">{entry.info}</div>}
-                        </>
-                      );
+                      const entryTitleAttr = [entry.title, entry.timeLabel, entry.info].filter(Boolean).join(' - ');
+                      const inner = <span className="truncate text-[8px] font-semibold leading-none">{entry.title}</span>;
+                      const entryIsHourStart = timeSlots[entry.startIdx].endsWith(':00');
                       return (
                         <td
                           key={slot}
                           colSpan={entry.span}
-                          className="border border-indigo-200 p-0.5 align-top"
-                          style={{ width: SLOT_WIDTH * entry.span }}
+                          className={`border-y border-r border-indigo-100 ${entryIsHourStart ? 'border-l border-l-indigo-300' : 'border-l border-l-indigo-100'} p-0 overflow-hidden`}
                         >
                           {entry.onClick ? (
-                            <button type="button" onClick={entry.onClick} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}>{inner}</button>
+                            <button type="button" onClick={entry.onClick} title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}>{inner}</button>
                           ) : (
-                            <div className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left`}>{inner}</div>
+                            <div title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left leading-none flex items-center overflow-hidden`}>{inner}</div>
                           )}
                         </td>
                       );
@@ -2551,8 +2604,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     return (
                       <td
                         key={slot}
-                        className={`border border-indigo-100 ${isHour ? 'bg-indigo-50/30' : ''}`}
-                        style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                        className={`border-y border-r border-indigo-100 ${isHour ? 'border-l border-l-indigo-300 bg-indigo-50/30' : 'border-l border-l-indigo-100'}`}
+                        style={{ height: 26 }}
                       />
                     );
                   })}
