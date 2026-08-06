@@ -1268,23 +1268,29 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       // Fetch past team events (games + practices)
       if (teamIds.length > 0) {
-        const { data: teamEvents } = await supabase
+        const { data: teamEvents, error: teamEventsError } = await supabase
           .from('schedule_events')
           .select('id, event_type, event_date, opponent, title, team_id, team_ids')
           .overlaps('team_ids', teamIds)
           .is('player_id', null)
           .in('event_type', ['game', 'practice'])
           .lte('event_date', today);
+        // DIAGNOSTIC (temporary): supabase-js resolves query errors rather than
+        // throwing, so the outer try/catch never sees them — every query in
+        // this function was silently discarding its `error` field. Logging
+        // only; no behavior change.
+        if (teamEventsError) console.error('fetchAttendanceData: teamEvents (schedule_events) query failed:', teamEventsError);
         if (teamEvents) allEvents = [...allEvents, ...teamEvents];
       }
 
       // Fetch past player-specific workouts
-      const { data: workoutEvents } = await supabase
+      const { data: workoutEvents, error: workoutEventsError } = await supabase
         .from('schedule_events')
         .select('id, event_type, event_date, title, player_id')
         .eq('player_id', userId)
         .eq('event_type', 'workout')
         .lte('event_date', today);
+      if (workoutEventsError) console.error('fetchAttendanceData: workoutEvents (schedule_events) query failed:', workoutEventsError);
       if (workoutEvents) allEvents = [...allEvents, ...workoutEvents];
 
       // Sort by date descending
@@ -1292,12 +1298,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setAttendanceEvents(allEvents);
 
       // Fetch training slot reservations (sessions) for this player
-      const { data: slotRes } = await supabase
+      const { data: slotRes, error: slotResError } = await supabase
         .from('slot_reservations')
-        .select('id, slot_id, slot_date, status, attendance, training_slots(start_time, end_time, duration_minutes, notes)')
+        .select('id, slot_id, slot_date, status, attendance, training_slots(start_time, duration_minutes, notes)')
         .eq('player_id', userId)
         .neq('status', 'cancelled')
         .order('slot_date', { ascending: false });
+      if (slotResError) console.error('fetchAttendanceData: slot_reservations query failed:', slotResError);
       setSessionReservations(slotRes || []);
 
       // Header-circle Sessions count (#271) — deliberately the SAME data and
@@ -1318,11 +1325,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       // Fetch attendance records for this player
       const eventIds = allEvents.map(e => e.id);
-      const { data: records } = await supabase
+      const { data: records, error: recordsError } = await supabase
         .from('event_attendance')
         .select('*')
         .eq('player_id', userId)
         .in('event_id', eventIds);
+      if (recordsError) console.error('fetchAttendanceData: event_attendance query failed:', recordsError);
 
       const recMap = {};
       (records || []).forEach(r => { recMap[r.event_id] = r; });
