@@ -797,6 +797,9 @@ function ResetPasswordPage({ session, onComplete }) {
 function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, loiSigned, setLoiSigned, facilityFineSigned, setFacilityFineSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
   const [navigateTeamId, setNavigateTeamId] = useState(null);
+  // Lets the player dashboard's post-practice stats reminder (#278) open
+  // Profile directly on the Practice Stats tab instead of the default one.
+  const [profileInitialTab, setProfileInitialTab] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSecondary = !!secondaryRole && secondaryRole !== userRole;
   const [viewMode, setViewMode] = useState(userRole);
@@ -1004,12 +1007,12 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && (
               effectiveRole === 'player' ? (
-                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} />
+                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} onOpenPracticeStats={() => { setProfileInitialTab('practice_stats'); setCurrentView('profile'); }} />
               ) : (
                 <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} initialTab={profileInitialTab} onInitialTabHandled={() => setProfileInitialTab(null)} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={() => setCurrentView('settings')} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}
             {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={(profileUserId) => { setCurrentView('profile-view'); setViewProfileUserId(profileUserId); }} />}

@@ -188,7 +188,7 @@ function TeamsList({ teams, onNavigateToTeam }) {
   );
 }
 
-export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile, onNavigateToTeam }) {
+export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile, onNavigateToTeam, initialTab, onInitialTabHandled }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -198,6 +198,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeProfileTab, setActiveProfileTab] = useState('general');
+
+  // Lets a caller (e.g. the player dashboard's post-practice reminder, #278)
+  // open this profile directly on a specific tab. Watches the prop rather
+  // than only reading it at mount, then reports back so the parent can
+  // clear it — otherwise the next ordinary visit to Profile would land on
+  // this tab again instead of 'general'.
+  useEffect(() => {
+    if (initialTab) {
+      setActiveProfileTab(initialTab);
+      onInitialTabHandled?.();
+    }
+  }, [initialTab]);
   const [viewProgram, setViewProgram] = useState(null); // { id, name } — read-only program viewer
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
@@ -1936,6 +1948,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 if (tab.key === 'whoop' && userRole === 'player') return loggedInUserId === userId;
                 // Players can view their OWN recruitment entries (#216) — subject to the 15+ gate above.
                 if (tab.key === 'recruitment' && userRole === 'player') return loggedInUserId === userId;
+                // Players can log their OWN practice stats (#278) — the tab was
+                // built for #192 but only ever wired up for coach/admin, so
+                // practice-stats stayed permanently empty: not because athletes
+                // forgot, but because they had no way to open it.
+                if (tab.key === 'practice_stats' && userRole === 'player') return loggedInUserId === userId;
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
                 return true;
@@ -3790,7 +3807,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'practice_stats' && (
-            <PracticeStatsTab playerId={userId} canEdit={canEditProfile} />
+            // Players can only ever reach this tab on their own profile (the
+            // filter above enforces loggedInUserId === userId), so it's safe
+            // to also let them log their own stats here specifically — this
+            // does NOT touch canEditProfile itself, which still gates every
+            // other admin/coach-only field on the page (#278).
+            <PracticeStatsTab playerId={userId} canEdit={canEditProfile || (userRole === 'player' && loggedInUserId === userId)} />
           )}
 
           {activeProfileTab === 'marek' && (

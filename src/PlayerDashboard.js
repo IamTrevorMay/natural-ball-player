@@ -4,7 +4,7 @@ import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTria
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }) {
+export default function PlayerDashboard({ userId, waiverSigned, setCurrentView, onOpenPracticeStats }) {
   const [loading, setLoading] = useState(true);
   const [playerData, setPlayerData] = useState(null);
   const [todaySchedule, setTodaySchedule] = useState([]);
@@ -233,6 +233,47 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
         });
       });
 
+      // Post-practice stats reminder (#278): once a team practice scheduled
+      // for today has ended, nudge the player to log stats if they haven't
+      // for today yet. Read-only — only reads scheduleEvents (already
+      // fetched above) and the three practice-stats tables; no writes.
+      const todaysPractices = scheduleEvents.filter(e => e.event_type === 'practice');
+      if (todaysPractices.length > 0) {
+        const addMinutes = (time, mins) => {
+          const [h, m] = time.split(':').map(Number);
+          const total = h * 60 + m + mins;
+          return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        };
+        const now = new Date();
+        let latestEndedAt = null;
+        todaysPractices.forEach(p => {
+          const start = p.event_time;
+          if (!start) return; // no start time — can't tell whether it's over
+          const endTime = p.event_end_time || addMinutes(start, 60); // default 1hr, matching how the rest of the app treats a missing end time
+          const endedAt = new Date(`${today}T${endTime}`);
+          if (now >= endedAt && (!latestEndedAt || endedAt > latestEndedAt)) latestEndedAt = endedAt;
+        });
+
+        if (latestEndedAt) {
+          const [{ count: abCount }, { count: pitchCount }, { count: catchCount }] = await Promise.all([
+            supabase.from('practice_at_bats').select('id', { count: 'exact', head: true }).eq('player_id', userId).eq('ab_date', today),
+            supabase.from('practice_pitches').select('id', { count: 'exact', head: true }).eq('player_id', userId).eq('log_date', today),
+            supabase.from('practice_catching').select('id', { count: 'exact', head: true }).eq('player_id', userId).eq('log_date', today),
+          ]);
+          const hasLoggedToday = (abCount || 0) + (pitchCount || 0) + (catchCount || 0) > 0;
+          if (!hasLoggedToday) {
+            notifs.push({
+              id: 'practice-stats-reminder',
+              type: 'practice_stats',
+              text: 'How did practice go? Add your hitting, pitching and catching stats.',
+              detail: '',
+              time: latestEndedAt.toISOString(),
+              onClick: onOpenPracticeStats,
+            });
+          }
+        }
+      }
+
       notifs.sort((a, b) => new Date(b.time) - new Date(a.time));
       setNotifications(notifs);
 
@@ -276,6 +317,7 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
     switch (type) {
       case 'message': return <MessageSquare size={16} className="text-blue-500" />;
       case 'pending': return <Clock size={16} className="text-yellow-500" />;
+      case 'practice_stats': return <BarChart3 size={16} className="text-green-600" />;
       default: return <CheckCircle size={16} className="text-green-500" />;
     }
   };
@@ -384,7 +426,11 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
             {notifications.length > 0 ? (
               <div className="space-y-3">
                 {notifications.map((notif, idx) => (
-                  <div key={notif.id || idx} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div
+                    key={notif.id || idx}
+                    onClick={notif.onClick}
+                    className={`flex items-start space-x-3 p-3 bg-gray-50 rounded-lg ${notif.onClick ? 'cursor-pointer hover:bg-gray-100 transition' : ''}`}
+                  >
                     <div className="mt-0.5">{getNotifIcon(notif.type)}</div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900">{notif.text}</p>
