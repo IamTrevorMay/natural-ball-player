@@ -1333,7 +1333,7 @@ export default function Schedule({ userId, userRole }) {
                 </div>
                 )}
               </div>
-              <div className="p-6">
+              <div className={viewMode === 'lanes' ? 'p-3' : 'p-6'}>
                 {selectedCoach ? (
                   <CoachSlotsWeekView
                     selectedDate={selectedDate}
@@ -1391,6 +1391,48 @@ export default function Schedule({ userId, userRole }) {
                     canManage={canManageCalendar()}
                     onCellClick={(prefill) => canManageCalendar() && setShowEventTypeChooser(prefill)}
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
+                    onEventMove={async (eventId, sourceLane, targetLane, targetStartTime) => {
+                      const ev = facilityEvents.find(e => String(e.id) === String(eventId));
+                      if (!ev || ev._is_virtual) return;
+
+                      const currentLanes = ev.lanes || [];
+                      const currentStart = ev.start_time || ev.event_time;
+                      const timeChanged = !!targetStartTime && targetStartTime !== currentStart;
+
+                      // Shift EVERY lane the event occupies by the same offset as the
+                      // bar the user actually grabbed, rather than collapsing a
+                      // multi-lane event down to just the one dropped-on lane (#280).
+                      // shiftLanes returns null if any lane would land outside the
+                      // grid — refuse the whole drop then, no clamping, no partially
+                      // moving some lanes and not others.
+                      let newLanes = null;
+                      if (targetLane !== sourceLane) {
+                        newLanes = shiftLanes(currentLanes, sourceLane, targetLane);
+                        if (!newLanes) return;
+                      }
+
+                      if (!newLanes && !timeChanged) return;
+
+                      const updates = {};
+                      if (newLanes) updates.lanes = newLanes;
+
+                      // Shift both start and end by the same amount so the event
+                      // keeps its original duration rather than being truncated
+                      // or stretched to whatever the drop slot happens to be.
+                      if (timeChanged && currentStart) {
+                        const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+                        const fromMinutes = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+                        const startMinutes = toMinutes(currentStart);
+                        const durationMinutes = ev.end_time ? (toMinutes(ev.end_time) - startMinutes) : 60; // default 1 hour, matching LaneView's own default span
+                        const newStartMinutes = toMinutes(targetStartTime);
+                        updates.start_time = fromMinutes(newStartMinutes);
+                        updates.end_time = fromMinutes(newStartMinutes + durationMinutes);
+                      }
+
+                      const { error } = await supabase.from('facility_events').update(updates).eq('id', eventId);
+                      if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
+                      fetchFacilityEvents();
+                    }}
                     staffEvents={staffScheduleEvents}
                     staffAssignments={staffAssignments}
                     coachDaySlots={coachDaySlots}
@@ -2198,24 +2240,79 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
+// Module-level (not just inside LaneView) so the drag-and-drop handler in
+// the parent Schedule component can also use it to compute a lane offset
+// (#280) — order matters here, it's the same left-to-right order the grid
+// renders in.
+const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+
+// Shifts every lane an event occupies by the same offset as the bar the
+// user grabbed (sourceLane) relative to where they're hovering/dropping
+// (targetLane) — e.g. an event on Lanes 1,2,3 grabbed from Lane 2 and
+// hovered over Lane 5 shifts to Lanes 4,5,6. Returns null if any shifted
+// lane would fall outside the grid. Shared by LaneView's drop-preview
+// highlight and the parent's onEventMove handler so the "would this be
+// refused" logic can't drift between what's shown and what's enforced (#280).
+function shiftLanes(eventLanes, sourceLane, targetLane) {
+  const sourceIdx = LANES.indexOf(sourceLane);
+  const targetIdx = LANES.indexOf(targetLane);
+  if (sourceIdx === -1 || targetIdx === -1) return null;
+  const offset = targetIdx - sourceIdx;
+  const shiftedIndexes = eventLanes.map((l) => LANES.indexOf(l) + offset);
+  if (shiftedIndexes.some((idx) => idx < 0 || idx >= LANES.length)) return null;
+  return shiftedIndexes.map((idx) => LANES[idx]);
+}
+
+// 15-minute time slots from 8:00 AM to 10:00 PM. Module-level for the same
+// reason LANES is — shiftStartIdx below needs the same canonical slot count
+// the grid renders, without recomputing it or risking drift (#280).
+const START_HOUR = 8;
+const TIME_SLOTS = [];
+for (let h = START_HOUR; h <= 22; h++) {
+  for (let m = 0; m < 60; m += 15) {
+    TIME_SLOTS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+  }
+}
+
+// Shifts an event's start by the same offset within its own bar that the
+// user grabbed, so the point they grabbed stays under the cursor instead of
+// the event's start jumping to wherever the pointer happens to be — that
+// jump was the actual bug: a bar's <td> spans several slot columns, so
+// every slot it covers used to resolve to the bar's own start slot,
+// meaning you had to drag past the entire bar before a 1-slot nudge could
+// register (#280). Returns null — refused, not clamped, mirroring
+// shiftLanes — if the event wouldn't fully fit in the grid at the result.
+function shiftStartIdx(pointerSlotIdx, grabOffset, span) {
+  const startIdx = pointerSlotIdx - grabOffset;
+  if (startIdx < 0 || startIdx + span > TIME_SLOTS.length) return null;
+  return startIdx;
+}
+
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
   const visibleCoaches = coaches.filter(c => c.show_on_facility_schedule !== false);
-  const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
-  // Generate 15-minute time slots from START_HOUR to 10:00 PM.
-  // START_HOUR is the origin for every slot-index calc below — keep them in sync.
-  const START_HOUR = 8;
-  const timeSlots = [];
-  for (let h = START_HOUR; h <= 22; h++) {
-    for (let m = 0; m < 60; m += 15) {
-      const hour = String(h).padStart(2, '0');
-      const min = String(m).padStart(2, '0');
-      timeSlots.push(`${hour}:${min}`);
-    }
-  }
+  // Drop-preview state for drag-and-drop (#280). draggedInfo describes the
+  // event currently being dragged — set on dragstart, cleared on dragend —
+  // and has to live in React state (not read from dataTransfer) because
+  // browsers only expose dataTransfer.types during dragover, not the actual
+  // data. grabOffset is which slot WITHIN the bar was grabbed (grabbed slot
+  // minus the event's own start slot) — needed so the grabbed point stays
+  // under the cursor rather than the event's start jumping to the pointer.
+  // hoveredCell tracks the slot currently under the cursor (derived from
+  // pointer position, not from which cell fired the event — see
+  // slotIdxFromPointerX below) while dragging, so the grid can show exactly
+  // where the event would land before the user releases.
+  const [draggedInfo, setDraggedInfo] = useState(null); // { eventId, sourceLane, lanes, span, grabOffset }
+  const [hoveredCell, setHoveredCell] = useState(null); // { lane, slotIdx }
+  const clearDragPreview = () => { setDraggedInfo(null); setHoveredCell(null); };
+
+  // START_HOUR and the 15-minute grid are module-level (TIME_SLOTS) so
+  // shiftStartIdx can share them — timeSlots here is just a local alias so
+  // the rest of this component doesn't need to change.
+  const timeSlots = TIME_SLOTS;
 
   const dateStr = laneDate || fmtLocalDate(new Date());
 
@@ -2227,6 +2324,36 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     if (!timeStr) return -1;
     const [h, m] = timeStr.split(':').map(Number);
     return (h - START_HOUR) * 4 + Math.floor(m / 15);
+  };
+
+  // Derived from draggedInfo + hoveredCell: which lanes (if any) the drop
+  // preview should highlight, or null if the currently-hovered lane would
+  // put the event out of bounds. previewStartIdx applies the same grab
+  // offset the actual drop will (shiftStartIdx), so the highlighted range
+  // is exactly where the event would land, not just wherever the pointer
+  // happens to be — same math the drop itself uses, so what lights up is
+  // exactly what will happen. When refused we don't have a valid
+  // lane/range to show, so the preview falls back to just the one hovered
+  // cell — see previewClassFor below.
+  const previewLanes = draggedInfo && hoveredCell
+    ? (hoveredCell.lane === draggedInfo.sourceLane ? draggedInfo.lanes : shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, hoveredCell.lane))
+    : null;
+  const previewStartIdx = draggedInfo && hoveredCell
+    ? shiftStartIdx(hoveredCell.slotIdx, draggedInfo.grabOffset, draggedInfo.span)
+    : null;
+  const previewRefused = !!draggedInfo && !!hoveredCell && (!previewLanes || previewStartIdx === null);
+
+  const previewClassFor = (lane, slotIdx) => {
+    if (!draggedInfo || !hoveredCell) return '';
+    if (previewRefused) {
+      return (lane === hoveredCell.lane && slotIdx === hoveredCell.slotIdx)
+        ? 'ring-2 ring-inset ring-red-400 bg-red-100/60'
+        : '';
+    }
+    const inRange = slotIdx >= previewStartIdx && slotIdx < previewStartIdx + draggedInfo.span;
+    return (previewLanes.includes(lane) && inRange)
+      ? 'ring-2 ring-inset ring-blue-400 bg-blue-100/50'
+      : '';
   };
 
   // Build a map: lane -> array of {startIdx, span, event}
@@ -2307,13 +2434,66 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     onCellClick({ date: dateStr, lane, startTime: slot, endTime: endSlot });
   };
 
-  const SLOT_WIDTH = 20; // px per 15-min slot (#261/#266; narrower so more hours visible without scrolling)
+  const LANE_COL_WIDTH = 76; // px, lane-name column — sticky, needs a real width (#273)
 
   // Mirror a horizontal scrollbar above the grid so staff can scroll time
   // without dragging to the bottom of a tall table. The two scroll containers
   // stay in sync; the top one just holds a spacer the width of the table.
   const topScrollRef = useRef(null);
   const bodyScrollRef = useRef(null);
+
+  // Every time column gets the SAME exact integer pixel width, computed here
+  // and applied via <colgroup> below — letting the browser split leftover
+  // width itself (the previous approach) drops a stray extra pixel on some
+  // columns and not others, so the grid boxes weren't quite even (#273,
+  // Cordell). A ResizeObserver (not a one-time mount measure) keeps this
+  // correct across window resizes and any other layout change to the
+  // container. Floored, with an 8px minimum, so the table is never a
+  // fraction of a column wider than the container — being a few px short is
+  // fine and invisible; being over means horizontal scroll.
+  //
+  // Flooring 60 columns leaves up to 59px of leftover width unclaimed by any
+  // column, which used to show up as a visible gap at the right edge. That
+  // remainder goes to the lane-name column instead (laneCol) so the grid
+  // still ends flush with the container — the time columns stay exactly
+  // equal either way. On the rare narrow-screen case where the 8px floor
+  // already makes the table wider than the container, remainder goes
+  // negative; laneCol is clamped so it never shrinks below the base 76px.
+  //
+  // Two feedback-loop guards (#273): (1) a 4px safety margin is subtracted
+  // from the measured width before computing anything, so the table is
+  // always a little narrower than its container, never wider — sizing the
+  // table to EXACTLY the measured width let the flex-child container grow
+  // to fit the table, which made the next measurement wider, which grew the
+  // table again, etc. (2) the setters only fire when the computed value
+  // actually changed, using the functional updater form so the comparison
+  // is against the real latest state rather than this effect's stale
+  // closure — otherwise an identical re-measurement still triggers a
+  // render, which is what let the loop keep going instead of settling.
+  const [slotWidth, setSlotWidth] = useState(8);
+  const [laneCol, setLaneCol] = useState(LANE_COL_WIDTH);
+  useEffect(() => {
+    const el = bodyScrollRef.current;
+    if (!el) return;
+    const compute = (containerWidth) => {
+      const usable = containerWidth - 4;
+      const raw = Math.floor((usable - LANE_COL_WIDTH) / timeSlots.length);
+      const slot = Math.max(raw, 8);
+      const remainder = usable - LANE_COL_WIDTH - slot * timeSlots.length;
+      const nextLaneCol = LANE_COL_WIDTH + Math.max(remainder, 0);
+      setSlotWidth(prev => (prev === slot ? prev : slot));
+      setLaneCol(prev => (prev === nextLaneCol ? prev : nextLaneCol));
+    };
+    compute(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) compute(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // scrollWidth here is purely cosmetic: it sizes the spacer in the mirrored
+  // top scrollbar to match the real table.
   const [scrollWidth, setScrollWidth] = useState(0);
   useEffect(() => {
     const measure = () => { if (bodyScrollRef.current) setScrollWidth(bodyScrollRef.current.scrollWidth); };
@@ -2323,6 +2503,24 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   }, []);
   const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current && bodyScrollRef.current.scrollLeft !== topScrollRef.current.scrollLeft) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
   const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current && topScrollRef.current.scrollLeft !== bodyScrollRef.current.scrollLeft) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
+
+  // Which time column the pointer is over, from its actual X position
+  // rather than which <td> happens to contain it (#280). A cell's <td>
+  // spans several slot columns once an event is rendered there, so
+  // deriving the target from "which cell fired the event" collapses every
+  // slot that cell covers down to one value — that's the root cause of the
+  // original bug. Using laneCol/slotWidth (the same measurements #273's
+  // ResizeObserver already produces) makes every 15-minute column
+  // individually reachable regardless of what's rendered on top of it.
+  const slotIdxFromPointerX = (clientX) => {
+    const el = bodyScrollRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    const xInTable = clientX - rect.left + el.scrollLeft;
+    const xInSlotArea = xInTable - laneCol;
+    const idx = Math.floor(xInSlotArea / slotWidth);
+    return Math.min(Math.max(idx, 0), timeSlots.length - 1);
+  };
 
   return (
     <div>
@@ -2339,15 +2537,30 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
       <div
         ref={topScrollRef}
         onScroll={syncFromTop}
-        className="overflow-x-scroll overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
+        className="overflow-x-auto overflow-y-hidden border border-gray-200 border-b-0 rounded-t-lg max-w-full"
       >
         <div style={{ width: scrollWidth, height: 16 }} />
       </div>
-      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-scroll overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
-        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
+      <div
+        ref={bodyScrollRef}
+        onScroll={syncFromBody}
+        onDragLeave={(e) => {
+          // Only clear when the pointer actually leaves the grid, not when
+          // it moves from one cell to another child within it — otherwise
+          // the highlight would flicker off and back on between every cell.
+          if (!e.currentTarget.contains(e.relatedTarget)) setHoveredCell(null);
+        }}
+        className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-b-lg max-w-full"
+        style={{ maxHeight: 'calc(100vh - 230px)' }}
+      >
+        <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: laneCol + slotWidth * timeSlots.length, minWidth: LANE_COL_WIDTH + 8 * timeSlots.length }}>
+          <colgroup>
+            <col style={{ width: laneCol }} />
+            {timeSlots.map((slot) => <col key={slot} style={{ width: slotWidth }} />)}
+          </colgroup>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
-              <th className="border border-gray-200 bg-gray-50 px-2 py-2 text-left text-xs font-semibold text-gray-700 sticky left-0 z-30" style={{ width: 130, minWidth: 130 }}>
+              <th className="border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-left text-[9px] font-semibold text-gray-700 sticky left-0 z-30 truncate" style={{ width: laneCol, minWidth: laneCol }} title="Lane">
                 Lane
               </th>
               {timeSlots.map((slot) => {
@@ -2355,8 +2568,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                 return (
                   <th
                     key={slot}
-                    className={`border border-gray-200 px-0 py-1 text-center text-[10px] font-medium text-gray-600 ${isHour ? 'bg-gray-100' : 'bg-gray-50'}`}
-                    style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH }}
+                    className={`border-y border-r border-gray-100 ${isHour ? 'border-l border-l-gray-300' : 'border-l border-l-gray-100'} px-0 py-1 text-center text-[9px] font-medium text-gray-600 ${isHour ? 'bg-gray-100' : 'bg-gray-50'}`}
                   >
                     {isHour ? formatLabel(slot) : ''}
                   </th>
@@ -2369,12 +2581,13 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const tracks = laneTracks[lane];
               const renderTracks = tracks.length === 0 ? [[]] : tracks;
               return renderTracks.map((track, trackIdx) => (
-                <tr key={`${lane}-${trackIdx}`}>
+                <tr key={`${lane}-${trackIdx}`} className="h-[26px] max-h-[26px]" style={{ height: 26 }}>
                   {trackIdx === 0 && (
                     <td
                       rowSpan={renderTracks.length}
-                      className="border border-gray-200 bg-gray-50 px-2 py-2 text-xs font-semibold text-gray-700 sticky left-0 z-10"
-                      style={{ width: 130, minWidth: 130 }}
+                      className="border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] font-semibold text-gray-700 sticky left-0 z-10 truncate leading-none"
+                      style={{ width: laneCol, minWidth: laneCol }}
+                      title={lane}
                     >
                       {lane}
                     </td>
@@ -2383,23 +2596,72 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
                       const colorClasses = getFacilityColorClasses(entry.event.color, 'lane');
+                      const entryIsHourStart = timeSlots[entry.startIdx].endsWith(':00');
+                      const entryTitle = entry.event.title || entry.event.opponent;
+                      const entryStart = entry.event.start_time || entry.event.event_time;
+                      const entryTimeRange = entryStart ? `${formatTimeDisplay(entryStart)}${entry.event.end_time ? `–${formatTimeDisplay(entry.event.end_time)}` : ''}` : '';
                       return (
                         <td
                           key={slot}
                           colSpan={entry.span}
-                          className="border border-gray-200 p-0.5 align-top"
-                          style={{ width: SLOT_WIDTH * entry.span }}
+                          className={`border-y border-r border-gray-100 ${entryIsHourStart ? 'border-l border-l-gray-300' : 'border-l border-l-gray-100'} p-0 overflow-hidden ${previewClassFor(lane, slotIdx)}`}
+                          onDragOver={(e) => {
+                            const types = [...e.dataTransfer.types];
+                            if (types.includes('application/x-event-id') && canManage && onEventMove) {
+                              e.preventDefault();
+                              const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
+                              let valid = true;
+                              if (draggedInfo) {
+                                const validLane = lane === draggedInfo.sourceLane || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
+                                const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span) !== null;
+                                valid = validLane && validTime;
+                              }
+                              e.dataTransfer.dropEffect = valid ? 'move' : 'none';
+                              setHoveredCell((prev) => (prev && prev.lane === lane && prev.slotIdx === pointerSlotIdx) ? prev : { lane, slotIdx: pointerSlotIdx });
+                            }
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const eventId = e.dataTransfer.getData('application/x-event-id');
+                            const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
+                            if (eventId && canManage && onEventMove && draggedInfo) {
+                              const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
+                              const targetStartIdx = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span);
+                              if (targetStartIdx !== null) onEventMove(eventId, sourceLane, lane, TIME_SLOTS[targetStartIdx]);
+                            }
+                            clearDragPreview();
+                          }}
                         >
                           <button
                             type="button"
+                            draggable={canManage && !entry.event._is_virtual && !entry.event._isMealPlan && !!onEventMove}
+                            onDragStart={(e) => {
+                              e.stopPropagation();
+                              e.dataTransfer.setData('application/x-event-id', String(entry.event.id));
+                              // The lane this specific bar was grabbed from — a multi-lane
+                              // event renders one bar per lane, so this identifies which
+                              // one, letting the drop handler shift the whole set by the
+                              // same offset rather than collapsing it down to one lane (#280).
+                              e.dataTransfer.setData('application/x-event-source-lane', lane);
+                              e.dataTransfer.effectAllowed = 'move';
+                              const grabbedSlotIdx = slotIdxFromPointerX(e.clientX);
+                              setDraggedInfo({
+                                eventId: entry.event.id,
+                                sourceLane: lane,
+                                lanes: entry.event.lanes && entry.event.lanes.length > 0 ? entry.event.lanes : [lane],
+                                span: entry.span,
+                                // Which slot within the bar was grabbed, clamped into the
+                                // bar's own range in case of a sub-pixel discrepancy right
+                                // at its edge — kept under the cursor on drop (#280).
+                                grabOffset: Math.min(Math.max(grabbedSlotIdx - entry.startIdx, 0), entry.span - 1),
+                              });
+                            }}
+                            onDragEnd={clearDragPreview}
                             onClick={() => onEventClick && onEventClick(entry.event)}
-                            className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
+                            title={entryTimeRange ? `${entryTitle} - ${entryTimeRange}` : entryTitle}
+                            className={`${colorClasses} rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}
                           >
-                            <div className="font-semibold truncate text-xs">{entry.event.title || entry.event.opponent}</div>
-                            <div className="truncate text-[10px] opacity-80">
-                              {formatTimeDisplay(entry.event.start_time || entry.event.event_time)}
-                              {entry.event.end_time ? `–${formatTimeDisplay(entry.event.end_time)}` : ''}
-                            </div>
+                            <span className="truncate text-[8px] font-semibold leading-none">{entryTitle}</span>
                           </button>
                         </td>
                       );
@@ -2412,8 +2674,34 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                       <td
                         key={slot}
                         onClick={() => handleEmptyClick(lane, slot)}
-                        className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
-                        style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                        onDragOver={(e) => {
+                          const types = [...e.dataTransfer.types];
+                          if (types.includes('application/x-event-id') && canManage && onEventMove) {
+                            e.preventDefault();
+                            const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
+                            let valid = true;
+                            if (draggedInfo) {
+                              const validLane = lane === draggedInfo.sourceLane || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
+                              const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span) !== null;
+                              valid = validLane && validTime;
+                            }
+                            e.dataTransfer.dropEffect = valid ? 'move' : 'none';
+                            setHoveredCell((prev) => (prev && prev.lane === lane && prev.slotIdx === pointerSlotIdx) ? prev : { lane, slotIdx: pointerSlotIdx });
+                          }
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const eventId = e.dataTransfer.getData('application/x-event-id');
+                          const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
+                          if (eventId && canManage && onEventMove && draggedInfo) {
+                            const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
+                            const targetStartIdx = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span);
+                            if (targetStartIdx !== null) onEventMove(eventId, sourceLane, lane, TIME_SLOTS[targetStartIdx]);
+                          }
+                          clearDragPreview();
+                        }}
+                        className={`border-y border-r border-gray-100 ${isHour ? 'border-l border-l-gray-300 bg-gray-50/40' : 'border-l border-l-gray-100'} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''} ${previewClassFor(lane, slotIdx)}`}
+                        style={{ height: 26 }}
                       />
                     );
                   })}
@@ -2510,12 +2798,13 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const renderTracks = tracks.length === 0 ? [[]] : tracks;
 
               return renderTracks.map((track, trackIdx) => (
-                <tr key={`staff-${coach.id}-${trackIdx}`}>
+                <tr key={`staff-${coach.id}-${trackIdx}`} className="h-[26px] max-h-[26px]" style={{ height: 26 }}>
                   {trackIdx === 0 && (
                     <td
                       rowSpan={renderTracks.length}
-                      className="border border-indigo-200 bg-indigo-50 px-2 py-2 text-xs font-semibold text-indigo-700 sticky left-0 z-10"
-                      style={{ width: 130, minWidth: 130 }}
+                      className="border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700 sticky left-0 z-10 truncate leading-none"
+                      style={{ width: laneCol, minWidth: laneCol }}
+                      title={coach.full_name}
                     >
                       {coach.full_name.split(' ')[0]}
                     </td>
@@ -2523,24 +2812,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   {timeSlots.map((slot, slotIdx) => {
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
-                      const inner = (
-                        <>
-                          <div className="font-semibold truncate text-xs">{entry.title}</div>
-                          <div className="truncate text-[10px] opacity-80">{entry.timeLabel}</div>
-                          {entry.info && <div className="truncate text-[10px] font-medium">{entry.info}</div>}
-                        </>
-                      );
+                      const entryTitleAttr = [entry.title, entry.timeLabel, entry.info].filter(Boolean).join(' - ');
+                      const inner = <span className="truncate text-[8px] font-semibold leading-none">{entry.title}</span>;
+                      const entryIsHourStart = timeSlots[entry.startIdx].endsWith(':00');
                       return (
                         <td
                           key={slot}
                           colSpan={entry.span}
-                          className="border border-indigo-200 p-0.5 align-top"
-                          style={{ width: SLOT_WIDTH * entry.span }}
+                          className={`border-y border-r border-indigo-100 ${entryIsHourStart ? 'border-l border-l-indigo-300' : 'border-l border-l-indigo-100'} p-0 overflow-hidden`}
                         >
                           {entry.onClick ? (
-                            <button type="button" onClick={entry.onClick} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}>{inner}</button>
+                            <button type="button" onClick={entry.onClick} title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}>{inner}</button>
                           ) : (
-                            <div className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 py-1 h-full w-full text-left`}>{inner}</div>
+                            <div title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left leading-none flex items-center overflow-hidden`}>{inner}</div>
                           )}
                         </td>
                       );
@@ -2551,8 +2835,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     return (
                       <td
                         key={slot}
-                        className={`border border-indigo-100 ${isHour ? 'bg-indigo-50/30' : ''}`}
-                        style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
+                        className={`border-y border-r border-indigo-100 ${isHour ? 'border-l border-l-indigo-300 bg-indigo-50/30' : 'border-l border-l-indigo-100'}`}
+                        style={{ height: 26 }}
                       />
                     );
                   })}
