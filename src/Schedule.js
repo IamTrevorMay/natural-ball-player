@@ -1391,17 +1391,34 @@ export default function Schedule({ userId, userRole }) {
                     canManage={canManageCalendar()}
                     onCellClick={(prefill) => canManageCalendar() && setShowEventTypeChooser(prefill)}
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
-                    onEventMove={async (eventId, targetLane, targetStartTime) => {
+                    onEventMove={async (eventId, sourceLane, targetLane, targetStartTime) => {
                       const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                       if (!ev || ev._is_virtual) return;
 
-                      const currentLane = (ev.lanes || [])[0];
+                      const currentLanes = ev.lanes || [];
                       const currentStart = ev.start_time || ev.event_time;
-                      const laneChanged = targetLane !== currentLane;
                       const timeChanged = !!targetStartTime && targetStartTime !== currentStart;
-                      if (!laneChanged && !timeChanged) return;
 
-                      const updates = { lanes: [targetLane] };
+                      // Shift EVERY lane the event occupies by the same offset as the
+                      // bar the user actually grabbed, rather than collapsing a
+                      // multi-lane event down to just the one dropped-on lane (#280).
+                      let newLanes = null;
+                      if (targetLane !== sourceLane) {
+                        const sourceIdx = LANES.indexOf(sourceLane);
+                        const targetIdx = LANES.indexOf(targetLane);
+                        if (sourceIdx === -1 || targetIdx === -1) return;
+                        const offset = targetIdx - sourceIdx;
+                        const shiftedIndexes = currentLanes.map((l) => LANES.indexOf(l) + offset);
+                        // Refuse the whole drop if any lane would land outside the grid —
+                        // no clamping, no partially moving some lanes and not others.
+                        if (shiftedIndexes.some((idx) => idx < 0 || idx >= LANES.length)) return;
+                        newLanes = shiftedIndexes.map((idx) => LANES[idx]);
+                      }
+
+                      if (!newLanes && !timeChanged) return;
+
+                      const updates = {};
+                      if (newLanes) updates.lanes = newLanes;
 
                       // Shift both start and end by the same amount so the event
                       // keeps its original duration rather than being truncated
@@ -2227,12 +2244,17 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
+// Module-level (not just inside LaneView) so the drag-and-drop handler in
+// the parent Schedule component can also use it to compute a lane offset
+// (#280) — order matters here, it's the same left-to-right order the grid
+// renders in.
+const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+
 function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
   const visibleCoaches = coaches.filter(c => c.show_on_facility_schedule !== false);
-  const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
   // Generate 15-minute time slots from START_HOUR to 10:00 PM.
   // START_HOUR is the origin for every slot-index calc below — keep them in sync.
@@ -2428,7 +2450,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           onDrop={(e) => {
                             e.preventDefault();
                             const eventId = e.dataTransfer.getData('application/x-event-id');
-                            if (eventId && canManage && onEventMove) onEventMove(eventId, lane, slot);
+                            const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
+                            if (eventId && canManage && onEventMove) onEventMove(eventId, sourceLane, lane, slot);
                           }}
                         >
                           <button
@@ -2437,6 +2460,11 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                             onDragStart={(e) => {
                               e.stopPropagation();
                               e.dataTransfer.setData('application/x-event-id', String(entry.event.id));
+                              // The lane this specific bar was grabbed from — a multi-lane
+                              // event renders one bar per lane, so this identifies which
+                              // one, letting the drop handler shift the whole set by the
+                              // same offset rather than collapsing it down to one lane (#280).
+                              e.dataTransfer.setData('application/x-event-source-lane', lane);
                               e.dataTransfer.effectAllowed = 'move';
                             }}
                             onClick={() => onEventClick && onEventClick(entry.event)}
@@ -2469,7 +2497,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         onDrop={(e) => {
                           e.preventDefault();
                           const eventId = e.dataTransfer.getData('application/x-event-id');
-                          if (eventId && canManage && onEventMove) onEventMove(eventId, lane, slot);
+                          const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
+                          if (eventId && canManage && onEventMove) onEventMove(eventId, sourceLane, lane, slot);
                         }}
                         className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
                         style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
