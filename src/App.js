@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
+import { buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
@@ -1597,18 +1598,22 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
     const today = fmtLocalDate(new Date());
     const todayDow = new Date().getDay();
 
-    const { data: slots } = await supabase
+    const { data: slots, error: slotsError } = await supabase
       .from('training_slots')
       .select('*')
       .eq('coach_id', userId);
+    if (slotsError) console.error('fetchTrainingSessions: training_slots query failed:', slotsError);
 
     if (!slots || slots.length === 0) { setLoadingSlots(false); return; }
 
+    const slotExceptionMap = buildSlotExceptionMap(slots);
+
     const slotIds = slots.map(s => s.id);
-    const { data: reservations } = await supabase
+    const { data: reservations, error: reservationsError } = await supabase
       .from('slot_reservations')
       .select('*, users:player_id(full_name, email)')
       .in('slot_id', slotIds);
+    if (reservationsError) console.error('fetchTrainingSessions: slot_reservations query failed:', reservationsError);
 
     const allReservations = reservations || [];
 
@@ -1620,6 +1625,10 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
     setPendingRequests(pendingWithSlot);
 
     const todaySlots = slots.filter(slot => {
+      // Never treat a child (tombstone) row as its own session, and never show
+      // a session on a date that's been individually cancelled (#279).
+      if (slot.recurrence_parent_id) return false;
+      if (isSlotDateCancelled(slotExceptionMap, slot.id, today)) return false;
       if (slot.slot_date === today) return true;
       if (slot.repeat_weekly) {
         const slotDow = new Date(slot.slot_date + 'T00:00:00').getDay();

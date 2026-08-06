@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
 import { useModalTracking, trackAction } from './usage';
 import { metricsByGroup } from './assessmentMetrics';
 
@@ -2757,16 +2758,21 @@ function TrainingSlotsTab({ userId }) {
     const windowStart = new Date(today); windowStart.setDate(today.getDate() - 30);
     const windowEnd = new Date(today); windowEnd.setDate(today.getDate() + 60);
     const expanded = [];
+    const slotExceptionMap = buildSlotExceptionMap(slotData);
     (slotData || []).forEach(slot => {
-      if (slot.repeat_weekly && !slot.recurrence_parent_id) {
+      if (slot.recurrence_parent_id) return;
+      if (slot.repeat_weekly) {
         const slotStart = new Date(slot.slot_date + 'T00:00:00');
         const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : windowEnd;
         let current = new Date(slotStart);
         while (current <= endDate && current <= windowEnd) {
-          if (current >= windowStart) expanded.push({ ...slot, slot_date: fmtLocalDate(current) });
+          const dateStr = fmtLocalDate(current);
+          if (current >= windowStart && !isSlotDateCancelled(slotExceptionMap, slot.id, dateStr)) {
+            expanded.push({ ...slot, slot_date: dateStr });
+          }
           current.setDate(current.getDate() + 7);
         }
-      } else if (!slot.recurrence_parent_id) {
+      } else if (!isSlotDateCancelled(slotExceptionMap, slot.id, slot.slot_date)) {
         expanded.push(slot);
       }
     });

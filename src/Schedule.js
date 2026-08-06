@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog } from 'lucide-react';
-import { fmtLocalDate, expandRecurringEvents, monthWeekRange } from './scheduleUtils';
+import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
@@ -411,23 +411,26 @@ export default function Schedule({ userId, userRole }) {
     // coaches see slots where they are the coach; players see their confirmed reservations.
     const slotEvents = [];
     if (isCoach) {
-      const { data: rawSlots } = await supabase.from('training_slots').select('*').eq('coach_id', userId);
+      const { data: rawSlots, error: rawSlotsError } = await supabase.from('training_slots').select('*').eq('coach_id', userId);
+      if (rawSlotsError) console.error('fetchMyScheduleEvents: training_slots query failed:', rawSlotsError);
+      const slotExceptionMap = buildSlotExceptionMap(rawSlots);
       (rawSlots || []).forEach(slot => {
-        if (slot.repeat_weekly && !slot.recurrence_parent_id) {
+        if (slot.recurrence_parent_id) return;
+        if (slot.repeat_weekly) {
           const slotStart = new Date(slot.slot_date + 'T00:00:00');
           const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : rangeEnd;
           let current = new Date(slotStart);
           let index = 0;
           while (current <= rangeEnd && current <= endDate) {
             const occStr = fmtLocalDate(current);
-            if (occStr >= startStr && occStr <= endStr) {
+            if (occStr >= startStr && occStr <= endStr && !isSlotDateCancelled(slotExceptionMap, slot.id, occStr)) {
               slotEvents.push({ ...slot, event_date: occStr, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true, _occurrence_index: index, _is_virtual: index > 0 });
             }
             current.setDate(current.getDate() + 7);
             index++;
             if (index > 500) break;
           }
-        } else if (!slot.recurrence_parent_id && slot.slot_date >= startStr && slot.slot_date <= endStr) {
+        } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !isSlotDateCancelled(slotExceptionMap, slot.id, slot.slot_date)) {
           slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true });
         }
       });
@@ -527,14 +530,18 @@ export default function Schedule({ userId, userRole }) {
       supabase.from('training_slots').select('*'),
       supabase.from('public_bookings').select('source_type, source_id, guest_name, status').eq('occurrence_date', dateStr).in('status', ['pending_payment', 'confirmed']),
     ]);
+    if (slotRes.error) console.error('fetchStaffSchedule: training_slots query failed:', slotRes.error);
     setStaffScheduleEvents(evRes.data || []);
     setStaffAssignments(asgRes.data || []);
 
     // Which training slots (across all coaches) occur on `dateStr`? Weekly
     // masters repeat every 7 days from slot_date; non-recurring must match the
-    // exact date. Exclude per-occurrence child rows.
+    // exact date. Exclude per-occurrence child rows and dates tombstoned via
+    // the exception map (#279).
+    const staffSlotExceptionMap = buildSlotExceptionMap(slotRes.data);
     const occurringSlots = (slotRes.data || []).filter(s => {
       if (s.recurrence_parent_id) return false;
+      if (isSlotDateCancelled(staffSlotExceptionMap, s.id, dateStr)) return false;
       if (!s.repeat_weekly) return s.slot_date === dateStr;
       if (dateStr < s.slot_date) return false;
       if (s.repeat_end_date && dateStr > s.repeat_end_date) return false;
@@ -587,38 +594,25 @@ export default function Schedule({ userId, userRole }) {
     const endStr = fmtLocalDate(rangeEnd);
     const { data: slots, error: slotErr } = await supabase.from('training_slots').select('*').eq('coach_id', coachId);
     if (slotErr) console.error('Error fetching training slots:', slotErr);
-    // Per-occurrence exception map (#279), mirrors expandRecurringEvents in scheduleUtils.js:
-    // is_exception=true means the occurrence is hidden/deleted, not modified — a modified
-    // occurrence (not built yet) would carry is_exception=false instead.
-    const exceptionMap = {};
-    (slots || []).forEach(slot => {
-      if (slot.recurrence_parent_id && slot.original_date) {
-        exceptionMap[`${slot.recurrence_parent_id}_${slot.original_date}`] = slot;
-      }
-    });
+    const exceptionMap = buildSlotExceptionMap(slots);
     const expandedSlots = [];
     (slots || []).forEach(slot => {
-      if (slot.repeat_weekly && !slot.recurrence_parent_id) {
+      if (slot.recurrence_parent_id) return;
+      if (slot.repeat_weekly) {
         const slotStart = new Date(slot.slot_date + 'T00:00:00');
         const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : rangeEnd;
         let current = new Date(slotStart);
         let index = 0;
         while (current <= endDate && current <= rangeEnd) {
           const dateStr = fmtLocalDate(current);
-          const ex = exceptionMap[`${slot.id}_${dateStr}`];
-          if (current >= rangeStart && !(ex && ex.is_exception)) {
+          if (current >= rangeStart && !isSlotDateCancelled(exceptionMap, slot.id, dateStr)) {
             expandedSlots.push({ ...slot, slot_date: dateStr, _occurrence_index: index, _is_virtual: index > 0 });
           }
           current.setDate(current.getDate() + 7);
           index++;
         }
-      } else if (!slot.recurrence_parent_id) {
-        if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
-          const ex = exceptionMap[`${slot.id}_${slot.slot_date}`];
-          if (!(ex && ex.is_exception)) {
-            expandedSlots.push(slot);
-          }
-        }
+      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !isSlotDateCancelled(exceptionMap, slot.id, slot.slot_date)) {
+        expandedSlots.push(slot);
       }
     });
     // Ensure the first occurrence visible in the current week is draggable (not an

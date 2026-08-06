@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Edit2, Trash2, MapPin, Building, UserCheck, Repeat, CheckSquare, Copy, Globe, Lock, Users as UsersIcon } from 'lucide-react';
-import { fmtLocalDate, generateOccurrenceDates, expandRecurringEvents } from './scheduleUtils';
+import { fmtLocalDate, generateOccurrenceDates, expandRecurringEvents, buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
@@ -1286,8 +1286,10 @@ function CoachAvailabilityWeek({ weekStart, isAdmin }) {
       supabase.from('users').select('id, full_name, avatar_url').in('role', ['admin', 'coach']).order('full_name'),
       supabase.from('slot_reservations').select('id, slot_id, slot_date, status').gte('slot_date', startStr).lte('slot_date', endStr).neq('status', 'cancelled'),
     ]);
+    if (slotRes.error) console.error('WorkSchedule fetchData: training_slots query failed:', slotRes.error);
 
     const raw = slotRes.data || [];
+    const slotExceptionMap = buildSlotExceptionMap(raw);
     const expanded = [];
     raw.forEach(slot => {
       if (slot.recurrence_parent_id) return;
@@ -1296,10 +1298,13 @@ function CoachAvailabilityWeek({ weekStart, isAdmin }) {
         const endDate = slot.repeat_end_date ? new Date(slot.repeat_end_date + 'T00:00:00') : wkEnd;
         let current = new Date(slotStart);
         while (current <= endDate && current <= wkEnd) {
-          if (current >= wkStart) expanded.push({ ...slot, slot_date: fmtLocalDate(current) });
+          const dateStr = fmtLocalDate(current);
+          if (current >= wkStart && !isSlotDateCancelled(slotExceptionMap, slot.id, dateStr)) {
+            expanded.push({ ...slot, slot_date: dateStr });
+          }
           current.setDate(current.getDate() + 7);
         }
-      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
+      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !isSlotDateCancelled(slotExceptionMap, slot.id, slot.slot_date)) {
         expanded.push(slot);
       }
     });
