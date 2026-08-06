@@ -587,6 +587,15 @@ export default function Schedule({ userId, userRole }) {
     const endStr = fmtLocalDate(rangeEnd);
     const { data: slots, error: slotErr } = await supabase.from('training_slots').select('*').eq('coach_id', coachId);
     if (slotErr) console.error('Error fetching training slots:', slotErr);
+    // Per-occurrence exception map (#279), mirrors expandRecurringEvents in scheduleUtils.js:
+    // is_exception=true means the occurrence is hidden/deleted, not modified — a modified
+    // occurrence (not built yet) would carry is_exception=false instead.
+    const exceptionMap = {};
+    (slots || []).forEach(slot => {
+      if (slot.recurrence_parent_id && slot.original_date) {
+        exceptionMap[`${slot.recurrence_parent_id}_${slot.original_date}`] = slot;
+      }
+    });
     const expandedSlots = [];
     (slots || []).forEach(slot => {
       if (slot.repeat_weekly && !slot.recurrence_parent_id) {
@@ -595,15 +604,20 @@ export default function Schedule({ userId, userRole }) {
         let current = new Date(slotStart);
         let index = 0;
         while (current <= endDate && current <= rangeEnd) {
-          if (current >= rangeStart) {
-            expandedSlots.push({ ...slot, slot_date: fmtLocalDate(current), _occurrence_index: index, _is_virtual: index > 0 });
+          const dateStr = fmtLocalDate(current);
+          const ex = exceptionMap[`${slot.id}_${dateStr}`];
+          if (current >= rangeStart && !(ex && ex.is_exception)) {
+            expandedSlots.push({ ...slot, slot_date: dateStr, _occurrence_index: index, _is_virtual: index > 0 });
           }
           current.setDate(current.getDate() + 7);
           index++;
         }
       } else if (!slot.recurrence_parent_id) {
         if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
-          expandedSlots.push(slot);
+          const ex = exceptionMap[`${slot.id}_${slot.slot_date}`];
+          if (!(ex && ex.is_exception)) {
+            expandedSlots.push(slot);
+          }
         }
       }
     });
@@ -695,11 +709,35 @@ export default function Schedule({ userId, userRole }) {
       return error;
     }
     if (source === 'slot') {
-      // Slots have no per-occurrence exception model, so a single virtual occurrence
-      // can't be tombstoned — we only clear its reservations. (This path is currently
-      // unreachable: slots pass allowOne:false. Kept honest rather than a no-op update.)
-      const { error } = await supabase.from('slot_reservations').delete().eq('slot_id', event.id).eq('slot_date', event.slot_date);
-      return error;
+      // Tombstone this one occurrence (#279) — a child training_slots row with
+      // is_exception=true, matched by fetchCoachSlots' exceptionMap during expansion.
+      const masterId = event._master_id || event.recurrence_parent_id || event.id;
+      const { error: tombstoneError } = await supabase.from('training_slots').insert({
+        recurrence_parent_id: masterId,
+        original_date: event.slot_date,
+        slot_date: event.slot_date,
+        is_exception: true,
+        repeat_weekly: false,
+        coach_id: event.coach_id,
+        start_time: event.start_time,
+        duration_minutes: event.duration_minutes,
+        is_public: event.is_public,
+        is_subscription_session: event.is_subscription_session,
+        store_product_ids: event.store_product_ids,
+      });
+      if (tombstoneError) {
+        // 23505 = unique_violation on (recurrence_parent_id, original_date) — a duplicate
+        // tombstone (e.g. a double-click). Treat as already-cancelled rather than erroring.
+        if (tombstoneError.code !== '23505') {
+          console.error('deleteVirtualOccurrence (slot): tombstone insert failed:', tombstoneError);
+          return tombstoneError;
+        }
+        console.warn('deleteVirtualOccurrence (slot): tombstone already exists, treating as already-cancelled:', tombstoneError);
+      }
+      // A cancelled session should not keep its bookings.
+      const { error: resError } = await supabase.from('slot_reservations').delete().eq('slot_id', event.id).eq('slot_date', event.slot_date);
+      if (resError) console.error('deleteVirtualOccurrence (slot): failed to clear reservations:', resError);
+      return resError;
     }
   };
 
@@ -766,7 +804,7 @@ export default function Schedule({ userId, userRole }) {
     }
     setRecurrencePrompt({
       event, source, action: 'delete',
-      allowOne: source !== 'slot',
+      allowOne: true,
       onPick: async (choice) => {
         setRecurrencePrompt(null);
         let err;
