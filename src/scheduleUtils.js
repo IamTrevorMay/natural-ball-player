@@ -98,3 +98,31 @@ export function expandRecurringEvents(masters, exceptions, rangeStart, rangeEnd)
   });
   return expanded;
 }
+
+// training_slots' per-occurrence exception model (#279). Unlike facility_events/
+// schedule_events, training_slots has no generic recurrence_rule/expandRecurringEvents
+// path — every caller expands its own repeat_weekly loop — so this only covers the
+// "is this date tombstoned" half; each caller still runs its own weekly expansion.
+//
+// A child row (recurrence_parent_id set) with is_exception=true hides that one date.
+// is_exception=false would mean a modified (not deleted) occurrence — a feature not
+// built yet, so no caller should currently see one, but the check is written to honor
+// it correctly if that ever changes: only is_exception=true means "skip this date".
+//
+// Every training_slots reader MUST do both of the following, not just one:
+//   1. Never render a child row (recurrence_parent_id set) as its own session.
+//   2. Skip any expanded occurrence date this map tombstones.
+export function buildSlotExceptionMap(slots) {
+  const map = {};
+  (slots || []).forEach(slot => {
+    if (slot.recurrence_parent_id && slot.original_date) {
+      map[`${slot.recurrence_parent_id}_${slot.original_date}`] = slot;
+    }
+  });
+  return map;
+}
+
+export function isSlotDateCancelled(exceptionMap, masterId, dateStr) {
+  const ex = exceptionMap[`${masterId}_${dateStr}`];
+  return !!(ex && ex.is_exception);
+}
