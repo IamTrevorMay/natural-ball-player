@@ -1425,7 +1425,7 @@ export default function Schedule({ userId, userRole }) {
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
                     onEventMove={async (eventId, sourceLane, targetLane, targetStartTime) => {
                       const ev = facilityEvents.find(e => String(e.id) === String(eventId));
-                      if (!ev || ev._is_virtual) return;
+                      if (!ev) return;
 
                       const currentLanes = ev.lanes || [];
                       const currentStart = ev.start_time || ev.event_time;
@@ -1461,8 +1461,54 @@ export default function Schedule({ userId, userRole }) {
                         updates.end_time = fromMinutes(newStartMinutes + durationMinutes);
                       }
 
-                      const { error } = await supabase.from('facility_events').update(updates).eq('id', eventId);
-                      if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
+                      if (!ev._is_virtual) {
+                        const { error } = await supabase.from('facility_events').update(updates).eq('id', eventId);
+                        if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
+                        fetchFacilityEvents();
+                        return;
+                      }
+
+                      // Virtual occurrence (no row to update — its id is synthetic): write a
+                      // per-occurrence exception instead. is_exception MUST be false here —
+                      // true means hidden/deleted (see scheduleUtils.expandRecurringEvents),
+                      // and a true exception would make the moved event vanish entirely.
+                      const masterId = ev._master_id || ev.recurrence_parent_id;
+                      const { data: existingException, error: findError } = await supabase
+                        .from('facility_events')
+                        .select('id')
+                        .eq('recurrence_parent_id', masterId)
+                        .eq('original_date', ev.event_date)
+                        .maybeSingle();
+                      if (findError) {
+                        console.error('onEventMove: exception lookup failed:', findError);
+                        alert('Failed to move event: ' + formatUserError(findError));
+                        return;
+                      }
+
+                      if (existingException) {
+                        const { error } = await supabase.from('facility_events').update(updates).eq('id', existingException.id);
+                        if (error) { console.error('onEventMove: exception update failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
+                      } else {
+                        const { error } = await supabase.from('facility_events').insert({
+                          recurrence_parent_id: masterId,
+                          original_date: ev.event_date,
+                          event_date: ev.event_date,
+                          is_exception: false,
+                          is_recurring: false,
+                          title: ev.title,
+                          description: ev.description,
+                          start_time: ev.start_time,
+                          end_time: ev.end_time,
+                          location: ev.location,
+                          color: ev.color,
+                          lanes: currentLanes,
+                          athlete_id: ev.athlete_id,
+                          coach_id: ev.coach_id,
+                          coach_ids: ev.coach_ids || null,
+                          ...updates,
+                        });
+                        if (error) { console.error('onEventMove: exception insert failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
+                      }
                       fetchFacilityEvents();
                     }}
                     staffEvents={staffScheduleEvents}
@@ -2666,7 +2712,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         >
                           <button
                             type="button"
-                            draggable={canManage && !entry.event._is_virtual && !entry.event._isMealPlan && !!onEventMove}
+                            draggable={canManage && !entry.event._isMealPlan && !!onEventMove}
                             onDragStart={(e) => {
                               e.stopPropagation();
                               e.dataTransfer.setData('application/x-event-id', String(entry.event.id));
