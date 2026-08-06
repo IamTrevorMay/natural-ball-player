@@ -1391,6 +1391,35 @@ export default function Schedule({ userId, userRole }) {
                     canManage={canManageCalendar()}
                     onCellClick={(prefill) => canManageCalendar() && setShowEventTypeChooser(prefill)}
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
+                    onEventMove={async (eventId, targetLane, targetStartTime) => {
+                      const ev = facilityEvents.find(e => String(e.id) === String(eventId));
+                      if (!ev || ev._is_virtual) return;
+
+                      const currentLane = (ev.lanes || [])[0];
+                      const currentStart = ev.start_time || ev.event_time;
+                      const laneChanged = targetLane !== currentLane;
+                      const timeChanged = !!targetStartTime && targetStartTime !== currentStart;
+                      if (!laneChanged && !timeChanged) return;
+
+                      const updates = { lanes: [targetLane] };
+
+                      // Shift both start and end by the same amount so the event
+                      // keeps its original duration rather than being truncated
+                      // or stretched to whatever the drop slot happens to be.
+                      if (timeChanged && currentStart) {
+                        const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+                        const fromMinutes = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+                        const startMinutes = toMinutes(currentStart);
+                        const durationMinutes = ev.end_time ? (toMinutes(ev.end_time) - startMinutes) : 60; // default 1 hour, matching LaneView's own default span
+                        const newStartMinutes = toMinutes(targetStartTime);
+                        updates.start_time = fromMinutes(newStartMinutes);
+                        updates.end_time = fromMinutes(newStartMinutes + durationMinutes);
+                      }
+
+                      const { error } = await supabase.from('facility_events').update(updates).eq('id', eventId);
+                      if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
+                      fetchFacilityEvents();
+                    }}
                     staffEvents={staffScheduleEvents}
                     staffAssignments={staffAssignments}
                     coachDaySlots={coachDaySlots}
@@ -2198,7 +2227,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // LANE VIEW (Daily Schedule by Lane)
 // ============================================
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
@@ -2389,9 +2418,27 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           colSpan={entry.span}
                           className="border border-gray-200 p-0.5 align-top"
                           style={{ width: SLOT_WIDTH * entry.span }}
+                          onDragOver={(e) => {
+                            const types = [...e.dataTransfer.types];
+                            if (types.includes('application/x-event-id') && canManage && onEventMove) {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                            }
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const eventId = e.dataTransfer.getData('application/x-event-id');
+                            if (eventId && canManage && onEventMove) onEventMove(eventId, lane, slot);
+                          }}
                         >
                           <button
                             type="button"
+                            draggable={canManage && !entry.event._is_virtual && !entry.event._isMealPlan && !!onEventMove}
+                            onDragStart={(e) => {
+                              e.stopPropagation();
+                              e.dataTransfer.setData('application/x-event-id', String(entry.event.id));
+                              e.dataTransfer.effectAllowed = 'move';
+                            }}
                             onClick={() => onEventClick && onEventClick(entry.event)}
                             className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
                           >
@@ -2412,6 +2459,18 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                       <td
                         key={slot}
                         onClick={() => handleEmptyClick(lane, slot)}
+                        onDragOver={(e) => {
+                          const types = [...e.dataTransfer.types];
+                          if (types.includes('application/x-event-id') && canManage && onEventMove) {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                          }
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const eventId = e.dataTransfer.getData('application/x-event-id');
+                          if (eventId && canManage && onEventMove) onEventMove(eventId, lane, slot);
+                        }}
                         className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
                         style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
                       />
