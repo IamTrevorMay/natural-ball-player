@@ -1402,17 +1402,13 @@ export default function Schedule({ userId, userRole }) {
                       // Shift EVERY lane the event occupies by the same offset as the
                       // bar the user actually grabbed, rather than collapsing a
                       // multi-lane event down to just the one dropped-on lane (#280).
+                      // shiftLanes returns null if any lane would land outside the
+                      // grid — refuse the whole drop then, no clamping, no partially
+                      // moving some lanes and not others.
                       let newLanes = null;
                       if (targetLane !== sourceLane) {
-                        const sourceIdx = LANES.indexOf(sourceLane);
-                        const targetIdx = LANES.indexOf(targetLane);
-                        if (sourceIdx === -1 || targetIdx === -1) return;
-                        const offset = targetIdx - sourceIdx;
-                        const shiftedIndexes = currentLanes.map((l) => LANES.indexOf(l) + offset);
-                        // Refuse the whole drop if any lane would land outside the grid —
-                        // no clamping, no partially moving some lanes and not others.
-                        if (shiftedIndexes.some((idx) => idx < 0 || idx >= LANES.length)) return;
-                        newLanes = shiftedIndexes.map((idx) => LANES[idx]);
+                        newLanes = shiftLanes(currentLanes, sourceLane, targetLane);
+                        if (!newLanes) return;
                       }
 
                       if (!newLanes && !timeChanged) return;
@@ -2250,11 +2246,39 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // renders in.
 const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
+// Shifts every lane an event occupies by the same offset as the bar the
+// user grabbed (sourceLane) relative to where they're hovering/dropping
+// (targetLane) — e.g. an event on Lanes 1,2,3 grabbed from Lane 2 and
+// hovered over Lane 5 shifts to Lanes 4,5,6. Returns null if any shifted
+// lane would fall outside the grid. Shared by LaneView's drop-preview
+// highlight and the parent's onEventMove handler so the "would this be
+// refused" logic can't drift between what's shown and what's enforced (#280).
+function shiftLanes(eventLanes, sourceLane, targetLane) {
+  const sourceIdx = LANES.indexOf(sourceLane);
+  const targetIdx = LANES.indexOf(targetLane);
+  if (sourceIdx === -1 || targetIdx === -1) return null;
+  const offset = targetIdx - sourceIdx;
+  const shiftedIndexes = eventLanes.map((l) => LANES.indexOf(l) + offset);
+  if (shiftedIndexes.some((idx) => idx < 0 || idx >= LANES.length)) return null;
+  return shiftedIndexes.map((idx) => LANES[idx]);
+}
+
 function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
   const visibleCoaches = coaches.filter(c => c.show_on_facility_schedule !== false);
+
+  // Drop-preview state for drag-and-drop (#280). draggedInfo describes the
+  // event currently being dragged — set on dragstart, cleared on dragend —
+  // and has to live in React state (not read from dataTransfer) because
+  // browsers only expose dataTransfer.types during dragover, not the actual
+  // data. hoveredCell tracks whichever cell is currently under the cursor
+  // while dragging, so the grid can show exactly where the event would land
+  // before the user releases.
+  const [draggedInfo, setDraggedInfo] = useState(null); // { eventId, sourceLane, lanes, span }
+  const [hoveredCell, setHoveredCell] = useState(null); // { lane, slot }
+  const clearDragPreview = () => { setDraggedInfo(null); setHoveredCell(null); };
 
   // Generate 15-minute time slots from START_HOUR to 10:00 PM.
   // START_HOUR is the origin for every slot-index calc below — keep them in sync.
@@ -2278,6 +2302,30 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     if (!timeStr) return -1;
     const [h, m] = timeStr.split(':').map(Number);
     return (h - START_HOUR) * 4 + Math.floor(m / 15);
+  };
+
+  // Derived from draggedInfo + hoveredCell: which lanes (if any) the drop
+  // preview should highlight, or null if the currently-hovered lane would
+  // put the event out of bounds. When refused we don't have a valid lane
+  // set to show, so the preview falls back to just the one hovered cell —
+  // see previewClassFor below.
+  const previewLanes = draggedInfo && hoveredCell
+    ? (hoveredCell.lane === draggedInfo.sourceLane ? draggedInfo.lanes : shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, hoveredCell.lane))
+    : null;
+  const previewRefused = !!draggedInfo && !!hoveredCell && !previewLanes;
+  const hoveredSlotIdx = hoveredCell ? timeToIndex(hoveredCell.slot) : -1;
+
+  const previewClassFor = (lane, slotIdx) => {
+    if (!draggedInfo || !hoveredCell || hoveredSlotIdx < 0) return '';
+    if (previewRefused) {
+      return (lane === hoveredCell.lane && slotIdx === hoveredSlotIdx)
+        ? 'ring-2 ring-inset ring-red-400 bg-red-100/60'
+        : '';
+    }
+    const inRange = slotIdx >= hoveredSlotIdx && slotIdx < hoveredSlotIdx + draggedInfo.span;
+    return (previewLanes.includes(lane) && inRange)
+      ? 'ring-2 ring-inset ring-blue-400 bg-blue-100/50'
+      : '';
   };
 
   // Build a map: lane -> array of {startIdx, span, event}
@@ -2394,7 +2442,18 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
       >
         <div style={{ width: scrollWidth, height: 16 }} />
       </div>
-      <div ref={bodyScrollRef} onScroll={syncFromBody} className="overflow-x-scroll overflow-y-auto border border-gray-200 rounded-b-lg max-w-full" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+      <div
+        ref={bodyScrollRef}
+        onScroll={syncFromBody}
+        onDragLeave={(e) => {
+          // Only clear when the pointer actually leaves the grid, not when
+          // it moves from one cell to another child within it — otherwise
+          // the highlight would flicker off and back on between every cell.
+          if (!e.currentTarget.contains(e.relatedTarget)) setHoveredCell(null);
+        }}
+        className="overflow-x-scroll overflow-y-auto border border-gray-200 rounded-b-lg max-w-full"
+        style={{ maxHeight: 'calc(100vh - 320px)' }}
+      >
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed' }}>
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
@@ -2438,13 +2497,15 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         <td
                           key={slot}
                           colSpan={entry.span}
-                          className="border border-gray-200 p-0.5 align-top"
+                          className={`border border-gray-200 p-0.5 align-top ${previewClassFor(lane, slotIdx)}`}
                           style={{ width: SLOT_WIDTH * entry.span }}
                           onDragOver={(e) => {
                             const types = [...e.dataTransfer.types];
                             if (types.includes('application/x-event-id') && canManage && onEventMove) {
                               e.preventDefault();
-                              e.dataTransfer.dropEffect = 'move';
+                              const valid = !draggedInfo || lane === draggedInfo.sourceLane || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
+                              e.dataTransfer.dropEffect = valid ? 'move' : 'none';
+                              setHoveredCell((prev) => (prev && prev.lane === lane && prev.slot === slot) ? prev : { lane, slot });
                             }
                           }}
                           onDrop={(e) => {
@@ -2452,6 +2513,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                             const eventId = e.dataTransfer.getData('application/x-event-id');
                             const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
                             if (eventId && canManage && onEventMove) onEventMove(eventId, sourceLane, lane, slot);
+                            clearDragPreview();
                           }}
                         >
                           <button
@@ -2466,7 +2528,14 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                               // same offset rather than collapsing it down to one lane (#280).
                               e.dataTransfer.setData('application/x-event-source-lane', lane);
                               e.dataTransfer.effectAllowed = 'move';
+                              setDraggedInfo({
+                                eventId: entry.event.id,
+                                sourceLane: lane,
+                                lanes: entry.event.lanes && entry.event.lanes.length > 0 ? entry.event.lanes : [lane],
+                                span: entry.span,
+                              });
                             }}
+                            onDragEnd={clearDragPreview}
                             onClick={() => onEventClick && onEventClick(entry.event)}
                             className={`${colorClasses} rounded px-1 py-1 h-full w-full text-left hover:opacity-80 transition`}
                           >
@@ -2491,7 +2560,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           const types = [...e.dataTransfer.types];
                           if (types.includes('application/x-event-id') && canManage && onEventMove) {
                             e.preventDefault();
-                            e.dataTransfer.dropEffect = 'move';
+                            const valid = !draggedInfo || lane === draggedInfo.sourceLane || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
+                            e.dataTransfer.dropEffect = valid ? 'move' : 'none';
+                            setHoveredCell((prev) => (prev && prev.lane === lane && prev.slot === slot) ? prev : { lane, slot });
                           }
                         }}
                         onDrop={(e) => {
@@ -2499,8 +2570,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           const eventId = e.dataTransfer.getData('application/x-event-id');
                           const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
                           if (eventId && canManage && onEventMove) onEventMove(eventId, sourceLane, lane, slot);
+                          clearDragPreview();
                         }}
-                        className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''}`}
+                        className={`border border-gray-200 ${isHour ? 'bg-gray-50/40' : ''} ${canManage ? 'cursor-pointer hover:bg-teal-50' : ''} ${previewClassFor(lane, slotIdx)}`}
                         style={{ width: SLOT_WIDTH, minWidth: SLOT_WIDTH, height: 40 }}
                       />
                     );
