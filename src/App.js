@@ -8,6 +8,7 @@ import Programming from './Programming';
 import Profile from './Profile';
 import Schedule from './Schedule';
 import Messages from './Messages';
+import EmailCampaigns from './EmailCampaigns';
 import MyTeam from './MyTeam';
 import TrainingGroups from './TrainingGroups';
 import KnowledgeBase from './KnowledgeBase';
@@ -797,6 +798,8 @@ function ResetPasswordPage({ session, onComplete }) {
 
 function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogout, currentView, setCurrentView, workPortalView, setWorkPortalView, waiverSigned, setWaiverSigned, contractSigned, setContractSigned, loiSigned, setLoiSigned, facilityFineSigned, setFacilityFineSigned, currentPortal, setCurrentPortal }) {
   const [viewProfileUserId, setViewProfileUserId] = useState(null);
+  // #281: which Email Campaign sub-screen is open (send/history/templates/images/failed).
+  const [emailCampaignSection, setEmailCampaignSection] = useState('send');
   const [navigateTeamId, setNavigateTeamId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -1024,6 +1027,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
         contractSigned={contractSigned}
         loiSigned={loiSigned}
         facilityFineSigned={facilityFineSigned}
+        onEmailCampaignNav={(key) => { setEmailCampaignSection(key); handleNav('email-campaigns'); }}
         onSwitchPortal={() => { setCurrentPortal('work'); setSidebarOpen(false); }}
         canSwitchRole={hasSecondary}
         otherRole={hasSecondary ? (viewMode === userRole ? secondaryRole : userRole) : null}
@@ -1062,6 +1066,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
+            {/* #281: admin only — this screen fronts a 937-address mailing list. Whether
+                coaches should get it too is an open question for Cordell, flagged in the PR. */}
+            {currentView === 'email-campaigns' && userRole === 'admin' && <EmailCampaigns userId={userId} section={emailCampaignSection} onSectionChange={setEmailCampaignSection} />}
             {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('manage-athletes')} />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={openProfileFrom('manage-coaches')} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={openProfileFrom('manage-interns')} />}
@@ -1211,8 +1218,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   );
 }
 
-function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, loiSigned, facilityFineSigned, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
+function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, loiSigned, facilityFineSigned, onEmailCampaignNav, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
   const [documentsExpanded, setDocumentsExpanded] = useState(true);
+  const [emailCampaignExpanded, setEmailCampaignExpanded] = useState(false);
   const anyDocUnsigned = waiverSigned === false || contractSigned === false || loiSigned === false || facilityFineSigned === false;
   return (
     <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col z-50 transition-transform duration-200 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
@@ -1379,6 +1387,43 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
           )}
         </button>
+
+        {/* #281: Email Campaign — under Communication, EZFacility-style sub-folders.
+            Admin only: this fronts the full 937-address mailing list. */}
+        {userRole === 'admin' && (
+          <div>
+            <button
+              onClick={() => setEmailCampaignExpanded(!emailCampaignExpanded)}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                currentView === 'email-campaigns' ? 'bg-blue-600' : 'hover:bg-gray-800'
+              }`}
+            >
+              <Mail size={18} />
+              <span className="flex-1 text-left">Email Campaign</span>
+              {emailCampaignExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+            {emailCampaignExpanded && (
+              <div className="ml-4 space-y-1 mt-1">
+                {[
+                  { key: 'send', label: 'Send Email Campaign' },
+                  { key: 'history', label: 'Campaign History' },
+                  { key: 'templates', label: 'Email Template Library' },
+                  { key: 'images', label: 'Email Image Library' },
+                  { key: 'failed', label: 'Failed Emails' },
+                ].map(item => (
+                  <button
+                    key={item.key}
+                    onClick={() => onEmailCampaignNav && onEmailCampaignNav(item.key)}
+                    className="w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm hover:bg-gray-800"
+                  >
+                    <Mail size={16} />
+                    <span className="flex-1 text-left">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {(userRole === 'admin' || userRole === 'coach') && (
           <>
