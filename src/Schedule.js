@@ -984,27 +984,29 @@ export default function Schedule({ userId, userRole }) {
 
   const bulkDelete = async () => {
     if (selectedEvents.length === 0) return;
-    if (!window.confirm(`Delete ${selectedEvents.length} selected event(s)?`)) return;
-    trackAction('bulk_delete_events', { count: selectedEvents.length });
-    // Group by source — but we only support one source at a time per view. Infer from selecting context: use first event's known fields.
-    // Determine source per current view
+    // Determine source before confirming so we can warn about recurring series.
     let source = 'facility';
     if (view === 'team' || view === 'player') source = 'team';
     if (view === 'facility' && selectedCoach) source = 'slot';
+    const recurringMasters = source === 'slot'
+      ? selectedEvents.filter(ev => !ev._is_virtual && ev.repeat_weekly)
+      : [];
+    let confirmMsg = `Delete ${selectedEvents.length} selected event(s)?`;
+    if (recurringMasters.length > 0) {
+      const seriesWord = recurringMasters.length === 1 ? '1 selection is a repeating series' : `${recurringMasters.length} selections are repeating series`;
+      confirmMsg += `\n\nWARNING: ${seriesWord} — all future occurrences will be permanently deleted.`;
+    }
+    if (!window.confirm(confirmMsg)) return;
+    trackAction('bulk_delete_events', { count: selectedEvents.length });
     let failed = 0;
-    let skipped = 0;
     let deleted = 0;
     for (const ev of selectedEvents) {
       const id = ev._master_id || ev.id;
       try {
-        if (ev._is_virtual && source === 'facility') {
+        if (ev._is_virtual && (source === 'facility' || source === 'slot')) {
           const error = await deleteVirtualOccurrence(ev, source);
           if (error) throw error;
           deleted++;
-        } else if (ev._is_virtual && source === 'slot') {
-          // Bulk delete of virtual training slot occurrences: skip — would need exception support
-          skipped++;
-          continue;
         } else {
           const { error } = await supabase.from(tableForSource(source)).delete().eq('id', id);
           if (error) throw error;
@@ -1015,11 +1017,8 @@ export default function Schedule({ userId, userRole }) {
         console.error('Bulk delete failed for event', id, err);
       }
     }
-    if (failed > 0 || skipped > 0) {
-      const parts = [`${deleted} deleted`];
-      if (skipped > 0) parts.push(`${skipped} skipped (recurring slots)`);
-      if (failed > 0) parts.push(`${failed} failed`);
-      alert(`${parts.join(', ')}. Refresh to see current state.`);
+    if (failed > 0) {
+      alert(`${deleted} deleted, ${failed} failed. Refresh to see current state.`);
     }
     exitSelectMode();
     refetchForSource(source);
