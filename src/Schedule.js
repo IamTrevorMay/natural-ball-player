@@ -4,6 +4,7 @@ import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, Us
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
+import LaneMoveDecisionModal from './LaneMoveDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
 import { formatUserError } from './errorMessage';
@@ -240,6 +241,9 @@ export default function Schedule({ userId, userRole }) {
   const [selectedEvents, setSelectedEvents] = useState([]); // raw event objects (need event object for source context)
   const [ctxMenu, setCtxMenu] = useState(null); // { x, y, event, source }
   const [recurrencePrompt, setRecurrencePrompt] = useState(null); // { event, action, source, onPick }
+  // #289: a multi-lane facility event dropped on a different lane suspends the
+  // move here until the user picks whole-event vs single-lane in the modal.
+  const [pendingLaneMove, setPendingLaneMove] = useState(null); // { ev, sourceLane, targetLane, targetStartTime, wholeLanes }
   const [copyToPicker, setCopyToPicker] = useState(null); // { event, source, options, onPick, title }
   const selectedIds = useMemo(() => new Set(selectedEvents.map((e) => String(e.id))), [selectedEvents]);
   const toggleSelect = (ev) => setSelectedEvents((arr) => {
@@ -553,6 +557,87 @@ export default function Schedule({ userId, userRole }) {
       }
     }
     setFacilityEvents(combined);
+  };
+
+  // #289: the write half of a LaneView drag — extracted from the inline
+  // onEventMove prop so the lane-choice modal can suspend the move until the
+  // user picks. newLanes null means "lanes unchanged" (a time-only move);
+  // targetStartTime null means "time unchanged" (a lanes-only move). The
+  // real-row and virtual-occurrence branches are #285's logic, unchanged —
+  // in particular is_exception stays FALSE on the exception insert (true
+  // means hidden/cancelled and would vanish the occurrence).
+  const applyFacilityEventMove = async (ev, newLanes, targetStartTime) => {
+    const currentLanes = ev.lanes || [];
+    const currentStart = ev.start_time || ev.event_time;
+
+    const updates = {};
+    if (newLanes) updates.lanes = newLanes;
+
+    // Shift both start and end by the same amount so the event keeps its
+    // original duration rather than being truncated or stretched to
+    // whatever the drop slot happens to be.
+    if (targetStartTime && currentStart && targetStartTime !== currentStart) {
+      const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+      const fromMinutes = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      const startMinutes = toMinutes(currentStart);
+      const durationMinutes = ev.end_time ? (toMinutes(ev.end_time) - startMinutes) : 60; // default 1 hour, matching LaneView's own default span
+      const newStartMinutes = toMinutes(targetStartTime);
+      updates.start_time = fromMinutes(newStartMinutes);
+      updates.end_time = fromMinutes(newStartMinutes + durationMinutes);
+    }
+
+    if (Object.keys(updates).length === 0) return;
+
+    if (!ev._is_virtual) {
+      const { error } = await supabase.from('facility_events').update(updates).eq('id', ev.id);
+      if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
+      fetchFacilityEvents();
+      return;
+    }
+
+    // Virtual occurrence (no row to update — its id is synthetic): write a
+    // per-occurrence exception instead. is_exception MUST be false here —
+    // true means hidden/deleted (see scheduleUtils.expandRecurringEvents),
+    // and a true exception would make the moved event vanish entirely.
+    const masterId = ev._master_id || ev.recurrence_parent_id;
+    const { data: existingException, error: findError } = await supabase
+      .from('facility_events')
+      .select('id')
+      .eq('recurrence_parent_id', masterId)
+      .eq('original_date', ev.event_date)
+      .maybeSingle();
+    if (findError) {
+      console.error('applyFacilityEventMove: exception lookup failed:', findError);
+      alert('Failed to move event: ' + formatUserError(findError));
+      return;
+    }
+
+    if (existingException) {
+      const { error } = await supabase.from('facility_events').update(updates).eq('id', existingException.id);
+      if (error) { console.error('applyFacilityEventMove: exception update failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
+    } else {
+      const { error } = await supabase.from('facility_events').insert({
+        recurrence_parent_id: masterId,
+        original_date: ev.event_date,
+        event_date: ev.event_date,
+        is_exception: false,
+        is_recurring: false,
+        title: ev.title,
+        description: ev.description,
+        start_time: ev.start_time,
+        end_time: ev.end_time,
+        location: ev.location,
+        color: ev.color,
+        lanes: currentLanes,
+        athlete_id: ev.athlete_id,
+        coach_id: ev.coach_id,
+        coach_ids: ev.coach_ids || null,
+        team_ids: ev.team_ids || [],
+        ...updates,
+      });
+      if (error) { console.error('applyFacilityEventMove: exception insert failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
+    }
+    fetchFacilityEvents();
   };
 
   const fetchCoaches = async () => {
@@ -1479,7 +1564,7 @@ export default function Schedule({ userId, userRole }) {
                     canManage={canManageCalendar()}
                     onCellClick={(prefill) => canManageCalendar() && setShowEventTypeChooser(prefill)}
                     onEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
-                    onEventMove={async (eventId, sourceLane, targetLane, targetStartTime) => {
+                    onEventMove={(eventId, sourceLane, targetLane, targetStartTime) => {
                       const ev = facilityEvents.find(e => String(e.id) === String(eventId));
                       if (!ev) return;
 
@@ -1487,86 +1572,37 @@ export default function Schedule({ userId, userRole }) {
                       const currentStart = ev.start_time || ev.event_time;
                       const timeChanged = !!targetStartTime && targetStartTime !== currentStart;
 
-                      // Shift EVERY lane the event occupies by the same offset as the
-                      // bar the user actually grabbed, rather than collapsing a
-                      // multi-lane event down to just the one dropped-on lane (#280).
-                      // shiftLanes returns null if any lane would land outside the
-                      // grid — refuse the whole drop then, no clamping, no partially
-                      // moving some lanes and not others.
-                      let newLanes = null;
-                      if (targetLane !== sourceLane) {
-                        newLanes = shiftLanes(currentLanes, sourceLane, targetLane);
-                        if (!newLanes) return;
-                      }
-
-                      if (!newLanes && !timeChanged) return;
-
-                      const updates = {};
-                      if (newLanes) updates.lanes = newLanes;
-
-                      // Shift both start and end by the same amount so the event
-                      // keeps its original duration rather than being truncated
-                      // or stretched to whatever the drop slot happens to be.
-                      if (timeChanged && currentStart) {
-                        const toMinutes = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-                        const fromMinutes = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
-                        const startMinutes = toMinutes(currentStart);
-                        const durationMinutes = ev.end_time ? (toMinutes(ev.end_time) - startMinutes) : 60; // default 1 hour, matching LaneView's own default span
-                        const newStartMinutes = toMinutes(targetStartTime);
-                        updates.start_time = fromMinutes(newStartMinutes);
-                        updates.end_time = fromMinutes(newStartMinutes + durationMinutes);
-                      }
-
-                      if (!ev._is_virtual) {
-                        const { error } = await supabase.from('facility_events').update(updates).eq('id', eventId);
-                        if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
-                        fetchFacilityEvents();
+                      // Same-lane drop: a time-only move — no lane choice exists, no
+                      // modal (#289 keeps today's behaviour here).
+                      if (targetLane === sourceLane) {
+                        if (!timeChanged) return;
+                        applyFacilityEventMove(ev, null, targetStartTime);
                         return;
                       }
 
-                      // Virtual occurrence (no row to update — its id is synthetic): write a
-                      // per-occurrence exception instead. is_exception MUST be false here —
-                      // true means hidden/deleted (see scheduleUtils.expandRecurringEvents),
-                      // and a true exception would make the moved event vanish entirely.
-                      const masterId = ev._master_id || ev.recurrence_parent_id;
-                      const { data: existingException, error: findError } = await supabase
-                        .from('facility_events')
-                        .select('id')
-                        .eq('recurrence_parent_id', masterId)
-                        .eq('original_date', ev.event_date)
-                        .maybeSingle();
-                      if (findError) {
-                        console.error('onEventMove: exception lookup failed:', findError);
-                        alert('Failed to move event: ' + formatUserError(findError));
+                      // Single-lane event: nothing to choose — today's behaviour,
+                      // no modal. (shiftLanes on one lane always lands in bounds;
+                      // the null-check stays as a backstop.)
+                      if (currentLanes.length <= 1) {
+                        const wholeLanes = shiftLanes(currentLanes, sourceLane, targetLane);
+                        if (!wholeLanes) return;
+                        applyFacilityEventMove(ev, wholeLanes, timeChanged ? targetStartTime : null);
                         return;
                       }
 
-                      if (existingException) {
-                        const { error } = await supabase.from('facility_events').update(updates).eq('id', existingException.id);
-                        if (error) { console.error('onEventMove: exception update failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
-                      } else {
-                        const { error } = await supabase.from('facility_events').insert({
-                          recurrence_parent_id: masterId,
-                          original_date: ev.event_date,
-                          event_date: ev.event_date,
-                          is_exception: false,
-                          is_recurring: false,
-                          title: ev.title,
-                          description: ev.description,
-                          start_time: ev.start_time,
-                          end_time: ev.end_time,
-                          location: ev.location,
-                          color: ev.color,
-                          lanes: currentLanes,
-                          athlete_id: ev.athlete_id,
-                          coach_id: ev.coach_id,
-                          coach_ids: ev.coach_ids || null,
-                          team_ids: ev.team_ids || [],
-                          ...updates,
-                        });
-                        if (error) { console.error('onEventMove: exception insert failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
-                      }
-                      fetchFacilityEvents();
+                      // Multi-lane event dropped on a different lane: the user picks
+                      // whole-event vs single-lane in the modal (#289). wholeLanes
+                      // null means the whole block wouldn't fit (#280's refusal) —
+                      // the modal then offers only the single-lane move. Never
+                      // auto-pick single-lane here: silently moving one lane is
+                      // exactly the data-loss collapse #280 fixed.
+                      setPendingLaneMove({
+                        ev,
+                        sourceLane,
+                        targetLane,
+                        targetStartTime: timeChanged ? targetStartTime : null,
+                        wholeLanes: shiftLanes(currentLanes, sourceLane, targetLane),
+                      });
                     }}
                     staffEvents={staffScheduleEvents}
                     staffAssignments={staffAssignments}
@@ -1964,6 +2000,33 @@ export default function Schedule({ userId, userRole }) {
             setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents();
             if (view === 'team') fetchTeamEvents(); else if (view === 'my-schedule') fetchMyScheduleEvents();
           }}
+        />
+      )}
+      {/* #289: whole-event vs single-lane choice for a multi-lane LaneView drop.
+          Cancel aborts the move entirely — nothing is written. */}
+      {pendingLaneMove && (
+        <LaneMoveDecisionModal
+          eventTitle={pendingLaneMove.ev.title}
+          sourceLane={pendingLaneMove.sourceLane}
+          targetLane={pendingLaneMove.targetLane}
+          allowWhole={!!pendingLaneMove.wholeLanes}
+          startTimeLabel={pendingLaneMove.targetStartTime
+            ? formatTimeDisplay(pendingLaneMove.ev.start_time || pendingLaneMove.ev.event_time)
+            : null}
+          onPick={(choice) => {
+            const move = pendingLaneMove;
+            setPendingLaneMove(null);
+            if (choice === 'whole') {
+              if (!move.wholeLanes) return;
+              applyFacilityEventMove(move.ev, move.wholeLanes, move.targetStartTime);
+            } else {
+              // Lanes only — a single-lane time change would require splitting
+              // the row into two events (out of scope for v1); the modal
+              // says so, and the time is deliberately not applied here.
+              applyFacilityEventMove(move.ev, replaceSingleLane(move.ev.lanes || [], move.sourceLane, move.targetLane), null);
+            }
+          }}
+          onClose={() => setPendingLaneMove(null)}
         />
       )}
       {/* Training Slot Panels */}
@@ -2433,6 +2496,17 @@ function shiftLanes(eventLanes, sourceLane, targetLane) {
   return shiftedIndexes.map((idx) => LANES[idx]);
 }
 
+// #289: "move just this lane" — the grabbed lane becomes the target lane and
+// every other lane stays put. Deduped (dropping onto a lane the event already
+// occupies legitimately narrows it by one lane, it isn't refused) and
+// re-sorted into LANES grid order like every other lanes write. No bounds
+// check needed: the target is always a real lane in LANES.
+function replaceSingleLane(eventLanes, sourceLane, targetLane) {
+  const replaced = (eventLanes || []).map((l) => (l === sourceLane ? targetLane : l));
+  const deduped = new Set(replaced);
+  return LANES.filter((l) => deduped.has(l));
+}
+
 // 15-minute time slots from 8:00 AM to 10:00 PM. Module-level for the same
 // reason LANES is — shiftStartIdx below needs the same canonical slot count
 // the grid renders, without recomputing it or risking drift (#280).
@@ -2511,13 +2585,25 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const previewStartIdx = draggedInfo && hoveredCell
     ? shiftStartIdx(hoveredCell.slotIdx, draggedInfo.grabOffset, draggedInfo.span)
     : null;
-  const previewRefused = !!draggedInfo && !!hoveredCell && (!previewLanes || previewStartIdx === null);
+  const previewTimeOk = previewStartIdx !== null;
+  // #289: a multi-lane bar hovered where the whole block wouldn't fit is no
+  // longer a refusal — the drop opens a choice where only the single grabbed
+  // lane can move. Amber on the hovered cell says "droppable, but single-lane
+  // only" before the user commits. An out-of-grid TIME is still a hard red
+  // refusal for every event, exactly as before.
+  const previewSingleLaneOnly = !!draggedInfo && !!hoveredCell && previewTimeOk && !previewLanes && draggedInfo.lanes.length > 1;
+  const previewRefused = !!draggedInfo && !!hoveredCell && (!previewTimeOk || (!previewLanes && draggedInfo.lanes.length <= 1));
 
   const previewClassFor = (lane, slotIdx) => {
     if (!draggedInfo || !hoveredCell) return '';
     if (previewRefused) {
       return (lane === hoveredCell.lane && slotIdx === hoveredCell.slotIdx)
         ? 'ring-2 ring-inset ring-red-400 bg-red-100/60'
+        : '';
+    }
+    if (previewSingleLaneOnly) {
+      return (lane === hoveredCell.lane && slotIdx === hoveredCell.slotIdx)
+        ? 'ring-2 ring-inset ring-amber-400 bg-amber-100/60'
         : '';
     }
     const inRange = slotIdx >= previewStartIdx && slotIdx < previewStartIdx + draggedInfo.span;
@@ -2782,7 +2868,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                               const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
                               let valid = true;
                               if (draggedInfo) {
-                                const validLane = lane === draggedInfo.sourceLane || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
+                                // #289: a multi-lane event is always lane-valid — if the whole block
+                                // doesn't fit, the drop offers a single-lane move instead of refusing.
+                                const validLane = lane === draggedInfo.sourceLane || draggedInfo.lanes.length > 1 || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
                                 const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span) !== null;
                                 valid = validLane && validTime;
                               }
@@ -2851,7 +2939,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                             const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
                             let valid = true;
                             if (draggedInfo) {
-                              const validLane = lane === draggedInfo.sourceLane || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
+                              // #289: a multi-lane event is always lane-valid — if the whole block
+                              // doesn't fit, the drop offers a single-lane move instead of refusing.
+                              const validLane = lane === draggedInfo.sourceLane || draggedInfo.lanes.length > 1 || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
                               const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span) !== null;
                               valid = validLane && validTime;
                             }
