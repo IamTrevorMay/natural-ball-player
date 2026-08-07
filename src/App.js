@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
+import { buildSlotExceptionMap, getSlotDateException } from './scheduleUtils';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
 import CoachTools from './CoachTools';
@@ -1625,10 +1625,13 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
     setPendingRequests(pendingWithSlot);
 
     const todaySlots = slots.filter(slot => {
-      // Never treat a child (tombstone) row as its own session, and never show
-      // a session on a date that's been individually cancelled (#279).
-      if (slot.recurrence_parent_id) return false;
-      if (isSlotDateCancelled(slotExceptionMap, slot.id, today)) return false;
+      // #292: a moved occurrence (child row, is_exception=false) is a real
+      // session on its own slot_date; tombstone children (is_exception=true)
+      // never render (#279).
+      if (slot.recurrence_parent_id) return slot.is_exception === false && slot.slot_date === today;
+      // ANY exception on today skips the series here — a tombstoned today is
+      // cancelled, a moved today renders from its child row above (#292).
+      if (getSlotDateException(slotExceptionMap, slot.id, today)) return false;
       if (slot.slot_date === today) return true;
       if (slot.repeat_weekly) {
         const slotDow = new Date(slot.slot_date + 'T00:00:00').getDay();
