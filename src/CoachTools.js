@@ -4,6 +4,8 @@ import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, Chev
 import { formatUserError } from './errorMessage';
 import { buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
 import { useModalTracking, trackAction } from './usage';
+import { useExerciseVideos } from './exerciseVideos';
+import ExerciseNameInput from './ExerciseNameInput';
 import { metricsByGroup } from './assessmentMetrics';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
@@ -1495,6 +1497,7 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
   const [error, setError] = useState('');
 
   const activeTab = tabs[activeTabIndex] || tabs[0];
+  const { videos: exerciseVideos, loading: exerciseVideosLoading } = useExerciseVideos();
 
   const addTab = () => {
     const newTabs = [...tabs, { tabName: `Day ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
@@ -1524,6 +1527,21 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
       ...newTabs[activeTabIndex],
       exercises: newTabs[activeTabIndex].exercises.map((ex, i) =>
         i === exIndex ? { ...ex, [field]: value } : ex
+      )
+    };
+    setTabs(newTabs);
+  };
+
+  // Applies more than one field at once in a single setTabs call. Needed for
+  // picking a video suggestion (name + link together) - two separate
+  // updateExercise calls in the same handler would both read the same stale
+  // `tabs` closure and the second call would silently clobber the first.
+  const updateExerciseFields = (exIndex, patch) => {
+    const newTabs = [...tabs];
+    newTabs[activeTabIndex] = {
+      ...newTabs[activeTabIndex],
+      exercises: newTabs[activeTabIndex].exercises.map((ex, i) =>
+        i === exIndex ? { ...ex, ...patch } : ex
       )
     };
     setTabs(newTabs);
@@ -1693,7 +1711,14 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
                         <button type="button" onClick={addExercise} className="text-gray-400 hover:text-green-600 transition"><Plus size={16} /></button>
                       </td>
                       <td className="py-2 pr-2">
-                        <input type="text" value={ex.name} onChange={(e) => updateExercise(i, 'name', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                        <ExerciseNameInput
+                          value={ex.name}
+                          onChange={(name) => updateExercise(i, 'name', name)}
+                          onPick={({ name, video_url }) => updateExerciseFields(i, ex.link ? { name } : { name, link: video_url })}
+                          hasLink={!!ex.link}
+                          videos={exerciseVideos}
+                          loading={exerciseVideosLoading}
+                        />
                       </td>
                       <td className="py-2 pr-2">
                         <input type="text" placeholder="1" value={ex.sets} onChange={(e) => updateExercise(i, 'sets', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
@@ -2221,6 +2246,7 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
 
   const safeIndex = Math.min(activeTabIndex, tabs.length - 1);
   const activeTab = tabs[safeIndex] || tabs[0];
+  const { videos: exerciseVideos, loading: exerciseVideosLoading } = useExerciseVideos();
 
   const addTab = () => {
     const newTabs = [...tabs, { tabName: `Tab ${tabs.length + 1}`, exercises: [{ name: '', sets: '1', reps: '', link: '', category: 'hitting', superSet: '' }] }];
@@ -2250,6 +2276,19 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
       ...newTabs[safeIndex],
       exercises: newTabs[safeIndex].exercises.map((ex, i) =>
         i === exIndex ? { ...ex, [field]: value } : ex
+      )
+    };
+    setTabs(newTabs);
+  };
+
+  // See the identical helper in CreateTrainingProgramModal for why this
+  // exists: picking a video suggestion needs to set name + link atomically.
+  const updateExerciseFields = (exIndex, patch) => {
+    const newTabs = [...tabs];
+    newTabs[safeIndex] = {
+      ...newTabs[safeIndex],
+      exercises: newTabs[safeIndex].exercises.map((ex, i) =>
+        i === exIndex ? { ...ex, ...patch } : ex
       )
     };
     setTabs(newTabs);
@@ -2382,7 +2421,14 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
                         <button type="button" onClick={addExercise} className="text-gray-400 hover:text-green-600 transition"><Plus size={16} /></button>
                       </td>
                       <td className="py-2 pr-2">
-                        <input type="text" value={ex.name} onChange={(e) => updateExercise(i, 'name', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                        <ExerciseNameInput
+                          value={ex.name}
+                          onChange={(name) => updateExercise(i, 'name', name)}
+                          onPick={({ name, video_url }) => updateExerciseFields(i, ex.link ? { name } : { name, link: video_url })}
+                          hasLink={!!ex.link}
+                          videos={exerciseVideos}
+                          loading={exerciseVideosLoading}
+                        />
                       </td>
                       <td className="py-2 pr-2">
                         <input type="text" placeholder="1" value={ex.sets} onChange={(e) => updateExercise(i, 'sets', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
