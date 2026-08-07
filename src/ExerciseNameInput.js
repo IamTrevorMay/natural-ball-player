@@ -3,6 +3,10 @@ import { createPortal } from 'react-dom';
 
 const MAX_SUGGESTIONS = 8;
 const MIN_CHARS = 2;
+// Single source of truth for the dropdown's cap — applied via inline style,
+// not a Tailwind max-h-* class, so there's no second copy of this number
+// that could drift out of sync with it.
+const DROPDOWN_MAX_H = 224;
 
 // Exact match first, then starts-with, then contains — alphabetical within
 // each group. `videos` is already the full library; this just ranks it
@@ -66,7 +70,30 @@ export default function ExerciseNameInput({ value, onChange, onPick, hasLink, vi
     const updateCoords = () => {
       if (!inputRef.current) return;
       const rect = inputRef.current.getBoundingClientRect();
-      setCoords({ top: rect.bottom, left: rect.left, width: rect.width });
+      // The portal is position: fixed, so anything past the viewport edge
+      // can never be scrolled into view — flip up when there isn't room
+      // below and there's more room above, and always cap height to
+      // whichever space is actually available so it never overflows either
+      // edge (matters on short viewports where neither side fully fits).
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      if (spaceBelow < DROPDOWN_MAX_H && spaceAbove > spaceBelow) {
+        setCoords({
+          direction: 'up',
+          bottom: window.innerHeight - rect.top,
+          left: rect.left,
+          width: rect.width,
+          maxHeight: Math.max(0, Math.min(DROPDOWN_MAX_H, spaceAbove)),
+        });
+      } else {
+        setCoords({
+          direction: 'down',
+          top: rect.bottom,
+          left: rect.left,
+          width: rect.width,
+          maxHeight: Math.max(0, Math.min(DROPDOWN_MAX_H, spaceBelow)),
+        });
+      }
     };
     updateCoords();
     // capture: true so this also fires for scroll on the modal's inner
@@ -91,8 +118,9 @@ export default function ExerciseNameInput({ value, onChange, onPick, hasLink, vi
     setHighlightIndex(0);
   };
 
+  // onPick is authoritative for the picked value (both call sites' onPick
+  // route to a patch that includes `name`) — onChange is for typing only.
   const pick = (video) => {
-    onChange(video.name);
     onPick({ name: video.name, video_url: video.video_url });
     setOpen(false);
   };
@@ -134,8 +162,15 @@ export default function ExerciseNameInput({ value, onChange, onPick, hasLink, vi
       )}
       {open && suggestions.length > 0 && coords && createPortal(
         <ul
-          style={{ position: 'fixed', top: coords.top, left: coords.left, width: coords.width, zIndex: 9999 }}
-          className="bg-white border border-gray-300 rounded shadow-lg max-h-56 overflow-y-auto text-sm"
+          style={{
+            position: 'fixed',
+            left: coords.left,
+            width: coords.width,
+            maxHeight: coords.maxHeight,
+            zIndex: 9999,
+            ...(coords.direction === 'up' ? { bottom: coords.bottom } : { top: coords.top }),
+          }}
+          className="bg-white border border-gray-300 rounded shadow-lg overflow-y-auto text-sm"
         >
           {suggestions.map((v, i) => (
             <li
