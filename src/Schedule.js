@@ -1505,6 +1505,7 @@ export default function Schedule({ userId, userRole }) {
                           athlete_id: ev.athlete_id,
                           coach_id: ev.coach_id,
                           coach_ids: ev.coach_ids || null,
+                          team_ids: ev.team_ids || [],
                           ...updates,
                         });
                         if (error) { console.error('onEventMove: exception insert failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
@@ -5521,8 +5522,10 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
   const [loading, setLoading] = useState(false);
   const [athleteId, setAthleteId] = useState('');
   const [coachIds, setCoachIds] = useState([]);
+  const [teamIds, setTeamIds] = useState([]);
   const [athletes, setAthletes] = useState([]);
   const [coaches, setCoaches] = useState([]);
+  const [teams, setTeams] = useState([]);
   // Public booking (#229): in public mode this event is exposed on /book, its
   // Type drives the color, and it carries a price + capacity.
   const [bookingType, setBookingType] = useState(PUBLIC_BOOKING_TYPES[0].value);
@@ -5531,12 +5534,17 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
 
   useEffect(() => {
     (async () => {
-      const [aRes, cRes] = await Promise.all([
+      const [aRes, cRes, tRes] = await Promise.all([
         supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name'),
         supabase.from('users').select('id, full_name').in('role', ['admin', 'coach']).order('full_name'),
+        supabase.from('teams').select('id, name').order('name'),
       ]);
+      if (aRes.error) console.error('AddFacilityEventPanel: athletes query failed:', aRes.error);
+      if (cRes.error) console.error('AddFacilityEventPanel: coaches query failed:', cRes.error);
+      if (tRes.error) console.error('AddFacilityEventPanel: teams query failed:', tRes.error);
       setAthletes(aRes.data || []);
       setCoaches(cRes.data || []);
+      setTeams(tRes.data || []);
     })();
   }, []);
 
@@ -5567,6 +5575,9 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
         athlete_id: isPublicMode ? null : (athleteId || null),
         coach_id: coachIds[0] || null,
         coach_ids: coachIds.length > 0 ? coachIds : null,
+        // Unlike coach_ids, this column is NOT NULL DEFAULT '{}' — send [] when
+        // nothing is selected, never null (#287).
+        team_ids: teamIds,
         color: isPublicMode ? bookingTypeColor(bookingType) : color,
         is_public: isPublicMode,
         booking_type: isPublicMode ? bookingType : null,
@@ -5666,6 +5677,23 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
               ))}
             </div>
           </div>
+          {/* #287: multi-select is required, not optional — one facility event
+              routinely belongs to several teams (an age band spans two ages,
+              each with a League and a Tournament team). */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Teams</label>
+            <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+              {teams.map(t => (
+                <label key={t.id} className="flex items-center space-x-2 text-sm py-0.5">
+                  <input type="checkbox" checked={teamIds.includes(t.id)} onChange={(e) => {
+                    setTeamIds(e.target.checked ? [...teamIds, t.id] : teamIds.filter(id => id !== t.id));
+                  }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                  <span className="text-gray-700 truncate">{t.name}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Assigned teams see this event on their team schedule.</p>
+          </div>
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Reserved Lanes</label>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
@@ -5746,6 +5774,86 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const isPlayer = userRole === 'player';
   const eventMasterId = event._master_id || event.id;
   const occurrenceDate = event.event_date;
+
+  // #287: team assignment. Teams are readable by every authenticated role
+  // (same query the Team calendar's fetchTeams uses), so names resolve for
+  // players viewing the modal too.
+  const [teams, setTeams] = useState([]);
+  const [editingTeams, setEditingTeams] = useState(false);
+  const [teamDraft, setTeamDraft] = useState(event.team_ids || []);
+  const [teamSaving, setTeamSaving] = useState(false);
+  const [teamRecurrencePrompt, setTeamRecurrencePrompt] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.from('teams').select('id, name').order('name');
+      if (error) console.error('FacilityEventDetail: teams query failed:', error);
+      setTeams(data || []);
+    })();
+  }, []);
+
+  const applyTeamAssignment = async (choice) => {
+    setTeamRecurrencePrompt(false);
+    setTeamSaving(true);
+    try {
+      if (choice === 'one') {
+        // Single occurrence of a recurring series: write/update a per-occurrence
+        // exception row, same find-or-create the #285 lane-move uses. is_exception
+        // MUST be false — true means hidden/cancelled (scheduleUtils line 91), and
+        // would make this occurrence vanish instead of getting a team.
+        const { data: existingException, error: findError } = await supabase
+          .from('facility_events')
+          .select('id')
+          .eq('recurrence_parent_id', eventMasterId)
+          .eq('original_date', occurrenceDate)
+          .maybeSingle();
+        if (findError) throw findError;
+        if (existingException) {
+          const { error } = await supabase.from('facility_events').update({ team_ids: teamDraft }).eq('id', existingException.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('facility_events').insert({
+            recurrence_parent_id: eventMasterId,
+            original_date: occurrenceDate,
+            event_date: occurrenceDate,
+            is_exception: false,
+            is_recurring: false,
+            title: event.title,
+            description: event.description,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            location: event.location,
+            color: event.color,
+            lanes: event.lanes || [],
+            athlete_id: event.athlete_id,
+            coach_id: event.coach_id,
+            coach_ids: event.coach_ids || null,
+            team_ids: teamDraft,
+          });
+          if (error) throw error;
+        }
+      } else {
+        // 'all' — and the plain non-recurring case. Children (per-occurrence
+        // exception rows) are updated too so an already-modified occurrence
+        // follows the series; on a non-recurring event that update matches
+        // nothing and is a no-op.
+        const { error } = await supabase.from('facility_events').update({ team_ids: teamDraft }).eq('id', eventMasterId);
+        if (error) throw error;
+        const { error: childError } = await supabase.from('facility_events').update({ team_ids: teamDraft }).eq('recurrence_parent_id', eventMasterId);
+        if (childError) throw childError;
+      }
+      onUpdate();
+    } catch (err) {
+      alert('Error assigning teams: ' + formatUserError(err));
+    } finally {
+      setTeamSaving(false);
+    }
+  };
+
+  const handleTeamSave = () => {
+    if (event.is_recurring) { setTeamRecurrencePrompt(true); return; }
+    applyTeamAssignment('all');
+  };
 
   // Sign-ups lock 12h before the event starts (mirrors the #233 cancel cutoff).
   const SIGNUP_CUTOFF_MS = 12 * 60 * 60 * 1000;
@@ -5983,6 +6091,52 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                 );
               })()}
 
+              {/* #287: team assignment — shown to everyone, editable by staff. */}
+              {(() => {
+                const teamNames = (event.team_ids || []).map(tid => teams.find(t => t.id === tid)?.name).filter(Boolean);
+                if (teamNames.length === 0 && !isStaff) return null;
+                return (
+                  <div className="text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <Users size={14} className="text-gray-400" />
+                        <span className="text-gray-700">
+                          {teamNames.length === 1 ? 'Team' : 'Teams'}:{' '}
+                          {teamNames.length > 0
+                            ? <span className="font-medium text-gray-900">{teamNames.join(', ')}</span>
+                            : <span className="text-gray-400 italic">none assigned</span>}
+                        </span>
+                      </div>
+                      {isStaff && !editingTeams && (
+                        <button onClick={() => { setTeamDraft(event.team_ids || []); setEditingTeams(true); }} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                          {teamNames.length > 0 ? 'Edit teams' : 'Assign teams'}
+                        </button>
+                      )}
+                    </div>
+                    {editingTeams && (
+                      <div className="mt-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                          {teams.map(t => (
+                            <label key={t.id} className="flex items-center space-x-2 text-sm py-0.5">
+                              <input type="checkbox" checked={teamDraft.includes(t.id)} onChange={(e) => {
+                                setTeamDraft(e.target.checked ? [...teamDraft, t.id] : teamDraft.filter(id => id !== t.id));
+                              }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                              <span className="text-gray-700 truncate">{t.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex justify-end space-x-2">
+                          <button onClick={() => setEditingTeams(false)} className="px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+                          <button onClick={handleTeamSave} disabled={teamSaving} className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition disabled:opacity-50">
+                            {teamSaving ? 'Saving…' : 'Save teams'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">
                   {signupsLoading ? (
@@ -6117,6 +6271,20 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           )}
         </div>
       </div>
+      {/* #287: same three-option control shipped for #279, minus "this and
+          future" — see PR notes on why a series split is unsafe here. Renders
+          after the card so it paints on top. */}
+      {teamRecurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="Assign teams on a recurring event"
+          message="Apply this team assignment to just this occurrence, or to the whole series?"
+          actionLabel="Apply to"
+          allowOne={true}
+          allowFuture={false}
+          onPick={applyTeamAssignment}
+          onClose={() => setTeamRecurrencePrompt(false)}
+        />
+      )}
     </div>
   );
 }

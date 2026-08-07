@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 import { formatUserError } from './errorMessage';
+import { expandRecurringEvents } from './scheduleUtils';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -183,17 +184,78 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
 
       // CM1: also include legacy rows that only set the scalar team_id and
       // never populated the team_ids array.
-      const { data: events } = await supabase
+      const todayStr = fmtLocalDate(new Date());
+      const { data: events, error: eventsError } = await supabase
         .from('schedule_events')
         .select('*')
         .or(`team_id.eq.${teamId},team_ids.cs.{${teamId}}`)
-        .gte('event_date', fmtLocalDate(new Date()))
+        .gte('event_date', todayStr)
         .order('event_date', { ascending: true })
         .limit(5);
+      if (eventsError) console.error('MyTeam: schedule_events query failed:', eventsError);
 
-      if (events) {
-        setUpcomingEvents(events);
+      // #287: facility events assigned to this team. Three row shapes matter:
+      // standalone events, recurring masters (expanded client-side, same
+      // helper the calendar views use), and per-occurrence exception rows —
+      // either a single occurrence assigned via "this event only", or a
+      // modified occurrence of an assigned series.
+      const rangeStart = new Date();
+      rangeStart.setHours(0, 0, 0, 0);
+      const rangeEnd = new Date(rangeStart);
+      rangeEnd.setDate(rangeEnd.getDate() + 90);
+
+      const [directRes, masterRes] = await Promise.all([
+        // Standalone events plus team-assigned exception occurrences.
+        // is_exception=true rows are cancelled occurrences (scheduleUtils
+        // hides them during expansion) — never surface them directly either.
+        supabase
+          .from('facility_events')
+          .select('*')
+          .contains('team_ids', [teamId])
+          .eq('is_recurring', false)
+          .eq('is_exception', false)
+          .gte('event_date', todayStr)
+          .order('event_date', { ascending: true })
+          .limit(25),
+        supabase
+          .from('facility_events')
+          .select('*')
+          .contains('team_ids', [teamId])
+          .eq('is_recurring', true)
+          .is('recurrence_parent_id', null),
+      ]);
+      if (directRes.error) console.error('MyTeam: facility_events (direct) query failed:', directRes.error);
+      if (masterRes.error) console.error('MyTeam: facility_events (masters) query failed:', masterRes.error);
+
+      const masters = masterRes.data || [];
+      let expandedFacility = [];
+      if (masters.length > 0) {
+        // Exceptions are fetched by parent, not by team, so a cancellation or
+        // a modified occurrence of an assigned series still applies even when
+        // the child row's own team_ids is empty.
+        const { data: exceptions, error: exceptionsError } = await supabase
+          .from('facility_events')
+          .select('*')
+          .in('recurrence_parent_id', masters.map(m => m.id))
+          .gte('event_date', todayStr);
+        if (exceptionsError) console.error('MyTeam: facility_events (exceptions) query failed:', exceptionsError);
+        expandedFacility = expandRecurringEvents(masters, exceptions || [], rangeStart, rangeEnd)
+          .filter(ev => ev.event_date >= todayStr);
       }
+
+      // Merge, dedupe (a team-assigned exception row can arrive via both the
+      // direct query and the expansion), tag facility rows for rendering,
+      // sort, and only then apply the limit — limiting per source would let a
+      // busy facility schedule push every game off the list (or vice versa).
+      const facilityRows = new Map();
+      [...(directRes.data || []), ...expandedFacility].forEach(ev => {
+        facilityRows.set(String(ev.id), { ...ev, _is_facility: true });
+      });
+      const timeKey = (ev) => String((ev._is_facility ? ev.start_time : ev.event_time) || '');
+      const merged = [...(events || []), ...facilityRows.values()]
+        .sort((a, b) => a.event_date.localeCompare(b.event_date) || timeKey(a).localeCompare(timeKey(b)))
+        .slice(0, 5);
+      setUpcomingEvents(merged);
 
       // Get recent team announcements
       const { data: announcements } = await supabase
@@ -769,7 +831,37 @@ function ScheduleTab({ events }) {
 
 function EventCard({ event }) {
   const eventDate = new Date(event.event_date + 'T00:00:00');
-  
+
+  // #287: facility events merged into the team schedule render with the
+  // event title and a distinct badge so they read differently from
+  // games/practices (which show opponent + type).
+  if (event._is_facility) {
+    const timeRange = event.start_time
+      ? `${event.start_time.slice(0, 5)}${event.end_time ? ` – ${event.end_time.slice(0, 5)}` : ''}`
+      : '';
+    return (
+      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="text-center min-w-[60px]">
+              <div className="text-2xl font-bold text-gray-900">{eventDate.getDate()}</div>
+              <div className="text-xs text-gray-600 uppercase">{eventDate.toLocaleDateString('en-US', { month: 'short' })}</div>
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h4 className="font-semibold text-gray-900">{event.title}</h4>
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">facility</span>
+              </div>
+              <div className="text-sm text-gray-600 mt-1">
+                {[timeRange, event.location].filter(Boolean).join(' • ')}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
       <div className="flex items-center justify-between">
