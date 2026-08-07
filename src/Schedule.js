@@ -148,6 +148,48 @@ function expandMealPlanAssignments(assignments, startOfMonth, endOfMonth) {
   return events;
 }
 
+// #287: facility events assigned to any of `teamIds`, expanded for the given
+// window and tagged _is_facility so the schedule_events-based calendars (Team
+// view, My Schedule) can render them read-only. Same three-query shape as
+// fetchFacilityEvents — standalone rows, recurring masters, exceptions — with
+// exceptions fetched by recurrence_parent_id rather than by team, so a
+// cancellation or modified occurrence of an assigned series applies even when
+// the child row's own team_ids is empty. Tombstones (is_exception=true) are
+// hidden by expandRecurringEvents and excluded from the direct query.
+async function fetchTeamFacilityEvents(teamIds, rangeStart, rangeEnd, startStr, endStr) {
+  if (!teamIds || teamIds.length === 0) return [];
+
+  const [directRes, masterRes] = await Promise.all([
+    supabase.from('facility_events').select('*')
+      .overlaps('team_ids', teamIds)
+      .eq('is_recurring', false)
+      .eq('is_exception', false)
+      .gte('event_date', startStr).lte('event_date', endStr),
+    supabase.from('facility_events').select('*')
+      .overlaps('team_ids', teamIds)
+      .eq('is_recurring', true)
+      .is('recurrence_parent_id', null),
+  ]);
+  if (directRes.error) console.error('fetchTeamFacilityEvents: direct facility_events query failed:', directRes.error);
+  if (masterRes.error) console.error('fetchTeamFacilityEvents: facility_events masters query failed:', masterRes.error);
+
+  const masters = masterRes.data || [];
+  let expanded = [];
+  if (masters.length > 0) {
+    const { data: exceptions, error: exceptionsError } = await supabase.from('facility_events').select('*')
+      .in('recurrence_parent_id', masters.map(m => m.id))
+      .gte('event_date', startStr).lte('event_date', endStr);
+    if (exceptionsError) console.error('fetchTeamFacilityEvents: facility_events exceptions query failed:', exceptionsError);
+    expanded = expandRecurringEvents(masters, exceptions || [], rangeStart, rangeEnd);
+  }
+
+  // Dedupe by id — a team-assigned exception occurrence can arrive via both
+  // the direct query and the expansion.
+  const rows = new Map();
+  [...(directRes.data || []), ...expanded].forEach(ev => rows.set(String(ev.id), { ...ev, _is_facility: true }));
+  return [...rows.values()];
+}
+
 export default function Schedule({ userId, userRole }) {
   const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'facility');
   const [myScheduleEvents, setMyScheduleEvents] = useState([]);
@@ -315,15 +357,20 @@ export default function Schedule({ userId, userRole }) {
   const fetchTeamEvents = async () => {
     if (!selectedTeam) return;
 
-    const { startStr, endStr } = monthWeekRange(selectedDate);
+    const { rangeStart, rangeEnd, startStr, endStr } = monthWeekRange(selectedDate);
 
     // Team view shows only group events (team_ids contains the team) — NOT the
     // individual player_id events of every roster member. Per-player events
-    // still show in the player-filtered views.
-    const { data: teamData } = await supabase.from('schedule_events').select('*')
-      .contains('team_ids', [selectedTeam])
-      .gte('event_date', startStr).lte('event_date', endStr);
-    setEvents(teamData || []);
+    // still show in the player-filtered views. #287 adds the team's assigned
+    // facility events alongside them (read-only rows tagged _is_facility).
+    const [{ data: teamData, error: teamDataError }, facilityTeamEvents] = await Promise.all([
+      supabase.from('schedule_events').select('*')
+        .contains('team_ids', [selectedTeam])
+        .gte('event_date', startStr).lte('event_date', endStr),
+      fetchTeamFacilityEvents([selectedTeam], rangeStart, rangeEnd, startStr, endStr),
+    ]);
+    if (teamDataError) console.error('fetchTeamEvents: schedule_events query failed:', teamDataError);
+    setEvents([...(teamData || []), ...facilityTeamEvents]);
   };
 
   const fetchPlayerEvents = async () => {
@@ -382,6 +429,7 @@ export default function Schedule({ userId, userRole }) {
 
     let teamEvents = [];
     let teamMpa = [];
+    let teamFacilityEvents = [];
     if (teamIds.length > 0) {
       // For coaches the team overlap must exclude per-player rows (issue #165):
       // team programming creates one schedule_events row per athlete with both
@@ -391,10 +439,12 @@ export default function Schedule({ userId, userRole }) {
         .overlaps('team_ids', teamIds).gte('event_date', startStr).lte('event_date', endStr);
       if (isCoach) teamEvQuery = teamEvQuery.is('player_id', null);
 
-      const [{ data: tEv, error: tEvErr }, { data: tMpa, error: tErr }] = await Promise.all([
+      const [{ data: tEv, error: tEvErr }, { data: tMpa, error: tErr }, facEvents] = await Promise.all([
         teamEvQuery,
         supabase.from('meal_plan_assignments').select('*, meal_plans(name)')
           .in('team_id', teamIds).lte('start_date', endStr).or(`end_date.gte.${startStr},end_date.is.null`),
+        // #287: facility events assigned to this user's teams, read-only.
+        fetchTeamFacilityEvents(teamIds, rangeStart, rangeEnd, startStr, endStr),
       ]);
       if (tEvErr) console.error('Error fetching team schedule events:', tEvErr);
       if (tErr) console.error('Error fetching team meal plan assignments:', tErr);
@@ -402,6 +452,7 @@ export default function Schedule({ userId, userRole }) {
       const directIds = new Set(data.map(e => e.id));
       teamEvents = (tEv || []).filter(e => !directIds.has(e.id));
       teamMpa = (tMpa || []).map(a => ({ ...a, player_id: userId }));
+      teamFacilityEvents = facEvents;
     }
 
     const allMpa = [...directMpa, ...teamMpa];
@@ -459,7 +510,7 @@ export default function Schedule({ userId, userRole }) {
       });
     }
 
-    setMyScheduleEvents([...data, ...teamEvents, ...mealEvents, ...slotEvents]);
+    setMyScheduleEvents([...data, ...teamEvents, ...teamFacilityEvents, ...mealEvents, ...slotEvents]);
   };
 
   const fetchFacilityEvents = async () => {
@@ -1195,6 +1246,8 @@ export default function Schedule({ userId, userRole }) {
                 canManage={true}
                 setSelectedEvent={setSelectedEvent}
                 setShowEventDetail={setShowEventDetail}
+                eventColorFn={(ev) => ev?._is_facility ? getFacilityColorClasses(ev?.color, 'month') : null}
+                onFacilityEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
                 onProgramDrop={handleProgramDrop}
               />
             ) : (
@@ -1203,7 +1256,11 @@ export default function Schedule({ userId, userRole }) {
                 events={myScheduleEvents}
                 onDateClick={() => {}}
                 canManage={true}
-                onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
+                onEventClick={(ev) => {
+                  if (ev._is_facility) { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); return; }
+                  setSelectedEvent(ev); setShowEventDetail(true);
+                }}
+                eventColorFn={(ev) => ev?._is_facility ? getFacilityColorClasses(ev?.color, 'week') : null}
                 onProgramDrop={handleProgramDrop}
               />
             )}
@@ -1727,6 +1784,8 @@ export default function Schedule({ userId, userRole }) {
               allowEventClick={true}
               setSelectedEvent={setSelectedEvent}
               setShowEventDetail={setShowEventDetail}
+              eventColorFn={(ev) => ev?._is_facility ? getFacilityColorClasses(ev?.color, 'month') : null}
+              onFacilityEventClick={(ev) => { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); }}
               selecting={selecting}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
@@ -1734,7 +1793,7 @@ export default function Schedule({ userId, userRole }) {
               onProgramDrop={handleProgramDrop}
               onEventDrop={async (eventId, newDate) => {
                 const ev = events.find(e => String(e.id) === String(eventId));
-                if (!ev || ev.event_date === newDate) return;
+                if (!ev || ev._is_facility || ev.event_date === newDate) return;
                 const { error } = await supabase.from('schedule_events').update({ event_date: newDate }).eq('id', eventId);
                 if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
                 if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
@@ -1748,7 +1807,11 @@ export default function Schedule({ userId, userRole }) {
               onDateClick={(date) => canManageCalendar() && setShowAddPanel(date)}
               canManage={canManageCalendar()}
               allowEventClick={true}
-              onEventClick={(ev) => { setSelectedEvent(ev); setShowEventDetail(true); }}
+              onEventClick={(ev) => {
+                if (ev._is_facility) { setSelectedFacilityEvent(ev); setShowFacilityEventDetail(true); return; }
+                setSelectedEvent(ev); setShowEventDetail(true);
+              }}
+              eventColorFn={(ev) => ev?._is_facility ? getFacilityColorClasses(ev?.color, 'week') : null}
               selecting={selecting}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
@@ -1756,7 +1819,7 @@ export default function Schedule({ userId, userRole }) {
               onProgramDrop={handleProgramDrop}
               onEventDrop={async (eventId, newDate) => {
                 const ev = events.find(e => String(e.id) === String(eventId));
-                if (!ev || ev.event_date === newDate) return;
+                if (!ev || ev._is_facility || ev.event_date === newDate) return;
                 const { error } = await supabase.from('schedule_events').update({ event_date: newDate }).eq('id', eventId);
                 if (error) { alert('Failed to move event: ' + formatUserError(error)); return; }
                 if (view === 'team') fetchTeamEvents(); else fetchPlayerEvents();
@@ -1892,8 +1955,16 @@ export default function Schedule({ userId, userRole }) {
           userRole={userRole}
           coaches={coaches}
           onClose={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); }}
-          onUpdate={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents(); }}
-          onDelete={() => { setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents(); }}
+          onUpdate={() => {
+            setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents();
+            // #287: the modal can now be opened from the Team calendar and My
+            // Schedule too — refresh whichever event list is on screen.
+            if (view === 'team') fetchTeamEvents(); else if (view === 'my-schedule') fetchMyScheduleEvents();
+          }}
+          onDelete={() => {
+            setShowFacilityEventDetail(false); setSelectedFacilityEvent(null); fetchFacilityEvents();
+            if (view === 'team') fetchTeamEvents(); else if (view === 'my-schedule') fetchMyScheduleEvents();
+          }}
         />
       )}
       {/* Training Slot Panels */}
@@ -1953,7 +2024,7 @@ export default function Schedule({ userId, userRole }) {
 // MONTH VIEW
 // ============================================
 
-function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop, playerNames }) {
+function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredDate, canManage, setSelectedEvent, setShowEventDetail, eventColorFn, onEventDrop, allowEventClick, selecting, selectedIds, onToggleSelect, onEventContextMenu, onProgramDrop, playerNames, onFacilityEventClick }) {
   const eventsAreClickable = canManage || allowEventClick;
   const isSelected = (e) => selecting && selectedIds && selectedIds.has(String(e.id));
   const year = selectedDate.getFullYear();
@@ -2092,7 +2163,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                 {dayEvents.map(event => (
                   <div
                     key={event.id}
-                    draggable={canManage && !selecting && !event._is_virtual && !event._isMealPlan && !!onEventDrop}
+                    draggable={canManage && !selecting && !event._is_virtual && !event._isMealPlan && !event._is_facility && !!onEventDrop}
                     onDragStart={(e) => {
                       e.stopPropagation();
                       e.dataTransfer.setData('application/x-event-id', String(event.id));
@@ -2100,13 +2171,21 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      // #287: facility rows on the team/my-schedule calendars are
+                      // read-only here — never selectable (bulk delete targets
+                      // schedule_events), and clicking opens the facility detail
+                      // modal instead of the schedule_events one.
+                      if (event._is_facility) {
+                        if (!selecting && eventsAreClickable && onFacilityEventClick) onFacilityEventClick(event);
+                        return;
+                      }
                       if (selecting && onToggleSelect) { onToggleSelect(event); return; }
                       if (eventsAreClickable && setSelectedEvent && setShowEventDetail) {
                         setSelectedEvent(event);
                         setShowEventDetail(true);
                       }
                     }}
-                    onContextMenu={(e) => { if (onEventContextMenu) { e.preventDefault(); e.stopPropagation(); onEventContextMenu(event, e); } }}
+                    onContextMenu={(e) => { if (onEventContextMenu && !event._is_facility) { e.preventDefault(); e.stopPropagation(); onEventContextMenu(event, e); } }}
                     className={`text-xs px-2 py-1 rounded border truncate flex items-center justify-between gap-1 group/event ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${eventsAreClickable ? 'cursor-pointer hover:opacity-75' : ''} ${isSelected(event) ? 'ring-2 ring-blue-500' : ''}`}
                     title={canManage ? `Right-click for options. Drag to reschedule: ${event.title || event.opponent || event.event_type}` : event.title || event.opponent || event.event_type}
                   >
@@ -2226,11 +2305,17 @@ function WeekView({ selectedDate, events, onDateClick, canManage, eventColorFn, 
                     eventColorFn={eventColorFn}
                     playerNames={playerNames}
                     onClick={(ev) => {
+                      // #287: facility rows are read-only — never selectable;
+                      // clicks still route (the parent opens the facility modal).
+                      if (ev._is_facility) {
+                        if (!selecting && (canManage || allowEventClick) && onEventClick) onEventClick(ev);
+                        return;
+                      }
                       if (selecting && onToggleSelect) { onToggleSelect(ev); return; }
                       if ((canManage || allowEventClick) && onEventClick) onEventClick(ev);
                     }}
                     onContextMenu={onEventContextMenu}
-                    draggable={canManage && !selecting && !event._is_virtual && !event._isMealPlan && !!onEventDrop}
+                    draggable={canManage && !selecting && !event._is_virtual && !event._isMealPlan && !event._is_facility && !!onEventDrop}
                     selected={selecting && selectedIds && selectedIds.has(String(event.id))}
                   />
                 ))}
@@ -2284,12 +2369,19 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 
   const displayText = event.title || event.opponent || event.event_type;
   const clickable = typeof onClick === 'function';
+  // Facility events (and training slots) carry start_time rather than
+  // schedule_events' event_time; facility rows also get their end time shown
+  // so the card reads like the facility calendar's own (#287).
+  const displayTime = formatTimeDisplay(event.start_time || event.event_time) || 'TBD';
+  const displayTimeRange = event._is_facility && event.end_time
+    ? `${displayTime} – ${formatTimeDisplay(event.end_time)}`
+    : displayTime;
 
   return (
     <div
       className={`p-2 rounded relative group ${(eventColorFn && eventColorFn(event)) || getEventColor(event)} ${clickable ? 'cursor-pointer hover:opacity-80 transition' : ''} ${selected ? 'ring-2 ring-blue-500' : ''}`}
       onClick={clickable ? (e) => { e.stopPropagation(); onClick(event); } : undefined}
-      onContextMenu={(e) => { if (onContextMenu) { e.preventDefault(); e.stopPropagation(); onContextMenu(event, e); } }}
+      onContextMenu={(e) => { if (onContextMenu && !event._is_facility) { e.preventDefault(); e.stopPropagation(); onContextMenu(event, e); } }}
       draggable={!!draggable}
       onDragStart={draggable ? (e) => {
         e.stopPropagation();
@@ -2307,7 +2399,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
         )}
         {displayText}
       </div>
-      <div className="text-xs text-gray-600 mt-1">{formatTimeDisplay(event.event_time) || 'TBD'}</div>
+      <div className="text-xs text-gray-600 mt-1">{displayTimeRange}</div>
       {!compact && event.location && (
         <div className="text-xs text-gray-500 mt-1">{event.location}</div>
       )}
