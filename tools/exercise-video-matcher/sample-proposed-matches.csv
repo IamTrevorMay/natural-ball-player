@@ -1,0 +1,16 @@
+exercise_name,matched_video_title,video_url,confidence,needs_review
+DB Bench,DB Bench Press,https://www.youtube.com/watch?v=vtU7w_hyMa4,0.68,TRUE
+BB Back Squat,BB Squat,https://www.youtube.com/watch?v=jW1CPvulxhU,0.69,TRUE
+KB Swing,KB Squats,https://www.youtube.com/watch?v=UanKNRvFoJY,0.48,TRUE
+SL RDL,SL Landmine RDL,https://www.youtube.com/watch?v=ZGXs9mKTWyY,0.78,TRUE
+OHP,Spine Walks With Overhead Plate Press,https://www.youtube.com/watch?v=XpuV-xK-BLQ,0.42,TRUE
+BW Squat,Belt Squat,https://www.youtube.com/watch?v=lB6uYvlRaVs,0.42,TRUE
+Sumo DL,Sumo Deadlift,https://www.youtube.com/watch?v=3t1-PmGjfNQ,1.00,false
+SA DB Row,SA DB Row,https://www.youtube.com/watch?v=NUSVbpODY3k,1.00,false
+Alt DB Curl,DB Curl,https://www.youtube.com/watch?v=Q2qR-dXx2r8,0.61,TRUE
+Push Up,Push Up,https://www.youtube.com/watch?v=6IjDFL2BdKs,1.00,false
+Plank,Plank,https://www.youtube.com/watch?v=62hp4623Cq0,1.00,false
+Walking Lunge,Lateral Lunge,https://www.youtube.com/watch?v=w6C-U9OrCrQ,0.42,TRUE
+Face Pull,Knee Pull,https://www.youtube.com/watch?v=PPpuIGNpLfE,0.47,TRUE
+Banded Pallof Press,Banded OH Shoulder Press,https://www.youtube.com/watch?v=0zc-IfZUy74,0.47,TRUE
+Zercher Carry Iso Hold,,,0.00,TRUE
