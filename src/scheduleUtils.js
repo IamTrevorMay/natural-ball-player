@@ -99,19 +99,26 @@ export function expandRecurringEvents(masters, exceptions, rangeStart, rangeEnd)
   return expanded;
 }
 
-// training_slots' per-occurrence exception model (#279). Unlike facility_events/
-// schedule_events, training_slots has no generic recurrence_rule/expandRecurringEvents
-// path — every caller expands its own repeat_weekly loop — so this only covers the
-// "is this date tombstoned" half; each caller still runs its own weekly expansion.
+// training_slots' per-occurrence exception model (#279, extended by #292).
+// Unlike facility_events/schedule_events, training_slots has no generic
+// recurrence_rule/expandRecurringEvents path — every caller expands its own
+// repeat_weekly loop — so these helpers only answer per-date questions; each
+// caller still runs its own weekly expansion.
 //
-// A child row (recurrence_parent_id set) with is_exception=true hides that one date.
-// is_exception=false would mean a modified (not deleted) occurrence — a feature not
-// built yet, so no caller should currently see one, but the check is written to honor
-// it correctly if that ever changes: only is_exception=true means "skip this date".
+// A child row (recurrence_parent_id set, original_date = the series date it
+// stands in for) means one of two things:
+//   is_exception=true  → that date is HIDDEN/CANCELLED (a tombstone, #279)
+//   is_exception=false → that occurrence was MOVED (#292): it now lives at the
+//                        child row's own slot_date and must render there as a
+//                        real session
 //
-// Every training_slots reader MUST do both of the following, not just one:
-//   1. Never render a child row (recurrence_parent_id set) as its own session.
-//   2. Skip any expanded occurrence date this map tombstones.
+// Every training_slots reader MUST do all three of the following:
+//   1. Skip any expanded occurrence date that has ANY exception row — a
+//      tombstoned date is gone, and a moved date's session lives elsewhere.
+//      (Skipping only tombstones would render a moved occurrence twice.)
+//   2. Render moved child rows (collectMovedSlots) as real sessions on their
+//      own slot_date, subject to the reader's own date-range filtering.
+//   3. Never render a tombstone (is_exception=true) child row at all.
 export function buildSlotExceptionMap(slots) {
   const map = {};
   (slots || []).forEach(slot => {
@@ -122,7 +129,23 @@ export function buildSlotExceptionMap(slots) {
   return map;
 }
 
+// The exception child row standing in for (masterId, dateStr), or undefined.
+// Truthy result (tombstone OR moved) means "don't expand this series date".
+export function getSlotDateException(exceptionMap, masterId, dateStr) {
+  return exceptionMap[`${masterId}_${dateStr}`];
+}
+
+// Kept for compatibility: true only for tombstones. Readers deciding whether
+// to expand a date should prefer getSlotDateException (any exception skips).
 export function isSlotDateCancelled(exceptionMap, masterId, dateStr) {
   const ex = exceptionMap[`${masterId}_${dateStr}`];
   return !!(ex && ex.is_exception);
+}
+
+// Moved occurrences (#292): child rows that must render as real sessions on
+// their own slot_date. Each carries the session fields the move copied off the
+// master (coach_id, start_time, duration_minutes, ...). Callers apply their
+// own date-range filter to the returned rows.
+export function collectMovedSlots(slots) {
+  return (slots || []).filter(slot => slot.recurrence_parent_id && slot.is_exception === false);
 }

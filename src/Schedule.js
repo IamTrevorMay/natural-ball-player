@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog } from 'lucide-react';
-import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
+import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import LaneMoveDecisionModal from './LaneMoveDecisionModal';
@@ -244,6 +244,9 @@ export default function Schedule({ userId, userRole }) {
   // #289: a multi-lane facility event dropped on a different lane suspends the
   // move here until the user picks whole-event vs single-lane in the modal.
   const [pendingLaneMove, setPendingLaneMove] = useState(null); // { ev, sourceLane, targetLane, targetStartTime, wholeLanes }
+  // #292: a repeating training slot's master bar dropped on a new day suspends
+  // the move until the user picks this-occurrence vs whole-series.
+  const [pendingSlotMove, setPendingSlotMove] = useState(null); // { slot, newDate }
   const [copyToPicker, setCopyToPicker] = useState(null); // { event, source, options, onPick, title }
   const selectedIds = useMemo(() => new Set(selectedEvents.map((e) => String(e.id))), [selectedEvents]);
   const toggleSelect = (ev) => setSelectedEvents((arr) => {
@@ -478,14 +481,22 @@ export default function Schedule({ userId, userRole }) {
           let index = 0;
           while (current <= rangeEnd && current <= endDate) {
             const occStr = fmtLocalDate(current);
-            if (occStr >= startStr && occStr <= endStr && !isSlotDateCancelled(slotExceptionMap, slot.id, occStr)) {
+            // #292: ANY exception skips the date — a tombstoned date is gone,
+            // and a moved date's session renders from its child row instead.
+            if (occStr >= startStr && occStr <= endStr && !getSlotDateException(slotExceptionMap, slot.id, occStr)) {
               slotEvents.push({ ...slot, event_date: occStr, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true, _occurrence_index: index, _is_virtual: index > 0 });
             }
             current.setDate(current.getDate() + 7);
             index++;
             if (index > 500) break;
           }
-        } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !isSlotDateCancelled(slotExceptionMap, slot.id, slot.slot_date)) {
+        } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !getSlotDateException(slotExceptionMap, slot.id, slot.slot_date)) {
+          slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true });
+        }
+      });
+      // #292: moved occurrences render as real sessions on their own date.
+      collectMovedSlots(rawSlots).forEach(slot => {
+        if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
           slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true });
         }
       });
@@ -508,7 +519,11 @@ export default function Schedule({ userId, userRole }) {
             index++;
             if (index > 500) break;
           }
-        } else if (!slot.recurrence_parent_id && slot.slot_date >= startStr && slot.slot_date <= endStr) {
+        } else if ((!slot.recurrence_parent_id || slot.is_exception === false) && slot.slot_date >= startStr && slot.slot_date <= endStr) {
+          // #292: a reservation repointed at a moved occurrence joins to the
+          // child row (recurrence_parent_id set, is_exception=false) — render
+          // it as a single session on its new date. Tombstone joins
+          // (is_exception=true) stay excluded.
           slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Session', _is_slot: true });
         }
       });
@@ -640,6 +655,111 @@ export default function Schedule({ userId, userRole }) {
     fetchFacilityEvents();
   };
 
+  // #292: move ONE date of a repeating training slot. Writes/updates the
+  // per-occurrence child row — is_exception: FALSE, because true means
+  // hidden/cancelled in this codebase (the trap that has now bitten three
+  // separate issues) — and migrates that date's reservations onto the child
+  // row so athletes' bookings follow the session. sourceSlotId is wherever
+  // the date's reservations currently live: the master id on a first move,
+  // the child's own id when re-moving an already-moved occurrence.
+  const moveSlotOccurrence = async (masterId, sourceSlotId, template, fromDate, toDate, knownChildId = null) => {
+    // Refuse a drop onto a date the series already occupies — two sessions
+    // from one series on one day is not a move.
+    const occupied = coachSlots.some(s =>
+      s.slot_date === toDate &&
+      (String(s.id) === String(masterId) || String(s.recurrence_parent_id || '') === String(masterId)));
+    if (occupied) { alert('That series already has a session on that day.'); return; }
+
+    // Count booked athletes on the moving date so the coach confirms with
+    // facts before anyone's booking is touched.
+    const { data: dateReservations, error: bookedError } = await supabase
+      .from('slot_reservations')
+      .select('id, status')
+      .eq('slot_id', sourceSlotId)
+      .eq('slot_date', fromDate);
+    if (bookedError) { alert('Failed to check bookings: ' + formatUserError(bookedError)); return; }
+    const activeCount = (dateReservations || []).filter(r => r.status === 'pending' || r.status === 'confirmed').length;
+    if (activeCount > 0) {
+      const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      const ok = window.confirm(
+        `Move this session from ${fmt(fromDate)} to ${fmt(toDate)}? ` +
+        `${activeCount} athlete${activeCount === 1 ? ' is' : 's are'} booked and ` +
+        `${activeCount === 1 ? 'their booking' : 'their bookings'} will move with it.`
+      );
+      if (!ok) return;
+    }
+
+    // Find-or-create the child row. A re-moved occurrence passes its own row
+    // id (knownChildId) — its original_date is the ORIGINAL series date, not
+    // its current slot_date, so looking it up by fromDate would miss it and
+    // insert a duplicate. A first move looks up by (master, fromDate); the
+    // partial unique index on (recurrence_parent_id, original_date) forbids a
+    // second child for the same series date, so a race updates in place.
+    let childId;
+    let existingChild = knownChildId ? { id: knownChildId } : null;
+    if (!existingChild) {
+      const { data: found, error: findError } = await supabase
+        .from('training_slots')
+        .select('id')
+        .eq('recurrence_parent_id', masterId)
+        .eq('original_date', fromDate)
+        .maybeSingle();
+      if (findError) { alert('Failed to move slot: ' + formatUserError(findError)); return; }
+      existingChild = found;
+    }
+    if (existingChild) {
+      const { error } = await supabase.from('training_slots')
+        .update({ slot_date: toDate, is_exception: false })
+        .eq('id', existingChild.id);
+      if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
+      childId = existingChild.id;
+    } else {
+      // The #279 tombstone field list plus the fields a RENDERED session
+      // needs — a tombstone never displays, but a moved occurrence keeps its
+      // capacity, notes, booking behaviour and public pricing.
+      const { data: inserted, error } = await supabase.from('training_slots').insert({
+        recurrence_parent_id: masterId,
+        original_date: fromDate,
+        slot_date: toDate,
+        is_exception: false,
+        repeat_weekly: false,
+        coach_id: template.coach_id,
+        start_time: template.start_time,
+        duration_minutes: template.duration_minutes,
+        is_public: template.is_public,
+        public_price_cents: template.public_price_cents ?? null,
+        is_subscription_session: template.is_subscription_session,
+        store_product_id: template.store_product_id ?? null,
+        store_product_ids: template.store_product_ids,
+        max_players: template.max_players,
+        auto_confirm: template.auto_confirm,
+        notes: template.notes ?? null,
+      }).select('id').single();
+      if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
+      childId = inserted.id;
+    }
+
+    // Bookings follow the session: repoint that date's reservations at the
+    // moved occurrence (readers look bookings up by the rendered slot's id +
+    // date, which for a moved occurrence is the child row). .select() so a
+    // shortfall is surfaced instead of silently stranding bookings.
+    if ((dateReservations || []).length > 0) {
+      const { data: movedRes, error: resError } = await supabase
+        .from('slot_reservations')
+        .update({ slot_id: childId, slot_date: toDate })
+        .eq('slot_id', sourceSlotId)
+        .eq('slot_date', fromDate)
+        .select('id');
+      if (resError) {
+        alert('The session moved, but its bookings could not be moved: ' + formatUserError(resError));
+      } else if ((movedRes || []).length < (dateReservations || []).length) {
+        alert(`The session moved, but ${(dateReservations || []).length - (movedRes || []).length} of its booking(s) could not be moved.`);
+      }
+    }
+
+    fetchCoachSlots(selectedCoach.id);
+  };
+
   const fetchCoaches = async () => {
     const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills, show_on_facility_schedule').in('role', ['coach', 'admin']).order('full_name');
     setCoaches(data || []);
@@ -676,8 +796,12 @@ export default function Schedule({ userId, userRole }) {
     // the exception map (#279).
     const staffSlotExceptionMap = buildSlotExceptionMap(slotRes.data);
     const occurringSlots = (slotRes.data || []).filter(s => {
-      if (s.recurrence_parent_id) return false;
-      if (isSlotDateCancelled(staffSlotExceptionMap, s.id, dateStr)) return false;
+      // #292: a moved occurrence (child row, is_exception=false) occurs on its
+      // own slot_date; tombstone children never occur.
+      if (s.recurrence_parent_id) return s.is_exception === false && s.slot_date === dateStr;
+      // ANY exception on this series date skips it — tombstoned dates are
+      // gone, moved dates render from their child row above (#292).
+      if (getSlotDateException(staffSlotExceptionMap, s.id, dateStr)) return false;
       if (!s.repeat_weekly) return s.slot_date === dateStr;
       if (dateStr < s.slot_date) return false;
       if (s.repeat_end_date && dateStr > s.repeat_end_date) return false;
@@ -741,13 +865,23 @@ export default function Schedule({ userId, userRole }) {
         let index = 0;
         while (current <= endDate && current <= rangeEnd) {
           const dateStr = fmtLocalDate(current);
-          if (current >= rangeStart && !isSlotDateCancelled(exceptionMap, slot.id, dateStr)) {
+          // #292: ANY exception skips the date — tombstoned dates are gone,
+          // moved dates render from their child row below.
+          if (current >= rangeStart && !getSlotDateException(exceptionMap, slot.id, dateStr)) {
             expandedSlots.push({ ...slot, slot_date: dateStr, _occurrence_index: index, _is_virtual: index > 0 });
           }
           current.setDate(current.getDate() + 7);
           index++;
         }
-      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !isSlotDateCancelled(exceptionMap, slot.id, slot.slot_date)) {
+      } else if (slot.slot_date >= startStr && slot.slot_date <= endStr && !getSlotDateException(exceptionMap, slot.id, slot.slot_date)) {
+        expandedSlots.push(slot);
+      }
+    });
+    // #292: moved occurrences are real sessions on their own date. Not
+    // _is_virtual — they're real rows, draggable again via the moved-child
+    // branch of onSlotDrop.
+    collectMovedSlots(slots).forEach(slot => {
+      if (slot.slot_date >= startStr && slot.slot_date <= endStr) {
         expandedSlots.push(slot);
       }
     });
@@ -1522,12 +1656,45 @@ export default function Schedule({ userId, userRole }) {
                     selectedIds={selectedIds}
                     onToggleSelect={toggleSelect}
                     onEventContextMenu={onEventContextMenu('slot')}
-                    onSlotDrop={async (slotId, newDate) => {
-                      const slot = coachSlots.find((s) => String(s.id) === String(slotId));
-                      if (!slot || slot._is_virtual || slot.slot_date === newDate) return;
-                      const { error } = await supabase.from('training_slots').update({ slot_date: newDate }).eq('id', slotId);
-                      if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
-                      fetchCoachSlots(selectedCoach.id);
+                    onSlotDrop={async (slotId, newDate, grabbedDate) => {
+                      // A repeating slot's expanded entries all share the
+                      // master's id — grabbedDate identifies WHICH occurrence
+                      // was dragged (#292).
+                      const slot = coachSlots.find((s) => String(s.id) === String(slotId) && (!grabbedDate || s.slot_date === grabbedDate))
+                        || coachSlots.find((s) => String(s.id) === String(slotId));
+                      if (!slot || slot.slot_date === newDate) return;
+
+                      // An already-moved occurrence dragged again (#292):
+                      // update the same child row in place.
+                      if (slot.recurrence_parent_id) {
+                        await moveSlotOccurrence(slot.recurrence_parent_id, slot.id, slot, slot.slot_date, newDate, slot.id);
+                        return;
+                      }
+
+                      // Plain non-recurring slot: today's behaviour, unchanged.
+                      if (!slot.repeat_weekly) {
+                        const { error } = await supabase.from('training_slots').update({ slot_date: newDate }).eq('id', slotId);
+                        if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
+                        fetchCoachSlots(selectedCoach.id);
+                        return;
+                      }
+
+                      // A later occurrence of a repeating series: move just
+                      // this date — no prompt, that's the whole ask (#292).
+                      // Keyed on _occurrence_index, NOT _is_virtual: the
+                      // first-visible-per-week bar is force-marked non-virtual
+                      // for drag (see fetchCoachSlots), so _is_virtual can't
+                      // tell "the master's own date" from "this week's copy".
+                      if (slot._occurrence_index > 0) {
+                        await moveSlotOccurrence(slot.id, slot.id, slot, slot.slot_date, newDate);
+                        return;
+                      }
+
+                      // The master's own first date: ambiguous, so ask — the
+                      // same modal #279 taught. allowFuture stays false:
+                      // splitting a series strands slot_reservations (same
+                      // call as #287).
+                      setPendingSlotMove({ slot, newDate });
                     }}
                     onReserve={(slot) => setShowReserveSlot(slot)}
                     onConfirm={async (reservationId) => {
@@ -2027,6 +2194,33 @@ export default function Schedule({ userId, userRole }) {
             }
           }}
           onClose={() => setPendingLaneMove(null)}
+        />
+      )}
+      {/* #292: moving the master bar of a repeating training slot is ambiguous
+          — this occurrence or the whole series? Same modal #279 taught.
+          "This and future" is deliberately absent (allowFuture) — splitting a
+          series would strand slot_reservations. Cancel writes nothing. */}
+      {pendingSlotMove && (
+        <RecurrenceDecisionModal
+          title="Move a repeating slot"
+          message={`Move just the ${new Date(pendingSlotMove.slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} session to ${new Date(pendingSlotMove.newDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}, or move the whole series?`}
+          actionLabel="Move"
+          allowOne={true}
+          allowFuture={false}
+          onPick={async (choice) => {
+            const move = pendingSlotMove;
+            setPendingSlotMove(null);
+            if (choice === 'one') {
+              await moveSlotOccurrence(move.slot.id, move.slot.id, move.slot, move.slot.slot_date, move.newDate);
+              return;
+            }
+            // 'all' — the whole series re-anchors to the drop date, exactly
+            // what dragging this bar did before #292.
+            const { error } = await supabase.from('training_slots').update({ slot_date: move.newDate }).eq('id', move.slot.id);
+            if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
+            fetchCoachSlots(selectedCoach.id);
+          }}
+          onClose={() => setPendingSlotMove(null)}
         />
       )}
       {/* Training Slot Panels */}
@@ -6582,7 +6776,11 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                 if (!canManage || !onSlotDrop || selecting) return;
                 e.preventDefault();
                 const slotId = e.dataTransfer.getData('application/x-slot-id');
-                if (slotId) onSlotDrop(slotId, dateStr);
+                // #292: which occurrence date was grabbed — a repeating slot's
+                // expanded entries all share the master's id, so the id alone
+                // can't identify the dragged date.
+                const grabbedDate = e.dataTransfer.getData('application/x-slot-date');
+                if (slotId) onSlotDrop(slotId, dateStr, grabbedDate);
               }}
             >
               <div
@@ -6605,16 +6803,20 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                   return (
                     <div
                       key={`${slot.id}-${si}`}
-                      draggable={canManage && !selecting && !slot._is_virtual && !!onSlotDrop}
+                      draggable={canManage && !selecting && !!onSlotDrop}
                       onDragStart={(e) => {
-                        if (!canManage || selecting || slot._is_virtual || !onSlotDrop) return;
+                        if (!canManage || selecting || !onSlotDrop) return;
                         e.stopPropagation();
                         e.dataTransfer.setData('application/x-slot-id', String(slot.id));
+                        // #292: virtual occurrences are draggable now — the drop
+                        // handler needs the grabbed date to know WHICH occurrence
+                        // moved (mirrors #280's x-event-source-lane).
+                        e.dataTransfer.setData('application/x-slot-date', String(slot.slot_date));
                         e.dataTransfer.effectAllowed = 'move';
                       }}
                       onClick={(e) => { if (selecting && onToggleSelect) { e.stopPropagation(); onToggleSelect({ ...slot, slot_date: dateStr, id: slot.id }); } }}
                       onContextMenu={(e) => { if (onEventContextMenu && canManage) { e.preventDefault(); e.stopPropagation(); onEventContextMenu({ ...slot, slot_date: dateStr }, e); } }}
-                      className={`p-2 rounded-lg border text-xs ${isBooked ? 'bg-gray-100 border-gray-200' : 'bg-teal-50 border-teal-200'} ${isSel ? 'ring-2 ring-blue-500' : ''} ${canManage && !selecting && !slot._is_virtual ? 'cursor-grab' : ''}`}
+                      className={`p-2 rounded-lg border text-xs ${isBooked ? 'bg-gray-100 border-gray-200' : 'bg-teal-50 border-teal-200'} ${isSel ? 'ring-2 ring-blue-500' : ''} ${canManage && !selecting ? 'cursor-grab' : ''}`}
                     >
                       <div className="font-semibold text-gray-900">{formatTime(slot.start_time)} - {formatTime(endTime)}</div>
                       <div className="text-gray-500">{slot.duration_minutes} min</div>

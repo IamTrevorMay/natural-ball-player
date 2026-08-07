@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
-import { buildSlotExceptionMap, isSlotDateCancelled } from './scheduleUtils';
+import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
 import { useModalTracking, trackAction } from './usage';
 import { useExerciseVideos } from './exerciseVideos';
 import ExerciseNameInput from './ExerciseNameInput';
@@ -2813,15 +2813,20 @@ function TrainingSlotsTab({ userId }) {
         let current = new Date(slotStart);
         while (current <= endDate && current <= windowEnd) {
           const dateStr = fmtLocalDate(current);
-          if (current >= windowStart && !isSlotDateCancelled(slotExceptionMap, slot.id, dateStr)) {
+          // #292: ANY exception skips the date — tombstoned dates are gone,
+          // moved dates render from their child row below.
+          if (current >= windowStart && !getSlotDateException(slotExceptionMap, slot.id, dateStr)) {
             expanded.push({ ...slot, slot_date: dateStr });
           }
           current.setDate(current.getDate() + 7);
         }
-      } else if (!isSlotDateCancelled(slotExceptionMap, slot.id, slot.slot_date)) {
+      } else if (!getSlotDateException(slotExceptionMap, slot.id, slot.slot_date)) {
         expanded.push(slot);
       }
     });
+    // #292: moved occurrences are real sessions on their own date (unfiltered
+    // by the window, matching how this list treats non-recurring rows).
+    collectMovedSlots(slotData).forEach(slot => expanded.push(slot));
     setSlots(expanded);
 
     const slotIds = (slotData || []).map(s => s.id);
