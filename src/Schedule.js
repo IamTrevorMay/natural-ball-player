@@ -6890,6 +6890,80 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
 // CREATE SLOT PANEL
 // ============================================
 
+// #298: store_products kinds shown in the slot picker, and their group labels.
+// 'package' = the recurring monthly memberships; 'lesson' = the one-on-one and
+// small-group packs. Both are attachable to a session; see PRODUCT_KINDS_NOTE.
+const SLOT_PRODUCT_KINDS = ['package', 'lesson'];
+const PRODUCT_KIND_GROUPS = [
+  { kind: 'package', label: 'Monthly / Recurring' },
+  { kind: 'lesson', label: 'Lesson & Class Packages' },
+];
+
+// #298: coaches whose products are titled with a different form of their name
+// than their user row carries. Key = the exact users.full_name; value = the
+// extra product-name prefixes that also mean that coach.
+//
+// DO NOT "fix" these by renaming the products instead. store_products.name is
+// overwritten from Square on every catalogue sync — see the update patch in
+// supabase/functions/square-catalog-sync/index.ts, which writes `name` in place
+// on each run — so a rename made in the database is reverted the next time the
+// sync runs. The rename would have to happen in Square itself; until it does,
+// this map is the correct place to reconcile the two spellings.
+const COACH_PRODUCT_NAME_ALIASES = {
+  // users.full_name is "Joshua Sale"; the three lesson packs are titled
+  // "Josh Sale ...".
+  'Joshua Sale': ['Josh Sale'],
+};
+
+// #298: some products are named after the coach who runs them ("Micah Yonamine
+// 10 Pack of One on One lessons"). Those may only be attached to that coach's
+// own sessions. Ownership is decided by NAME MATCHING — the business owner's
+// explicit choice — so it is EXPECTED TO BREAK when a product spells a coach's
+// name differently from their user row and no alias above covers it.
+//
+// The coach's name must be a PREFIX of the product name, not merely present
+// somewhere inside it. Verified against the live catalogue: every genuinely
+// coach-owned product leads with the coach's name. Substring matching caused a
+// real regression — the pseudo-coach account "Strength and Conditioning "
+// claimed all eight "NBP Strength & Conditioning ..." programs (they contain
+// both words but start with "NBP"), which would have hidden org-wide products
+// from every other coach. Prefix matching fixes that with no exclusion list.
+//
+// Known consequence, accepted: the two "Copy of Adam Cimber Submarine Pitching
+// Academy Remote ..." products no longer match Adam Cimber, because they lead
+// with "Copy of". They are treated as unowned and shown to everyone — the
+// fail-open direction.
+//
+// Fails OPEN by design: a product matching no coach is shown to everyone. That
+// is the safe direction — an over-restrictive rule would silently hide a pack a
+// coach needs, which is harder to notice than an extra option in the list.
+//
+// Requires BOTH a first and a last name token, so a single-word coach account
+// cannot match half the catalogue. Pure and side-effect free so it can be
+// unit-tested later.
+export function coachOwningProduct(productName, coachFullNames) {
+  const name = String(productName || '').trim().toLowerCase();
+  if (!name) return null;
+  for (const full of coachFullNames || []) {
+    // Coach rows in this database carry stray leading/trailing spaces.
+    const trimmed = String(full || '').trim();
+    if (trimmed.split(/\s+/).filter(Boolean).length < 2) continue; // need first AND last
+    const candidates = [trimmed, ...(COACH_PRODUCT_NAME_ALIASES[trimmed] || [])];
+    if (candidates.some(c => name.startsWith(String(c).trim().toLowerCase()))) return full;
+  }
+  return null;
+}
+
+// A product is pickable when nobody owns it, or when its owner is the coach
+// this slot belongs to. Comparison is on trimmed, case-insensitive full names
+// because coach rows in this database carry stray leading/trailing spaces.
+export function isProductVisibleToCoach(productName, selectedCoachName, coachFullNames) {
+  const owner = coachOwningProduct(productName, coachFullNames);
+  if (!owner) return true;
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  return norm(owner) === norm(selectedCoachName);
+}
+
 function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, existingSlot }) {
   const isEdit = !!existingSlot;
   const initialDateStr = existingSlot?.slot_date || initialDate || fmtLocalDate(new Date());
@@ -6918,20 +6992,53 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
       : (existingSlot?.store_product_id ? [existingSlot.store_product_id] : [])
   );
   const [subProducts, setSubProducts] = useState([]);
+  // #298: full names of every coach, used to decide which coach-named products
+  // this slot may attach (see coachOwningProduct above).
+  const [coachNames, setCoachNames] = useState([]);
+  // #298: shown when picking a product of one kind clears a selection of the
+  // other — a session accepts memberships OR lesson packs, never a mix.
+  const [kindSwitchNote, setKindSwitchNote] = useState(null);
+
+  // The kind currently selected, derived from the UNFILTERED product list so
+  // an already-attached product still counts even if the coach filter would
+  // hide it (e.g. editing another coach's slot).
+  const selectedKind = (() => {
+    const first = subProducts.find(p => storeProductIds.includes(p.id));
+    return first ? first.kind : null;
+  })();
 
   const toggleProduct = (id) => {
-    setStoreProductIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    const product = subProducts.find(p => p.id === id);
+    setStoreProductIds(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      // Several products of the SAME kind can be combined. Picking the other
+      // kind replaces the selection rather than erroring (#298).
+      if (product && selectedKind && product.kind !== selectedKind) {
+        const from = PRODUCT_KIND_GROUPS.find(g => g.kind === selectedKind)?.label || selectedKind;
+        const to = PRODUCT_KIND_GROUPS.find(g => g.kind === product.kind)?.label || product.kind;
+        setKindSwitchNote(`A session uses either monthly memberships or lesson packages, not both — your ${from} selection was replaced with this ${to} one.`);
+        return [id];
+      }
+      setKindSwitchNote(null);
+      return [...prev, id];
+    });
   };
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from('store_products')
-        .select('id, name, price_cents, recurring, kind')
-        .in('kind', ['lesson', 'bundle', 'package'])
-        .eq('active', true)
-        .order('sort_order');
-      setSubProducts(data || []);
+      const [{ data: products, error: productsError }, { data: coaches, error: coachesError }] = await Promise.all([
+        supabase
+          .from('store_products')
+          .select('id, name, price_cents, recurring, kind')
+          .in('kind', SLOT_PRODUCT_KINDS)
+          .eq('active', true)
+          .order('sort_order'),
+        supabase.from('users').select('full_name').eq('role', 'coach'),
+      ]);
+      if (productsError) console.error('CreateSlotPanel: store_products query failed:', productsError);
+      if (coachesError) console.error('CreateSlotPanel: coach names query failed:', coachesError);
+      setSubProducts(products || []);
+      setCoachNames((coaches || []).map(c => c.full_name).filter(Boolean));
     })();
   }, []);
 
@@ -6960,7 +7067,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   const handleSave = async () => {
     // #249: allow $0 (free) sessions — reject only blank / negative / non-numeric.
     if (isPublic && !(parseFloat(publicPrice) >= 0)) return alert('Enter a price for public booking (0 for free)');
-    if (isSubscriptionSession && storeProductIds.length === 0) return alert('Choose at least one subscription for this session');
+    if (isSubscriptionSession && storeProductIds.length === 0) return alert('Choose at least one package or membership for this session');
     const publicFields = {
       is_public: isPublic,
       public_price_cents: isPublic ? Math.round(parseFloat(publicPrice) * 100) : null,
@@ -7013,12 +7120,21 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+      {/* The card is capped to the viewport and laid out as a column: header and
+          footer are fixed-height, the body between them scrolls. Without this the
+          card grew to its content height and the Cancel / Create Slot footer ran
+          off the bottom of the screen with no scrollable ancestor to reach it —
+          on a 740px-tall window, expanding the package picker put the buttons at
+          y≈872-914 and the slot could not be saved at all. min-h-0 on the body is
+          load-bearing: a flex child defaults to min-height:auto, so without it the
+          body refuses to shrink and its content escapes the card's max-height
+          instead of scrolling inside it. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <h3 className="text-xl font-bold text-gray-900">{isEdit ? 'Edit' : 'Create'} Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto">
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
@@ -7075,7 +7191,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
           <div className="border border-gray-200 rounded-lg p-3">
             <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
               <input type="checkbox" checked={isSubscriptionSession} onChange={(e) => setIsSubscriptionSession(e.target.checked)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
-              <span>Subscription session</span>
+              <span>Package / membership required</span>
             </label>
             {isSubscriptionSession && (
               <div className="mt-3">
@@ -7083,23 +7199,45 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
                 {subProducts.length === 0 ? (
                   <p className="text-xs text-amber-600 mt-1.5">No active products found. Add them in the Store (Work Portal) or sync from Square.</p>
                 ) : (
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
-                    {subProducts.map(p => (
-                      <label key={p.id} className="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
-                        <input type="checkbox" checked={storeProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
-                        <span>{p.name}{p.price_cents != null ? ` — $${(p.price_cents / 100).toFixed(2)}${p.recurring ? '/mo' : ''}` : ''}</span>
-                      </label>
-                    ))}
+                  <div className="space-y-3 max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                    {PRODUCT_KIND_GROUPS.map(group => {
+                      // An already-selected product stays visible even if the
+                      // coach filter would hide it — otherwise editing another
+                      // coach's slot would silently keep a pick you can't see
+                      // or remove (#298).
+                      const groupProducts = subProducts.filter(p =>
+                        p.kind === group.kind
+                        && (storeProductIds.includes(p.id) || isProductVisibleToCoach(p.name, coachName, coachNames))
+                      );
+                      if (groupProducts.length === 0) return null;
+                      return (
+                        <div key={group.kind}>
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">{group.label}</div>
+                          <div className="space-y-1.5">
+                            {groupProducts.map(p => (
+                              <label key={p.id} className="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
+                                <input type="checkbox" checked={storeProductIds.includes(p.id)} onChange={() => toggleProduct(p.id)} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                                <span>{p.name}{p.price_cents != null ? ` — $${(p.price_cents / 100).toFixed(2)}${p.recurring ? '/mo' : ''}` : ''}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
+                )}
+                {kindSwitchNote && (
+                  <p className="text-xs text-amber-600 mt-1.5">{kindSwitchNote}</p>
                 )}
                 <p className="text-xs text-gray-400 mt-1.5">Athletes with an active package or plan on any selected option can join this session.</p>
               </div>
             )}
           </div>
-          <div className="flex space-x-3 pt-2">
-            <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
-          </div>
+        </div>
+        {/* Outside the scrolling body so it stays on screen at any window height. */}
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+          <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
         </div>
       </div>
     </div>
@@ -7201,7 +7339,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           {slot.is_subscription_session && (
             <div className="flex items-start space-x-2 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-sm text-teal-800">
               <ClipboardList size={16} className="mt-0.5 shrink-0 text-teal-600" />
-              <span>Subscription session{subNames.length ? <> — included with: <span className="font-medium">{subNames.join(', ')}</span>.</> : '.'} Members on an active subscription can join.</span>
+              <span>{subNames.length ? <>Included with: <span className="font-medium">{subNames.join(', ')}</span>.</> : 'Package or membership required.'}</span>
             </div>
           )}
           {!pkgCheck.checking && (
