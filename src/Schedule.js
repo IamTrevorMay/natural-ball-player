@@ -6899,13 +6899,40 @@ const PRODUCT_KIND_GROUPS = [
   { kind: 'lesson', label: 'Lesson & Class Packages' },
 ];
 
+// #298: coaches whose products are titled with a different form of their name
+// than their user row carries. Key = the exact users.full_name; value = the
+// extra product-name prefixes that also mean that coach.
+//
+// DO NOT "fix" these by renaming the products instead. store_products.name is
+// overwritten from Square on every catalogue sync — see the update patch in
+// supabase/functions/square-catalog-sync/index.ts, which writes `name` in place
+// on each run — so a rename made in the database is reverted the next time the
+// sync runs. The rename would have to happen in Square itself; until it does,
+// this map is the correct place to reconcile the two spellings.
+const COACH_PRODUCT_NAME_ALIASES = {
+  // users.full_name is "Joshua Sale"; the three lesson packs are titled
+  // "Josh Sale ...".
+  'Joshua Sale': ['Josh Sale'],
+};
+
 // #298: some products are named after the coach who runs them ("Micah Yonamine
 // 10 Pack of One on One lessons"). Those may only be attached to that coach's
 // own sessions. Ownership is decided by NAME MATCHING — the business owner's
 // explicit choice — so it is EXPECTED TO BREAK when a product spells a coach's
-// name differently from their user row. A live example today: products titled
-// "Josh Sale ..." do not match the coach recorded as "Joshua Sale", so they are
-// treated as unowned and shown to every coach.
+// name differently from their user row and no alias above covers it.
+//
+// The coach's name must be a PREFIX of the product name, not merely present
+// somewhere inside it. Verified against the live catalogue: every genuinely
+// coach-owned product leads with the coach's name. Substring matching caused a
+// real regression — the pseudo-coach account "Strength and Conditioning "
+// claimed all eight "NBP Strength & Conditioning ..." programs (they contain
+// both words but start with "NBP"), which would have hidden org-wide products
+// from every other coach. Prefix matching fixes that with no exclusion list.
+//
+// Known consequence, accepted: the two "Copy of Adam Cimber Submarine Pitching
+// Academy Remote ..." products no longer match Adam Cimber, because they lead
+// with "Copy of". They are treated as unowned and shown to everyone — the
+// fail-open direction.
 //
 // Fails OPEN by design: a product matching no coach is shown to everyone. That
 // is the safe direction — an over-restrictive rule would silently hide a pack a
@@ -6915,14 +6942,14 @@ const PRODUCT_KIND_GROUPS = [
 // cannot match half the catalogue. Pure and side-effect free so it can be
 // unit-tested later.
 export function coachOwningProduct(productName, coachFullNames) {
-  const name = (productName || '').toLowerCase();
+  const name = String(productName || '').trim().toLowerCase();
   if (!name) return null;
   for (const full of coachFullNames || []) {
-    const parts = String(full || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (parts.length < 2) continue; // need a first AND a last name to match on
-    const first = parts[0];
-    const last = parts[parts.length - 1];
-    if (name.includes(first) && name.includes(last)) return full;
+    // Coach rows in this database carry stray leading/trailing spaces.
+    const trimmed = String(full || '').trim();
+    if (trimmed.split(/\s+/).filter(Boolean).length < 2) continue; // need first AND last
+    const candidates = [trimmed, ...(COACH_PRODUCT_NAME_ALIASES[trimmed] || [])];
+    if (candidates.some(c => name.startsWith(String(c).trim().toLowerCase()))) return full;
   }
   return null;
 }
