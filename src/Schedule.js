@@ -7120,12 +7120,21 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+      {/* The card is capped to the viewport and laid out as a column: header and
+          footer are fixed-height, the body between them scrolls. Without this the
+          card grew to its content height and the Cancel / Create Slot footer ran
+          off the bottom of the screen with no scrollable ancestor to reach it —
+          on a 740px-tall window, expanding the package picker put the buttons at
+          y≈872-914 and the slot could not be saved at all. min-h-0 on the body is
+          load-bearing: a flex child defaults to min-height:auto, so without it the
+          body refuses to shrink and its content escapes the card's max-height
+          instead of scrolling inside it. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <h3 className="text-xl font-bold text-gray-900">{isEdit ? 'Edit' : 'Create'} Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto">
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
@@ -7224,10 +7233,11 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
               </div>
             )}
           </div>
-          <div className="flex space-x-3 pt-2">
-            <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
-          </div>
+        </div>
+        {/* Outside the scrolling body so it stays on screen at any window height. */}
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+          <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? (isEdit ? 'Updating...' : 'Creating...') : (isEdit ? 'Update Slot' : 'Create Slot')}</button>
         </div>
       </div>
     </div>
