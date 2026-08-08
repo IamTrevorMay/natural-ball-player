@@ -59,8 +59,11 @@ Deno.serve(async (req) => {
         .or("is_public.eq.true,recurrence_parent_id.not.is.null"),
       service
         .from("training_slots")
-        .select("id, coach_id, slot_date, start_time, duration_minutes, repeat_weekly, repeat_end_date, max_players, notes, is_public, public_price_cents")
-        .eq("is_public", true),
+        // Child exception rows (#279 tombstones, #292 moves) are fetched too —
+        // they are not themselves is_public masters, so the same .or() the
+        // facility_events query uses is needed to see them at all.
+        .select("id, coach_id, slot_date, start_time, duration_minutes, repeat_weekly, repeat_end_date, max_players, notes, is_public, public_price_cents, recurrence_parent_id, is_exception, original_date")
+        .or("is_public.eq.true,recurrence_parent_id.not.is.null"),
       service
         .from("public_bookings")
         .select("source_type, source_id, occurrence_date")
@@ -81,6 +84,34 @@ Deno.serve(async (req) => {
         tombstones.add(`${e.recurrence_parent_id}_${e.original_date || e.event_date}`);
       }
     }
+
+    // training_slots' per-occurrence exception model (#279 tombstones, #292
+    // moves). This mirrors buildSlotExceptionMap / getSlotDateException /
+    // collectMovedSlots in src/scheduleUtils.js — deliberately the SAME
+    // interpretation, not a second one:
+    //   child row, is_exception = true  -> that series date is CANCELLED
+    //   child row, is_exception = false -> that occurrence MOVED, and now
+    //                                      lives at the child's own slot_date
+    // A series date with ANY child exception is skipped, tombstone or move.
+    // Skipping only tombstones would list a moved occurrence twice: once on
+    // the date it left, once on the date it moved to.
+    const allSlots = tsRes.data || [];
+    const slotMasters = allSlots.filter((s) => s.is_public && !s.recurrence_parent_id);
+    const slotExceptions = new Set<string>();
+    for (const s of allSlots) {
+      if (s.recurrence_parent_id && s.original_date) {
+        slotExceptions.add(`${s.recurrence_parent_id}_${s.original_date}`);
+      }
+    }
+    // Moved occurrences are real bookable sessions on their own date. They
+    // carry their own capacity/price/notes (copied off the master at move
+    // time), so they go through exactly the same listing rules below.
+    // is_public is re-checked on the child: a tombstone copies is_public but
+    // not public_price_cents, and an occurrence un-published after a move
+    // must stay off the public page.
+    const movedSlots = allSlots.filter(
+      (s) => s.recurrence_parent_id && s.is_exception === false && s.is_public,
+    );
 
     // Booked counts by "source_type:source_id:date".
     const bookedCount = new Map<string, number>();
@@ -150,13 +181,19 @@ Deno.serve(async (req) => {
     }
 
     // --- Coach sessions -----------------------------------------------------
-    for (const slot of tsRes.data || []) {
+    // Masters expand through their weekly recurrence; moved children are
+    // single-date rows (repeat_weekly false), so the same expansion yields
+    // just their own date and every rule below applies to both identically.
+    for (const slot of [...slotMasters, ...movedSlots]) {
       if (slot.public_price_cents == null) continue;
       const capacity = slot.max_players ?? 1;
       const dates = trainingSlotOccurrences(slot, today, rangeEnd);
       for (const date of dates) {
         if (date < todayStr || date > rangeEndStr) continue;
         if (occurrenceStartMs(date, slot.start_time) - BOOKING_CUTOFF_MS < Date.now()) continue;
+        // Cancelled or moved-away series dates are not for sale. Only a
+        // master can have exception children keyed against it.
+        if (!slot.recurrence_parent_id && slotExceptions.has(`${slot.id}_${date}`)) continue;
         const booked = bookedCount.get(`training_slot:${slot.id}:${date}`) || 0;
         const reserved = reservedCount.get(`${slot.id}:${date}`) || 0;
         const remaining = capacity - booked - reserved;
