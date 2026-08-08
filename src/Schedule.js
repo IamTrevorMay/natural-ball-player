@@ -6927,8 +6927,8 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
     (async () => {
       const { data } = await supabase
         .from('store_products')
-        .select('id, name, price_cents, recurring')
-        .eq('kind', 'package')
+        .select('id, name, price_cents, recurring, kind')
+        .in('kind', ['lesson', 'bundle', 'package'])
         .eq('active', true)
         .order('sort_order');
       setSubProducts(data || []);
@@ -7079,9 +7079,9 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
             </label>
             {isSubscriptionSession && (
               <div className="mt-3">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Which subscriptions? (accept one or more)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Which packages / plans? (accept one or more)</label>
                 {subProducts.length === 0 ? (
-                  <p className="text-xs text-amber-600 mt-1.5">No subscription products found. Add them in the Store (Work Portal) or sync from Square.</p>
+                  <p className="text-xs text-amber-600 mt-1.5">No active products found. Add them in the Store (Work Portal) or sync from Square.</p>
                 ) : (
                   <div className="space-y-1.5 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
                     {subProducts.map(p => (
@@ -7092,7 +7092,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
                     ))}
                   </div>
                 )}
-                <p className="text-xs text-gray-400 mt-1.5">Athletes with an active subscription on any selected plan can join this session — no per-session fee.</p>
+                <p className="text-xs text-gray-400 mt-1.5">Athletes with an active package or plan on any selected option can join this session.</p>
               </div>
             )}
           </div>
