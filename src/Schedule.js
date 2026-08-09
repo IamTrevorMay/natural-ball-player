@@ -670,22 +670,22 @@ export default function Schedule({ userId, userRole }) {
       (String(s.id) === String(masterId) || String(s.recurrence_parent_id || '') === String(masterId)));
     if (occupied) { alert('That series already has a session on that day.'); return; }
 
-    // Count booked athletes on the moving date so the coach confirms with
-    // facts before anyone's booking is touched.
-    const { data: dateReservations, error: bookedError } = await supabase
-      .from('slot_reservations')
-      .select('id, status')
-      .eq('slot_id', sourceSlotId)
-      .eq('slot_date', fromDate);
-    if (bookedError) { alert('Failed to check bookings: ' + formatUserError(bookedError)); return; }
-    const activeCount = (dateReservations || []).filter(r => r.status === 'pending' || r.status === 'confirmed').length;
-    if (activeCount > 0) {
+    // Count booked athletes AND paid outside bookings before confirming.
+    const [resResult, pubResult] = await Promise.all([
+      supabase.from('slot_reservations').select('id, status').eq('slot_id', sourceSlotId).eq('slot_date', fromDate),
+      supabase.from('public_bookings').select('id, status').eq('source_type', 'training_slot').eq('source_id', sourceSlotId).eq('occurrence_date', fromDate).in('status', ['pending_payment', 'confirmed']),
+    ]);
+    if (resResult.error) { alert('Failed to check bookings: ' + formatUserError(resResult.error)); return; }
+    const dateReservations = resResult.data || [];
+    const datePubBookings = pubResult.data || [];
+    const activeCount = dateReservations.filter(r => r.status === 'pending' || r.status === 'confirmed').length;
+    const pubCount = datePubBookings.length;
+    if (activeCount > 0 || pubCount > 0) {
       const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      const ok = window.confirm(
-        `Move this session from ${fmt(fromDate)} to ${fmt(toDate)}? ` +
-        `${activeCount} athlete${activeCount === 1 ? ' is' : 's are'} booked and ` +
-        `${activeCount === 1 ? 'their booking' : 'their bookings'} will move with it.`
-      );
+      const parts = [];
+      if (activeCount > 0) parts.push(`${activeCount} athlete${activeCount === 1 ? ' is' : 's are'} booked`);
+      if (pubCount > 0) parts.push(`${pubCount} paid outside booking${pubCount === 1 ? '' : 's'}`);
+      const ok = window.confirm(`Move this session from ${fmt(fromDate)} to ${fmt(toDate)}? ${parts.join(' and ')} will move with it.`);
       if (!ok) return;
     }
 
@@ -743,7 +743,7 @@ export default function Schedule({ userId, userRole }) {
     // moved occurrence (readers look bookings up by the rendered slot's id +
     // date, which for a moved occurrence is the child row). .select() so a
     // shortfall is surfaced instead of silently stranding bookings.
-    if ((dateReservations || []).length > 0) {
+    if (dateReservations.length > 0) {
       const { data: movedRes, error: resError } = await supabase
         .from('slot_reservations')
         .update({ slot_id: childId, slot_date: toDate })
@@ -752,8 +752,23 @@ export default function Schedule({ userId, userRole }) {
         .select('id');
       if (resError) {
         alert('The session moved, but its bookings could not be moved: ' + formatUserError(resError));
-      } else if ((movedRes || []).length < (dateReservations || []).length) {
-        alert(`The session moved, but ${(dateReservations || []).length - (movedRes || []).length} of its booking(s) could not be moved.`);
+      } else if ((movedRes || []).length < dateReservations.length) {
+        alert(`The session moved, but ${dateReservations.length - (movedRes || []).length} of its booking(s) could not be moved.`);
+      }
+    }
+
+    // Carry public_bookings across the same way: repoint source_id and
+    // occurrence_date onto the moved child row so paid outside bookings
+    // follow the session (#304).
+    if (datePubBookings.length > 0) {
+      const { error: pubError } = await supabase
+        .from('public_bookings')
+        .update({ source_id: childId, occurrence_date: toDate })
+        .eq('source_type', 'training_slot')
+        .eq('source_id', sourceSlotId)
+        .eq('occurrence_date', fromDate);
+      if (pubError) {
+        alert('The session moved, but its outside bookings could not be moved: ' + formatUserError(pubError));
       }
     }
 
