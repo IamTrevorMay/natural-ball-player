@@ -20,14 +20,6 @@ const SQUARE_BASE = SQUARE_ENV === "sandbox"
   : "https://connect.squareup.com";
 const SQUARE_VERSION = "2024-11-20";
 
-// Session-pack expiry, keyed by bundle_qty (#298 follow-up). Any bundle_qty
-// not listed here (or no bundle_qty at all) gets no expiry.
-const BUNDLE_EXPIRY_DAYS: Record<number, number> = {
-  5: 60,
-  10: 120,
-  20: 180,
-};
-
 function jsonRes(cors: Record<string, string>, status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
@@ -164,11 +156,13 @@ Deno.serve(async (req) => {
       // any future kind='bundle' rows both count sessions this way. Monthly
       // subscriptions never reach this branch (kind='package' + recurring
       // routes to the Subscriptions API below), so they stay NULL == unlimited.
-      const expiryDays = product.bundle_qty != null ? BUNDLE_EXPIRY_DAYS[product.bundle_qty] : undefined;
-      const expiresAt = expiryDays
-        ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
-        : null;
-
+      //
+      // expires_at is deliberately NOT set here. The row is 'pending' at this
+      // point — the customer has a payment link, not a payment. Starting the
+      // 60/120/180-day clock now would burn days off a package before anyone
+      // paid for it, sometimes before they ever pay for it at all. The clock
+      // starts in square-webhook when the payment actually lands — see
+      // _shared/packageExpiry.ts for the shared rule.
       const { data: purchase, error: insErr } = await service
         .from("store_purchases")
         .insert({
@@ -180,7 +174,6 @@ Deno.serve(async (req) => {
           status: "pending",
           square_order_id: orderId,
           remaining_qty: product.bundle_qty ?? null,
-          expires_at: expiresAt,
           checkout_url: checkoutUrl,
           metadata: { idempotency_key: idempotencyKey, payment_link_id: link?.payment_link?.id },
         })

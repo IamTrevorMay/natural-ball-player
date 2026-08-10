@@ -8,6 +8,7 @@
 //   invoice.payment_made                -> first-cycle confirmation for subs
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { computeExpiresAt } from "../_shared/packageExpiry.ts";
 
 const encoder = new TextEncoder();
 
@@ -119,8 +120,38 @@ Deno.serve(async (req) => {
         } else if (purchaseStatus === "failed") {
           q = q.neq("status", "refunded");
         }
-        const { data: updated, error } = await q.select("id");
+        const { data: updated, error } = await q.select("id, product_id, expires_at");
         if (error) throw error;
+
+        // #298 expiry-timing fix: the session-pack clock must start when the
+        // payment actually lands, not when the checkout link was created
+        // (square-checkout deliberately leaves expires_at null on insert —
+        // see its comment). Only touch rows with no expires_at yet, so this
+        // never overwrites an expiry an admin set by hand via "Set expiration".
+        if (purchaseStatus === "paid" && updated && updated.length > 0) {
+          const needsExpiry = updated.filter((row: any) => row.expires_at == null && row.product_id);
+          if (needsExpiry.length > 0) {
+            const productIds = [...new Set(needsExpiry.map((row: any) => row.product_id))];
+            const { data: products, error: prodErr } = await service
+              .from("store_products")
+              .select("id, bundle_qty")
+              .in("id", productIds);
+            if (prodErr) throw prodErr;
+            const bundleQtyByProduct = new Map((products || []).map((p: any) => [p.id, p.bundle_qty]));
+            for (const row of needsExpiry) {
+              const expiresAt = computeExpiresAt(bundleQtyByProduct.get(row.product_id), new Date(now));
+              if (!expiresAt) continue;
+              // .is("expires_at", null) again here: belt-and-suspenders against
+              // an admin setting one by hand in the gap since the select above.
+              const { error: expErr } = await service
+                .from("store_purchases")
+                .update({ expires_at: expiresAt })
+                .eq("id", row.id)
+                .is("expires_at", null);
+              if (expErr) throw expErr;
+            }
+          }
+        }
 
         // Public facility bookings (#229) live in a separate table, matched by
         // the same Square order_id. Confirm on completion; mark failed/refunded
