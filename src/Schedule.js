@@ -6704,7 +6704,7 @@ async function syncReservationSessionUsage(res, attended, markerId) {
         .from('store_purchases')
         .select('id, remaining_qty, expires_at')
         .eq('user_id', res.player_id)
-        .in('product_kind', ['package', 'bundle'])
+        .in('product_kind', ['package', 'bundle', 'lesson'])
         .in('status', ['active', 'paid'])
         .gt('remaining_qty', 0)
         .order('expires_at', { ascending: true, nullsFirst: false });
@@ -7279,7 +7279,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           .from('store_purchases')
           .select('id, product_name_snapshot, remaining_qty, product_kind')
           .eq('user_id', user.id)
-          .in('product_kind', ['package', 'bundle'])
+          .in('product_kind', ['package', 'bundle', 'lesson'])
           .in('status', ['active', 'paid'])
           .or(`expires_at.is.null,expires_at.gt.${today}`);
         const active = (data || []).find(p => p.remaining_qty === null || p.remaining_qty > 0);

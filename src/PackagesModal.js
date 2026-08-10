@@ -42,12 +42,14 @@ export default function PackagesModal({ userId, userName, canManage, onClose }) 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Packages + bundles carry session counts; lessons are single-use one-offs.
+      // Packages + bundles + lesson packs carry session counts (lesson packs
+      // are kind='lesson' rows with a bundle_qty set — plain single-session
+      // lessons have no bundle_qty and never reach this list).
       const { data: rows, error } = await supabase
         .from('store_purchases')
         .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, store_products(bundle_qty, kind)')
         .eq('user_id', userId)
-        .in('product_kind', ['package', 'bundle'])
+        .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
       if (error) throw error;
       const list = rows || [];
