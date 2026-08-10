@@ -557,11 +557,18 @@ function PackagesTab() {
       setLoading(true);
       const { data } = await supabase
         .from('store_purchases')
-        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, user:users!store_purchases_user_id_fkey(full_name, email)')
+        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, user:users!store_purchases_user_id_fkey(full_name, email), store_products(bundle_qty)')
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false })
         .limit(1000);
-      setRows(data || []);
+      // Cosmetic (#298 follow-up): a plain one-off kind='lesson' purchase has
+      // no bundle_qty and isn't a package — showing it here rendered as if it
+      // were an unlimited package ("Monthly"), which misled staff. Every
+      // kind='package' row still counts (monthly subscriptions are never
+      // counted, so they never have a bundle_qty either); bundle/lesson rows
+      // only count when their product actually carries a bundle_qty.
+      const real = (data || []).filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null);
+      setRows(real);
       setLoading(false);
     })();
   }, []);
