@@ -4218,6 +4218,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           userId={userData.id}
           userName={userData.full_name}
           canManage={userRole === 'admin' || userRole === 'coach'}
+          canDelete={userRole === 'admin'}
           onClose={() => setShowPackages(false)}
         />
       )}
