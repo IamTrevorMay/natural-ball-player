@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTriangle } from 'lucide-react';
+import WhoopCommunityCodeCard from './WhoopCommunityCode';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -305,6 +306,9 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView }
         </h2>
         <p className="text-gray-600 mt-1">Here's your overview for today</p>
       </div>
+
+      {/* #319: every player should see this, not just players who open the Whoop tab */}
+      <WhoopCommunityCodeCard />
 
       {/* Player Info Card */}
       <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg shadow-lg p-6 text-white">

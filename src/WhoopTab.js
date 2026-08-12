@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase, supabaseUrl } from './supabaseClient';
 import { Activity, RefreshCw, Link2, Unlink } from 'lucide-react';
 import { fmtLocalDate } from './scheduleUtils';
+import WhoopCommunityCodeCard from './WhoopCommunityCode';
 
 // ---- Readiness algorithm ----
 
@@ -538,6 +539,9 @@ export default function WhoopTab({ userId, userRole }) {
             Get a free WHOOP + one month free
           </a>
         </p>
+        <div className="mt-6 text-left">
+          <WhoopCommunityCodeCard />
+        </div>
       </div>
     );
   }
@@ -659,6 +663,7 @@ export default function WhoopTab({ userId, userRole }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <WhoopCommunityCodeCard compact />
           <div className="flex bg-gray-100 rounded-lg p-0.5">
             {[7, 14, 30, 90].map(d => (
               <button
