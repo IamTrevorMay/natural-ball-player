@@ -96,7 +96,7 @@ function CatalogTab() {
       description: draft.description.trim() || null,
       price_cents: Math.round(priceNum * 100),
       recurring: draft.kind === 'package' && draft.recurring,
-      bundle_qty: draft.kind === 'bundle' && draft.bundle_qty ? Number(draft.bundle_qty) : null,
+      bundle_qty: (draft.kind === 'bundle' || draft.kind === 'lesson') && draft.bundle_qty ? Number(draft.bundle_qty) : null,
       square_catalog_id: draft.square_catalog_id.trim() || null,
       square_plan_id: draft.square_plan_id.trim() || null,
       square_variation_id: draft.square_variation_id.trim() || null,
@@ -256,9 +256,9 @@ function CatalogTab() {
             </div>
           </>
         )}
-        {draft.kind === 'bundle' && (
+        {(draft.kind === 'bundle' || draft.kind === 'lesson') && (
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Bundle qty</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Sessions in this package</label>
             <input
               type="number"
               min="1"
@@ -266,6 +266,9 @@ function CatalogTab() {
               onChange={(e) => setDraft({ ...draft, bundle_qty: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              How many sessions this package holds. Leave blank for things that aren't sessions — deposits, fines, discounts, memberships.
+            </p>
           </div>
         )}
         <div className="flex items-center space-x-2 mt-6">
@@ -554,11 +557,18 @@ function PackagesTab() {
       setLoading(true);
       const { data } = await supabase
         .from('store_purchases')
-        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, user:users!store_purchases_user_id_fkey(full_name, email)')
-        .in('product_kind', ['package', 'bundle'])
+        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, user:users!store_purchases_user_id_fkey(full_name, email), store_products(bundle_qty)')
+        .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false })
         .limit(1000);
-      setRows(data || []);
+      // Cosmetic (#298 follow-up): a plain one-off kind='lesson' purchase has
+      // no bundle_qty and isn't a package — showing it here rendered as if it
+      // were an unlimited package ("Monthly"), which misled staff. Every
+      // kind='package' row still counts (monthly subscriptions are never
+      // counted, so they never have a bundle_qty either); bundle/lesson rows
+      // only count when their product actually carries a bundle_qty.
+      const real = (data || []).filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null);
+      setRows(real);
       setLoading(false);
     })();
   }, []);

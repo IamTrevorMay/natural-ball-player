@@ -50,15 +50,19 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Packages + bundles carry session counts; lessons are single-use one-offs.
       const { data: rows, error } = await supabase
         .from('store_purchases')
         .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, store_products(bundle_qty, kind)')
         .eq('user_id', userId)
-        .in('product_kind', ['package', 'bundle'])
+        .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
       if (error) throw error;
-      const list = rows || [];
+      // Cosmetic (#298 follow-up): a plain one-off kind='lesson' purchase has
+      // no bundle_qty and isn't a package — it was rendering here as if it
+      // were an unlimited package. Every kind='package' row still counts
+      // (monthly subscriptions are never counted, so no bundle_qty either);
+      // bundle/lesson rows only count when their product actually has one.
+      const list = (rows || []).filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null);
       setPurchases(list);
 
       if (list.length > 0) {

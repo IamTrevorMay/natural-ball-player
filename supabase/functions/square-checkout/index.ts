@@ -151,6 +151,18 @@ Deno.serve(async (req) => {
       const checkoutUrl = link?.payment_link?.url;
       if (!checkoutUrl) return jsonRes(cors, 502, { error: "Square did not return a checkout URL" });
 
+      // A purchase starts with a session count whenever the product has a
+      // bundle_qty, regardless of kind — lesson packs (kind='lesson') and
+      // any future kind='bundle' rows both count sessions this way. Monthly
+      // subscriptions never reach this branch (kind='package' + recurring
+      // routes to the Subscriptions API below), so they stay NULL == unlimited.
+      //
+      // expires_at is deliberately NOT set here. The row is 'pending' at this
+      // point — the customer has a payment link, not a payment. Starting the
+      // 60/120/180-day clock now would burn days off a package before anyone
+      // paid for it, sometimes before they ever pay for it at all. The clock
+      // starts in square-webhook when the payment actually lands — see
+      // _shared/packageExpiry.ts for the shared rule.
       const { data: purchase, error: insErr } = await service
         .from("store_purchases")
         .insert({
@@ -161,7 +173,7 @@ Deno.serve(async (req) => {
           amount_cents: product.price_cents,
           status: "pending",
           square_order_id: orderId,
-          remaining_qty: product.kind === "bundle" ? product.bundle_qty : null,
+          remaining_qty: product.bundle_qty ?? null,
           checkout_url: checkoutUrl,
           metadata: { idempotency_key: idempotencyKey, payment_link_id: link?.payment_link?.id },
         })

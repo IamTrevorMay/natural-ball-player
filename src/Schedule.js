@@ -6706,7 +6706,7 @@ async function syncReservationSessionUsage(res, attended, markerId) {
         .from('store_purchases')
         .select('id, remaining_qty, expires_at')
         .eq('user_id', res.player_id)
-        .in('product_kind', ['package', 'bundle'])
+        .in('product_kind', ['package', 'bundle', 'lesson'])
         .in('status', ['active', 'paid'])
         .gt('remaining_qty', 0)
         .order('expires_at', { ascending: true, nullsFirst: false });
@@ -7281,10 +7281,16 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           .from('store_purchases')
           .select('id, product_name_snapshot, remaining_qty, product_kind')
           .eq('user_id', user.id)
-          .in('product_kind', ['package', 'bundle'])
+          .in('product_kind', ['package', 'bundle', 'lesson'])
           .in('status', ['active', 'paid'])
           .or(`expires_at.is.null,expires_at.gt.${today}`);
-        const active = (data || []).find(p => p.remaining_qty === null || p.remaining_qty > 0);
+        // remaining_qty === null means "uncounted" — only true unlimited for a
+        // recurring monthly package. For a one-time bundle/lesson purchase,
+        // null means no session count was ever set on it (a plain single-lesson
+        // purchase, not a pack), so it must NOT be treated as an active package.
+        const active = (data || []).find(p =>
+          p.product_kind === 'package' ? p.remaining_qty === null || p.remaining_qty > 0 : p.remaining_qty > 0
+        );
         setPkgCheck({ checking: false, pkg: active || null });
       } catch {
         setPkgCheck({ checking: false, pkg: null });

@@ -166,7 +166,7 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
                             )}
                             <p className="text-sm text-gray-700 font-semibold mt-1">
                               {fmtMoney(p.price_cents)}{p.recurring ? ' / mo' : ''}
-                              {p.kind === 'bundle' && p.bundle_qty ? ` · ${p.bundle_qty} lessons` : ''}
+                              {p.bundle_qty ? ` · ${p.bundle_qty} sessions` : ''}
                             </p>
                           </div>
                           <button
