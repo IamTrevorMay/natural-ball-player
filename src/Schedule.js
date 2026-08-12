@@ -4975,8 +4975,8 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                           );
                         })}
                       </div>
-                      <div className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden">
-                        <table className="w-full text-sm">
+                      <div className="hidden sm:block border border-gray-200 rounded-lg overflow-x-auto">
+                        <table className="w-full text-sm min-w-max">
                           <thead className="bg-gray-50">
                             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                               <th className="px-3 py-2">Exercise</th>
