@@ -5275,6 +5275,9 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   const [planMeals, setPlanMeals] = useState(null); // fuel-plan assignment: full meal breakdown
   const [slotReservations, setSlotReservations] = useState([]);
   const [slotResLoading, setSlotResLoading] = useState(false);
+  // #306: "why are you cancelling" — shown after the player commits to
+  // cancelling, before it's actually written.
+  const [showCancelReason, setShowCancelReason] = useState(false);
   const [formData, setFormData] = useState({
     title: event.title || event.opponent || '',
     event_date: event.event_date,
@@ -5513,7 +5516,14 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     const isPlayer = userRole === 'player';
     const withinCancelWindow = Date.now() <= startAt.getTime() - CUTOFF_MS;
 
-    const handleCancelReservation = async () => {
+    // #306: sick cancel gives the session back; anything else counts against
+    // the package, same as if the player had simply not shown up. One write
+    // (status + cancel_reason together), and the actual give-back/consume is
+    // syncReservationSessionUsage — the exact function attendance-marking
+    // already uses — reused, not duplicated, just with attended flipped:
+    // sick (attended=false) releases anything already consumed; anything
+    // else (attended=true) consumes a session, same as marking Present.
+    const handleCancelReservation = async (reason) => {
       setLoading(true);
       try {
         const { data: resRow, error: findErr } = await supabase
@@ -5528,10 +5538,27 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
         if (!resRow) throw new Error('Could not find your reservation for this session.');
         const { error: updErr } = await supabase
           .from('slot_reservations')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+            cancel_reason: reason,
+            cancel_reason_by: userId,
+            cancel_reason_at: new Date().toISOString(),
+          })
           .eq('id', resRow.id);
         if (updErr) throw updErr;
-        alert('Session cancelled. The spot has been reopened.');
+        try {
+          await syncReservationSessionUsage(
+            { id: resRow.id, player_id: userId, slot_date: event.event_date },
+            reason !== 'sick',
+            userId
+          );
+        } catch (e) {
+          // #306: same swallow-on-package-error posture syncReservationSessionUsage
+          // already documents for itself — the cancellation stands either way.
+          console.error('Session-usage sync on cancel failed:', e);
+        }
+        alert(reason === 'sick' ? 'Session cancelled. The spot has been reopened.' : 'Session cancelled. This will count against your package.');
         onDelete();
       } catch (err) {
         alert('Error cancelling session: ' + formatUserError(err));
@@ -5560,16 +5587,37 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
 
             {isPlayer ? (
               withinCancelWindow ? (
-                <div className="space-y-2 pt-2">
-                  <button
-                    onClick={handleCancelReservation}
-                    disabled={loading}
-                    className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50"
-                  >
-                    {loading ? 'Cancelling...' : 'Cancel this session'}
-                  </button>
-                  <p className="text-xs text-gray-400 text-center">Cancellations are allowed up to 12 hours before the session.</p>
-                </div>
+                showCancelReason ? (
+                  <div className="space-y-2 pt-2">
+                    <p className="text-sm font-medium text-gray-700">Why are you cancelling?</p>
+                    <button
+                      onClick={() => handleCancelReservation('sick')}
+                      disabled={loading}
+                      className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50"
+                    >
+                      {loading ? 'Cancelling...' : "I'm sick / injured"}
+                    </button>
+                    <button
+                      onClick={() => handleCancelReservation('other')}
+                      disabled={loading}
+                      className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg font-medium hover:bg-gray-50 transition disabled:opacity-50"
+                    >
+                      {loading ? 'Cancelling...' : 'Something else came up'}
+                    </button>
+                    <p className="text-xs text-gray-400 text-center">A sick/injured cancel reopens your spot. Anything else counts against your package.</p>
+                    <button onClick={() => setShowCancelReason(false)} disabled={loading} className="w-full text-xs text-gray-400 hover:text-gray-600 transition">Never mind</button>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-2">
+                    <button
+                      onClick={() => setShowCancelReason(true)}
+                      className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition"
+                    >
+                      Cancel this session
+                    </button>
+                    <p className="text-xs text-gray-400 text-center">Cancellations are allowed up to 12 hours before the session.</p>
+                  </div>
+                )
               ) : (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                   Cancellations close 12 hours before the session. Please contact your coach if you can't make it.
