@@ -6174,11 +6174,32 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const [teamSaving, setTeamSaving] = useState(false);
   const [teamRecurrencePrompt, setTeamRecurrencePrompt] = useState(false);
 
+  // #320: coach(es) and athlete reassignment on an existing event, same
+  // pattern as team assignment above. Athletes aren't passed in as a prop
+  // (unlike `coaches`, which the parent already fetches org-wide) — the
+  // top-level `players` state in Schedule.js is coach-team-scoped, which
+  // would wrongly hide athletes outside a coach's own teams, so this fetches
+  // its own org-wide list, same query AddFacilityEventPanel uses.
+  const [athletes, setAthletes] = useState([]);
+  const [editingCoach, setEditingCoach] = useState(false);
+  const [coachDraft, setCoachDraft] = useState(event.coach_ids || (event.coach_id ? [event.coach_id] : []));
+  const [coachSaving, setCoachSaving] = useState(false);
+  const [coachRecurrencePrompt, setCoachRecurrencePrompt] = useState(false);
+  const [editingAthlete, setEditingAthlete] = useState(false);
+  const [athleteDraft, setAthleteDraft] = useState(event.athlete_id || '');
+  const [athleteSaving, setAthleteSaving] = useState(false);
+  const [athleteRecurrencePrompt, setAthleteRecurrencePrompt] = useState(false);
+
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from('teams').select('id, name').order('name');
-      if (error) console.error('FacilityEventDetail: teams query failed:', error);
-      setTeams(data || []);
+      const [{ data: teamData, error: teamError }, { data: athleteData, error: athleteError }] = await Promise.all([
+        supabase.from('teams').select('id, name').order('name'),
+        supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name'),
+      ]);
+      if (teamError) console.error('FacilityEventDetail: teams query failed:', teamError);
+      if (athleteError) console.error('FacilityEventDetail: athletes query failed:', athleteError);
+      setTeams(teamData || []);
+      setAthletes(athleteData || []);
     })();
   }, []);
 
@@ -6243,6 +6264,119 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const handleTeamSave = () => {
     if (event.is_recurring) { setTeamRecurrencePrompt(true); return; }
     applyTeamAssignment('all');
+  };
+
+  // #320: same one-occurrence-vs-series find-or-create as applyTeamAssignment
+  // above — reused, not reinvented, per the #279/#287 exception model.
+  const applyCoachAssignment = async (choice) => {
+    setCoachRecurrencePrompt(false);
+    setCoachSaving(true);
+    const patch = { coach_ids: coachDraft.length > 0 ? coachDraft : null, coach_id: coachDraft[0] || null };
+    try {
+      if (choice === 'one') {
+        const { data: existingException, error: findError } = await supabase
+          .from('facility_events')
+          .select('id')
+          .eq('recurrence_parent_id', eventMasterId)
+          .eq('original_date', occurrenceDate)
+          .maybeSingle();
+        if (findError) throw findError;
+        if (existingException) {
+          const { error } = await supabase.from('facility_events').update(patch).eq('id', existingException.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('facility_events').insert({
+            recurrence_parent_id: eventMasterId,
+            original_date: occurrenceDate,
+            event_date: occurrenceDate,
+            is_exception: false,
+            is_recurring: false,
+            title: event.title,
+            description: event.description,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            location: event.location,
+            color: event.color,
+            lanes: event.lanes || [],
+            athlete_id: event.athlete_id,
+            team_ids: event.team_ids || [],
+            ...patch,
+          });
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabase.from('facility_events').update(patch).eq('id', eventMasterId);
+        if (error) throw error;
+        const { error: childError } = await supabase.from('facility_events').update(patch).eq('recurrence_parent_id', eventMasterId);
+        if (childError) throw childError;
+      }
+      onUpdate();
+    } catch (err) {
+      alert('Error assigning coach(es): ' + formatUserError(err));
+    } finally {
+      setCoachSaving(false);
+    }
+  };
+
+  const handleCoachSave = () => {
+    if (event.is_recurring) { setCoachRecurrencePrompt(true); return; }
+    applyCoachAssignment('all');
+  };
+
+  const applyAthleteAssignment = async (choice) => {
+    setAthleteRecurrencePrompt(false);
+    setAthleteSaving(true);
+    const patch = { athlete_id: athleteDraft || null };
+    try {
+      if (choice === 'one') {
+        const { data: existingException, error: findError } = await supabase
+          .from('facility_events')
+          .select('id')
+          .eq('recurrence_parent_id', eventMasterId)
+          .eq('original_date', occurrenceDate)
+          .maybeSingle();
+        if (findError) throw findError;
+        if (existingException) {
+          const { error } = await supabase.from('facility_events').update(patch).eq('id', existingException.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('facility_events').insert({
+            recurrence_parent_id: eventMasterId,
+            original_date: occurrenceDate,
+            event_date: occurrenceDate,
+            is_exception: false,
+            is_recurring: false,
+            title: event.title,
+            description: event.description,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            location: event.location,
+            color: event.color,
+            lanes: event.lanes || [],
+            coach_id: event.coach_id,
+            coach_ids: event.coach_ids || null,
+            team_ids: event.team_ids || [],
+            ...patch,
+          });
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabase.from('facility_events').update(patch).eq('id', eventMasterId);
+        if (error) throw error;
+        const { error: childError } = await supabase.from('facility_events').update(patch).eq('recurrence_parent_id', eventMasterId);
+        if (childError) throw childError;
+      }
+      onUpdate();
+    } catch (err) {
+      alert('Error assigning athlete: ' + formatUserError(err));
+    } finally {
+      setAthleteSaving(false);
+    }
+  };
+
+  const handleAthleteSave = () => {
+    if (event.is_recurring) { setAthleteRecurrencePrompt(true); return; }
+    applyAthleteAssignment('all');
   };
 
   // Sign-ups lock 12h before the event starts (mirrors the #233 cancel cutoff).
@@ -6470,15 +6604,89 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
               {event.is_public && <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-sm"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Public booking</span>{event.booking_type && <span className="text-gray-700 font-medium">{event.booking_type}</span>}{event.public_price_cents != null && <span className="text-gray-500">${(event.public_price_cents / 100).toFixed(2)} · capacity {event.public_capacity || 1}</span>}</div>}
               {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
+              {/* #320: athlete assignment — shown to everyone, editable by staff. */}
+              {(() => {
+                const athleteName = athletes.find(a => a.id === event.athlete_id)?.full_name || event.athlete?.full_name || '';
+                if (!athleteName && !isStaff) return null;
+                return (
+                  <div className="text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <User size={14} className="text-gray-400" />
+                        <span className="text-gray-700">
+                          Athlete:{' '}
+                          {athleteName
+                            ? <span className="font-medium text-gray-900">{athleteName}</span>
+                            : <span className="text-gray-400 italic">none assigned</span>}
+                        </span>
+                      </div>
+                      {isStaff && !editingAthlete && (
+                        <button onClick={() => { setAthleteDraft(event.athlete_id || ''); setEditingAthlete(true); }} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                          {athleteName ? 'Edit athlete' : 'Assign athlete'}
+                        </button>
+                      )}
+                    </div>
+                    {editingAthlete && (
+                      <div className="mt-2 space-y-2">
+                        <select value={athleteDraft} onChange={(e) => setAthleteDraft(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                          <option value="">No athlete</option>
+                          {athletes.map(a => <option key={a.id} value={a.id}>{a.full_name}</option>)}
+                        </select>
+                        <div className="flex justify-end space-x-2">
+                          <button onClick={() => setEditingAthlete(false)} className="px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+                          <button onClick={handleAthleteSave} disabled={athleteSaving} className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition disabled:opacity-50">
+                            {athleteSaving ? 'Saving…' : 'Save athlete'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* #320: coach(es) assignment — shown to everyone, editable by staff. */}
               {(() => {
                 const coachNames = (event.coach_ids || []).map(cid => coaches.find(c => c.id === cid)?.full_name).filter(Boolean);
                 if (!coachNames.length && event.coach?.full_name) coachNames.push(event.coach.full_name);
-                const hasInfo = event.athlete?.full_name || coachNames.length > 0;
-                if (!hasInfo) return null;
+                if (!coachNames.length && !isStaff) return null;
                 return (
-                  <div className="flex items-start flex-wrap gap-3 text-sm">
-                    {event.athlete?.full_name && <div className="flex items-center space-x-1.5"><User size={14} className="text-gray-400" /><span className="text-gray-700">Athlete: <span className="font-medium text-gray-900">{event.athlete.full_name}</span></span></div>}
-                    {coachNames.length > 0 && <div className="flex items-center space-x-1.5"><UserCheck size={14} className="text-gray-400" /><span className="text-gray-700">{coachNames.length === 1 ? 'Coach' : 'Coaches'}: <span className="font-medium text-gray-900">{coachNames.join(', ')}</span></span></div>}
+                  <div className="text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <UserCheck size={14} className="text-gray-400" />
+                        <span className="text-gray-700">
+                          {coachNames.length === 1 ? 'Coach' : 'Coaches'}:{' '}
+                          {coachNames.length > 0
+                            ? <span className="font-medium text-gray-900">{coachNames.join(', ')}</span>
+                            : <span className="text-gray-400 italic">none assigned</span>}
+                        </span>
+                      </div>
+                      {isStaff && !editingCoach && (
+                        <button onClick={() => { setCoachDraft(event.coach_ids || (event.coach_id ? [event.coach_id] : [])); setEditingCoach(true); }} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                          {coachNames.length > 0 ? 'Edit coach(es)' : 'Assign coach(es)'}
+                        </button>
+                      )}
+                    </div>
+                    {editingCoach && (
+                      <div className="mt-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                          {coaches.map(c => (
+                            <label key={c.id} className="flex items-center space-x-2 text-sm py-0.5">
+                              <input type="checkbox" checked={coachDraft.includes(c.id)} onChange={(e) => {
+                                setCoachDraft(e.target.checked ? [...coachDraft, c.id] : coachDraft.filter(id => id !== c.id));
+                              }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                              <span className="text-gray-700 truncate">{c.full_name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex justify-end space-x-2">
+                          <button onClick={() => setEditingCoach(false)} className="px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+                          <button onClick={handleCoachSave} disabled={coachSaving} className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition disabled:opacity-50">
+                            {coachSaving ? 'Saving…' : 'Save coach(es)'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -6675,6 +6883,29 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           allowFuture={false}
           onPick={applyTeamAssignment}
           onClose={() => setTeamRecurrencePrompt(false)}
+        />
+      )}
+      {/* #320: same recurrence pattern as teams above — reused, not reinvented. */}
+      {coachRecurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="Reassign coach(es) on a recurring event"
+          message="Apply this coach change to just this occurrence, or to the whole series?"
+          actionLabel="Apply to"
+          allowOne={true}
+          allowFuture={false}
+          onPick={applyCoachAssignment}
+          onClose={() => setCoachRecurrencePrompt(false)}
+        />
+      )}
+      {athleteRecurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="Reassign athlete on a recurring event"
+          message="Apply this athlete change to just this occurrence, or to the whole series?"
+          actionLabel="Apply to"
+          allowOne={true}
+          allowFuture={false}
+          onPick={applyAthleteAssignment}
+          onClose={() => setAthleteRecurrencePrompt(false)}
         />
       )}
     </div>
