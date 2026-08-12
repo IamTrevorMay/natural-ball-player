@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { supabase } from './supabaseClient';
 import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
@@ -24,7 +23,7 @@ import WorkStore from './WorkStore';
 import BulkTagSessions from './BulkTagSessions';
 import Leads from './Leads';
 import UsageDashboard from './UsageDashboard';
-import NotificationBell from './NotificationBell';
+import NotificationBell, { deletePendingPayment } from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
 const PAGE_META = {
@@ -152,12 +151,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
     else onSwitchPortalAndView?.(view);
   };
 
-  const handleDeletePayment = async (purchaseId, productName) => {
-    if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.`)) return;
-    const { error } = await supabase.from('store_purchases').delete().eq('id', purchaseId);
-    if (error) { alert('Error deleting payment: ' + error.message); return; }
-    mainCounts.refresh();
-  };
+  // #316: shared with App.js — see deletePendingPayment in NotificationBell.js
+  const handleDeletePayment = (purchaseId, productName) => deletePendingPayment(purchaseId, productName, mainCounts.refresh);
 
   const renderContent = () => {
     switch (currentView) {

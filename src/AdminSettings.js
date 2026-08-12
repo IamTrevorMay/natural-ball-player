@@ -1684,7 +1684,11 @@ function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) 
   );
 }
 
-function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
+// #310: exported so FacilityEventDetail (Schedule.js) can reuse this for
+// "create a new player inline" instead of a second signup form. onSuccess
+// now also receives the new user's id/full_name (existing AdminSettings.js
+// caller below ignores the extra args — backward compatible).
+export function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
   useModalTracking('CreateUserModal');
   const isCoachCaller = callerRole === 'coach';
   const [formData, setFormData] = useState({
@@ -1790,7 +1794,7 @@ function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
 
       newUserId = null; // Clear so catch block doesn't delete a successfully created user
       alert('User created successfully!');
-      onSuccess();
+      onSuccess(result.user_id, formData.full_name);
     } catch (err) {
       // If auth user was created but DB inserts failed, clean up the orphaned auth user
       if (newUserId) {
