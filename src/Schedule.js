@@ -8016,44 +8016,110 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
+  // #305: reason is only set when gated and blocked — 'none' | 'expired' |
+  // 'no_sessions'. Used to pick the specific refusal message below.
+  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null, reason: null });
   // #244/#249: names of the subscription plan(s) this session accepts (if any).
   const [subNames, setSubNames] = useState([]);
+
+  // #305: the product(s) this specific session was tagged with (CreateSlotPanel
+  // / BulkTagSessions). Matching is by id against THIS list, never by name or
+  // product kind — a session with nothing attached (is_subscription_session
+  // false, the pre-#311-tagging default) is NOT gated, so this stays exactly
+  // as permissive as it always was for the rare untagged slot.
+  const requiredProductIds = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
+  const gated = !!slot?.is_subscription_session && requiredProductIds.length > 0;
+  // Stable, primitive form of requiredProductIds for effect dependency arrays
+  // below — the array itself is a new reference every render.
+  const requiredProductIdsKey = requiredProductIds.join(',');
 
   useEffect(() => {
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         const today = new Date().toISOString();
+        // Fetch unfiltered by validity (unlike the old query) so a matching-
+        // but-expired or matching-but-empty package can be told apart from
+        // holding no matching package at all, for the refusal message.
         const { data } = await supabase
           .from('store_purchases')
-          .select('id, product_name_snapshot, remaining_qty, product_kind')
+          .select('id, product_id, product_name_snapshot, remaining_qty, product_kind, expires_at')
           .eq('user_id', user.id)
           .in('product_kind', ['package', 'bundle', 'lesson'])
-          .in('status', ['active', 'paid'])
-          .or(`expires_at.is.null,expires_at.gt.${today}`);
+          .in('status', ['active', 'paid']);
+        const purchases = data || [];
         // remaining_qty === null means "uncounted" — only true unlimited for a
         // recurring monthly package. For a one-time bundle/lesson purchase,
         // null means no session count was ever set on it (a plain single-lesson
         // purchase, not a pack), so it must NOT be treated as an active package.
-        const active = (data || []).find(p =>
-          p.product_kind === 'package' ? p.remaining_qty === null || p.remaining_qty > 0 : p.remaining_qty > 0
-        );
-        setPkgCheck({ checking: false, pkg: active || null });
+        const hasSessionsLeft = (p) => p.product_kind === 'package' ? (p.remaining_qty === null || p.remaining_qty > 0) : p.remaining_qty > 0;
+        const notExpired = (p) => !p.expires_at || p.expires_at > today;
+
+        if (requiredProductIds.length > 0) {
+          // #305 (Q7 — "the package has to match the session size"): matched
+          // against the specific products attached to THIS slot, not a
+          // name-guess or a kind-guess. A cage-rental purchase's product_id
+          // is never in requiredProductIds (SLOT_PRODUCT_KINDS only allows
+          // attaching 'package'/'lesson' products to a slot in the first
+          // place), so it simply never matches here — no special-case needed.
+          const matching = purchases.filter(p => p.product_id && requiredProductIds.includes(p.product_id));
+          const valid = matching.find(p => hasSessionsLeft(p) && notExpired(p));
+          let reason = null;
+          if (!valid) {
+            if (matching.length === 0) reason = 'none';
+            else if (matching.some(p => !notExpired(p))) reason = 'expired';
+            else reason = 'no_sessions';
+          }
+          setPkgCheck({ checking: false, pkg: valid || null, reason });
+        } else {
+          // Not gated — this slot has no product attached. Preserve the
+          // original, pre-#305 behaviour exactly: informational only, never
+          // blocks the reservation.
+          const valid = purchases.find(p => hasSessionsLeft(p) && notExpired(p));
+          setPkgCheck({ checking: false, pkg: valid || null, reason: null });
+        }
       } catch {
-        setPkgCheck({ checking: false, pkg: null });
+        setPkgCheck({ checking: false, pkg: null, reason: null });
       }
     })();
-  }, []);
+  }, [requiredProductIdsKey, slot?.is_subscription_session]);
 
   useEffect(() => {
-    const ids = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
+    const ids = requiredProductIds;
     if (!slot?.is_subscription_session || ids.length === 0) { setSubNames([]); return; }
     (async () => {
       const { data } = await supabase.from('store_products').select('name').in('id', ids);
       setSubNames((data || []).map(d => d.name).filter(Boolean));
     })();
   }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
+
+  // #305: log a blocked attempt once per open modal so staff can see it
+  // (Cordell's Q8 — "an athlete without a package should be flagged").
+  // In-app only — never touches #281's parked email send path. Best-effort:
+  // failures (including the table not existing until its migration runs)
+  // are swallowed, same as syncReservationSessionUsage already does for
+  // package errors — this is a side note for staff, never something that
+  // should interrupt or alarm the player trying to book.
+  const flaggedRef = useRef(false);
+  useEffect(() => {
+    if (pkgCheck.checking || flaggedRef.current) return;
+    if (gated && !pkgCheck.pkg) {
+      flaggedRef.current = true;
+      (async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          await supabase.from('booking_package_flags').insert({
+            player_id: user.id,
+            slot_id: slot.id,
+            slot_date: slot.slot_date,
+            coach_id: slot.coach_id || coach?.id || null,
+          });
+        } catch (e) {
+          console.error('booking_package_flags insert failed (migration pending?):', e);
+        }
+      })();
+    }
+  }, [pkgCheck.checking, pkgCheck.pkg, gated, slot.id, slot.slot_date, slot.coach_id, coach?.id]);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -8069,6 +8135,10 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
 
   const handleReserve = async () => {
     if (bookingClosed) { alert('Booking is closed — reservations close 12 hours before the session starts.'); return; }
+    // #305: server-side belt for the button's own disabled state below —
+    // this is a client-side gate, same tier as the cutoff check just above
+    // it (no RLS/DB-level enforcement exists for either one today).
+    if (gated && !pkgCheck.pkg) { alert('You need an active package for this session before you can reserve it.'); return; }
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -8121,6 +8191,20 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
                   <span className="font-medium">Payment confirmed</span> — {pkgCheck.pkg.remaining_qty === null ? 'Monthly package' : `${pkgCheck.pkg.remaining_qty} session${pkgCheck.pkg.remaining_qty !== 1 ? 's' : ''} remaining`} on <span className="font-medium">{pkgCheck.pkg.product_name_snapshot}</span>.
                 </span>
               </div>
+            ) : gated ? (
+              // #305: this session has a specific package attached — no
+              // match means no booking, not a warning. Explains what's
+              // needed rather than just disabling the button.
+              <div className="flex items-start space-x-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-800">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" />
+                <span>
+                  {pkgCheck.reason === 'expired'
+                    ? <>Your {subNames.length ? <span className="font-medium">{subNames.join(', ')}</span> : 'package'} has expired. Renew it before reserving this session.</>
+                    : pkgCheck.reason === 'no_sessions'
+                    ? <>Your {subNames.length ? <span className="font-medium">{subNames.join(', ')}</span> : 'package'} has no sessions left. Purchase more before reserving this session.</>
+                    : <>This session requires {subNames.length ? <span className="font-medium">{subNames.join(' or ')}</span> : 'a specific package'}. You don't currently have one — reach out to arrange payment before reserving.</>}
+                </span>
+              </div>
             ) : (
               <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
@@ -8138,7 +8222,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           )}
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleReserve} disabled={loading || bookingClosed} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
+            <button onClick={handleReserve} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
           </div>
         </div>
       </div>
