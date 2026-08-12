@@ -217,6 +217,17 @@ export default function Schedule({ userId, userRole }) {
   const [showAddPublicBooking, setShowAddPublicBooking] = useState(null);
   const [coaches, setCoaches] = useState([]);
   const [selectedCoach, setSelectedCoach] = useState(null);
+  // #309/#314: clicking a training-slot entry in the Lanes view's Staff
+  // Schedule band sets selectedCoach (same as picking a coach from the
+  // sidebar drawer) so every existing selectedCoach-driven piece of
+  // CoachSlotsWeekView — add/edit slot, drag-to-move, confirm/decline,
+  // attendance — keeps working completely unchanged. coachModalOpen only
+  // controls WHERE it renders: as a modal over Lanes instead of replacing
+  // the main panel, so the grid the user clicked from stays visible.
+  const [coachModalOpen, setCoachModalOpen] = useState(false);
+  // #309: a Work Portal shift clicked in the same band — a lightweight,
+  // read-only detail popup, not tied to selectedCoach at all.
+  const [shiftDetailEvent, setShiftDetailEvent] = useState(null);
   const [coachSlots, setCoachSlots] = useState([]);
   const [slotReservations, setSlotReservations] = useState([]);
   const [publicSlotBookings, setPublicSlotBookings] = useState([]);
@@ -773,6 +784,74 @@ export default function Schedule({ userId, userRole }) {
     }
 
     fetchCoachSlots(selectedCoach.id);
+  };
+
+  // #309/#314: pulled these out of inline closures at the CoachSlotsWeekView
+  // call site so the exact same handlers can be reused when that component
+  // is opened as a modal from the Lanes view's Staff Schedule band
+  // (coachModalOpen below) — one implementation, two render call sites,
+  // both driven by the same selectedCoach the rest of this file already
+  // uses. No behaviour change from what these bodies did inline.
+  const handleConfirmReservation = async (reservationId) => {
+    const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
+    if (error) { alert('Failed to confirm reservation: ' + formatUserError(error)); return; }
+    fetchCoachSlots(selectedCoach.id);
+  };
+  const handleDeclineReservation = async (reservationId) => {
+    const { error } = await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId);
+    if (error) { alert('Failed to decline reservation: ' + formatUserError(error)); return; }
+    fetchCoachSlots(selectedCoach.id);
+  };
+  const handleMarkAttendance = async (reservationId, value) => {
+    // Toggle off if the same status is clicked again.
+    const res = slotReservations.find(r => r.id === reservationId);
+    const next = res?.attendance === value ? null : value;
+    const { error } = await supabase.from('slot_reservations').update({
+      attendance: next,
+      attendance_marked_at: next ? new Date().toISOString() : null,
+      attendance_marked_by: next ? userId : null,
+    }).eq('id', reservationId);
+    if (error) { alert('Failed to mark attendance: ' + formatUserError(error)); return; }
+    // Present/Late consume a package session; anything else releases it.
+    await syncReservationSessionUsage(res, next === 'present' || next === 'late', userId);
+    fetchCoachSlots(selectedCoach.id);
+  };
+  const handleSlotDrop = async (slotId, newDate, grabbedDate) => {
+    // A repeating slot's expanded entries all share the master's id —
+    // grabbedDate identifies WHICH occurrence was dragged (#292).
+    const slot = coachSlots.find((s) => String(s.id) === String(slotId) && (!grabbedDate || s.slot_date === grabbedDate))
+      || coachSlots.find((s) => String(s.id) === String(slotId));
+    if (!slot || slot.slot_date === newDate) return;
+
+    // An already-moved occurrence dragged again (#292): update the same
+    // child row in place.
+    if (slot.recurrence_parent_id) {
+      await moveSlotOccurrence(slot.recurrence_parent_id, slot.id, slot, slot.slot_date, newDate, slot.id);
+      return;
+    }
+
+    // Plain non-recurring slot: today's behaviour, unchanged.
+    if (!slot.repeat_weekly) {
+      const { error } = await supabase.from('training_slots').update({ slot_date: newDate }).eq('id', slotId);
+      if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
+      fetchCoachSlots(selectedCoach.id);
+      return;
+    }
+
+    // A later occurrence of a repeating series: move just this date — no
+    // prompt, that's the whole ask (#292). Keyed on _occurrence_index, NOT
+    // _is_virtual: the first-visible-per-week bar is force-marked
+    // non-virtual for drag (see fetchCoachSlots), so _is_virtual can't tell
+    // "the master's own date" from "this week's copy".
+    if (slot._occurrence_index > 0) {
+      await moveSlotOccurrence(slot.id, slot.id, slot, slot.slot_date, newDate);
+      return;
+    }
+
+    // The master's own first date: ambiguous, so ask — the same modal #279
+    // taught. allowFuture stays false: splitting a series strands
+    // slot_reservations (same call as #287).
+    setPendingSlotMove({ slot, newDate });
   };
 
   const fetchCoaches = async () => {
@@ -1656,7 +1735,7 @@ export default function Schedule({ userId, userRole }) {
                 )}
               </div>
               <div className={viewMode === 'lanes' ? 'p-3' : 'p-6'}>
-                {selectedCoach ? (
+                {selectedCoach && !coachModalOpen ? (
                   <CoachSlotsWeekView
                     selectedDate={selectedDate}
                     slots={coachSlots}
@@ -1671,71 +1750,11 @@ export default function Schedule({ userId, userRole }) {
                     selectedIds={selectedIds}
                     onToggleSelect={toggleSelect}
                     onEventContextMenu={onEventContextMenu('slot')}
-                    onSlotDrop={async (slotId, newDate, grabbedDate) => {
-                      // A repeating slot's expanded entries all share the
-                      // master's id — grabbedDate identifies WHICH occurrence
-                      // was dragged (#292).
-                      const slot = coachSlots.find((s) => String(s.id) === String(slotId) && (!grabbedDate || s.slot_date === grabbedDate))
-                        || coachSlots.find((s) => String(s.id) === String(slotId));
-                      if (!slot || slot.slot_date === newDate) return;
-
-                      // An already-moved occurrence dragged again (#292):
-                      // update the same child row in place.
-                      if (slot.recurrence_parent_id) {
-                        await moveSlotOccurrence(slot.recurrence_parent_id, slot.id, slot, slot.slot_date, newDate, slot.id);
-                        return;
-                      }
-
-                      // Plain non-recurring slot: today's behaviour, unchanged.
-                      if (!slot.repeat_weekly) {
-                        const { error } = await supabase.from('training_slots').update({ slot_date: newDate }).eq('id', slotId);
-                        if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
-                        fetchCoachSlots(selectedCoach.id);
-                        return;
-                      }
-
-                      // A later occurrence of a repeating series: move just
-                      // this date — no prompt, that's the whole ask (#292).
-                      // Keyed on _occurrence_index, NOT _is_virtual: the
-                      // first-visible-per-week bar is force-marked non-virtual
-                      // for drag (see fetchCoachSlots), so _is_virtual can't
-                      // tell "the master's own date" from "this week's copy".
-                      if (slot._occurrence_index > 0) {
-                        await moveSlotOccurrence(slot.id, slot.id, slot, slot.slot_date, newDate);
-                        return;
-                      }
-
-                      // The master's own first date: ambiguous, so ask — the
-                      // same modal #279 taught. allowFuture stays false:
-                      // splitting a series strands slot_reservations (same
-                      // call as #287).
-                      setPendingSlotMove({ slot, newDate });
-                    }}
+                    onSlotDrop={handleSlotDrop}
                     onReserve={(slot) => setShowReserveSlot(slot)}
-                    onConfirm={async (reservationId) => {
-                      const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
-                      if (error) { alert('Failed to confirm reservation: ' + formatUserError(error)); return; }
-                      fetchCoachSlots(selectedCoach.id);
-                    }}
-                    onDecline={async (reservationId) => {
-                      const { error } = await supabase.from('slot_reservations').update({ status: 'declined' }).eq('id', reservationId);
-                      if (error) { alert('Failed to decline reservation: ' + formatUserError(error)); return; }
-                      fetchCoachSlots(selectedCoach.id);
-                    }}
-                    onMarkAttendance={async (reservationId, value) => {
-                      // Toggle off if the same status is clicked again.
-                      const res = slotReservations.find(r => r.id === reservationId);
-                      const next = res?.attendance === value ? null : value;
-                      const { error } = await supabase.from('slot_reservations').update({
-                        attendance: next,
-                        attendance_marked_at: next ? new Date().toISOString() : null,
-                        attendance_marked_by: next ? userId : null,
-                      }).eq('id', reservationId);
-                      if (error) { alert('Failed to mark attendance: ' + formatUserError(error)); return; }
-                      // Present/Late consume a package session; anything else releases it.
-                      await syncReservationSessionUsage(res, next === 'present' || next === 'late', userId);
-                      fetchCoachSlots(selectedCoach.id);
-                    }}
+                    onConfirm={handleConfirmReservation}
+                    onDecline={handleDeclineReservation}
+                    onMarkAttendance={handleMarkAttendance}
                   />
                 ) : viewMode === 'lanes' ? (
                   <LaneView
@@ -1792,6 +1811,12 @@ export default function Schedule({ userId, userRole }) {
                     eventPublicBookings={eventPublicBookings}
                     coaches={coaches}
                     onToggleCoachSchedule={toggleCoachSchedule}
+                    onSlotEntryClick={(coach) => {
+                      fetchCoachSlots(coach.id);
+                      setSelectedCoach(coach);
+                      setCoachModalOpen(true);
+                    }}
+                    onShiftEntryClick={(ev) => setShiftDetailEvent(ev)}
                   />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
@@ -2237,6 +2262,99 @@ export default function Schedule({ userId, userRole }) {
           }}
           onClose={() => setPendingSlotMove(null)}
         />
+      )}
+      {/* #309/#314: CoachSlotsWeekView reused as a modal over the Lanes view
+          when a slot entry is clicked in the Staff Schedule band — same
+          component, same selectedCoach-driven state and handlers as the main
+          panel render above, just a different render location. z-40 (below
+          the standard z-50 used by CreateSlotPanel/ReserveSlotModal/
+          RecurrenceDecisionModal below) so those still open on top of this
+          when triggered from inside it, exactly as they do from the main
+          panel. */}
+      {selectedCoach && coachModalOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-40 p-4 overflow-y-auto"
+          onClick={() => { setCoachModalOpen(false); setSelectedCoach(null); }}
+        >
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-6xl my-8" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">{selectedCoach.full_name}</h3>
+              <button onClick={() => { setCoachModalOpen(false); setSelectedCoach(null); }} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4">
+              <CoachSlotsWeekView
+                selectedDate={selectedDate}
+                slots={coachSlots}
+                reservations={slotReservations}
+                publicBookings={publicSlotBookings}
+                coach={selectedCoach}
+                userId={userId}
+                userRole={userRole}
+                canManage={userRole === 'coach' || userRole === 'admin'}
+                onAddSlot={(dateStr) => setShowCreateSlot(dateStr)}
+                selecting={selecting}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
+                onEventContextMenu={onEventContextMenu('slot')}
+                onSlotDrop={handleSlotDrop}
+                onReserve={(slot) => setShowReserveSlot(slot)}
+                onConfirm={handleConfirmReservation}
+                onDecline={handleDeclineReservation}
+                onMarkAttendance={handleMarkAttendance}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+      {/* #309: read-only detail popup for a Work Portal shift clicked in the
+          same band. Deliberately NOT WorkSchedule.js's EventDetailModal —
+          that component also drives shift editing/deletion and recurrence
+          changes, which pulls in staff_schedule_assignments plumbing this
+          file doesn't have loaded; a lightweight, view-only popup covers what
+          #309 actually asked for without that cross-file coupling. */}
+      {shiftDetailEvent && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShiftDetailEvent(null)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">{shiftDetailEvent.title}</h3>
+              <button onClick={() => setShiftDetailEvent(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="flex items-center space-x-2 text-sm text-gray-700">
+                <CalendarIcon size={16} className="text-gray-400" />
+                <span>
+                  {new Date(shiftDetailEvent.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              </div>
+              <div className="flex items-center space-x-2 text-sm text-gray-700">
+                <Clock size={16} className="text-gray-400" />
+                <span>
+                  {new Date(shiftDetailEvent.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  {shiftDetailEvent.end_at ? ` – ${new Date(shiftDetailEvent.end_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
+                </span>
+              </div>
+              {shiftDetailEvent.location && (
+                <div className="flex items-center space-x-2 text-sm text-gray-700">
+                  <MapPin size={16} className="text-gray-400" />
+                  <span>{shiftDetailEvent.location}</span>
+                </div>
+              )}
+              {shiftDetailEvent.recurrence_parent_id && (
+                <div className="flex items-center space-x-2 text-sm text-gray-500">
+                  <Repeat size={14} className="text-gray-400" />
+                  <span>Recurring shift</span>
+                </div>
+              )}
+              {shiftDetailEvent.description && (
+                <div className="text-sm text-gray-700 whitespace-pre-wrap">{shiftDetailEvent.description}</div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
       {/* Training Slot Panels */}
       {showCreateSlot && selectedCoach && (
@@ -2764,7 +2882,7 @@ function shiftStartIdx(pointerSlotIdx, grabOffset, span, slotsLength) {
   return startIdx;
 }
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule, onSlotEntryClick, onShiftEntryClick }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
@@ -3291,7 +3409,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), kind: 'shift',
                   title: ev.title,
                   timeLabel: `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${ev.end_at ? `–${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}`,
-                  info: null, onClick: null,
+                  // #309: was always null — shift blocks were hover-tooltip
+                  // only, unlike facility events in this same band.
+                  info: null, onClick: onShiftEntryClick ? () => onShiftEntryClick(ev) : null,
                 };
               });
 
@@ -3305,7 +3425,11 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   colorClass: getTrainingSlotColorClasses(s.title, 'lane'),
                   timeLabel: `${formatTimeDisplay(s.start_time)}–${endLabel(s.start_time, s.duration_minutes || 60)}`,
                   info: clients > 0 ? `${clients}/${s.capacity} booked` : (s.is_public ? 'Open' : 'Unbooked'),
-                  onClick: null,
+                  // #309/#314: was always null — hover tooltip only, no route
+                  // to the roster/attendance tools that already exist for
+                  // this exact session in CoachSlotsWeekView. Opens that
+                  // same component as a modal (see coachModalOpen).
+                  onClick: onSlotEntryClick ? () => onSlotEntryClick(coach) : null,
                 };
               });
 
