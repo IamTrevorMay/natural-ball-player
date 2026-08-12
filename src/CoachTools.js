@@ -2399,10 +2399,84 @@ function CreateWorkoutTemplateModal({ onClose, onSuccess, editingWorkout }) {
               <input type="text" placeholder="Workout Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
             </div>
 
-            {/* Exercises Table */}
+            {/* Exercises — #321 follow-up: this table has no responsive
+                handling at all below sm (640px), so on a portrait phone the
+                browser compresses every <input> in the Sets/Reps/Rest/Load
+                columns down to a sliver, clipping their values to a single
+                visible character. Below sm, stack each exercise as a
+                labelled card instead of shrinking a 9-column table — a
+                4-column numeric grid plus a URL field has no business being
+                a table at 390px. Desktop (sm+) keeps the exact table it had. */}
             <div>
               <label className="block text-sm font-bold text-gray-900 mb-2">Exercises</label>
-              <table className="w-full text-sm">
+
+              {/* Portrait phone: stacked cards */}
+              <div className="sm:hidden space-y-3">
+                {activeTab.exercises.map((ex, i) => (
+                  <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-500 pt-2">#{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <ExerciseNameInput
+                          value={ex.name}
+                          onChange={(name) => updateExercise(i, 'name', name)}
+                          onPick={({ name, video_url }) => updateExerciseFields(i, ex.link ? { name } : { name, link: video_url })}
+                          hasLink={!!ex.link}
+                          videos={exerciseVideos}
+                          loading={exerciseVideosLoading}
+                        />
+                      </div>
+                      <button type="button" onClick={() => removeExercise(i)} className="text-gray-400 hover:text-red-600 transition flex-shrink-0 pt-2"><Trash2 size={14} /></button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Sets</label>
+                        <input type="text" placeholder="1" value={ex.sets} onChange={(e) => updateExercise(i, 'sets', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Reps</label>
+                        <input type="text" placeholder="Reps" value={ex.reps} onChange={(e) => updateExercise(i, 'reps', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Rest</label>
+                        <input type="text" placeholder="Rest" value={ex.rest || ''} onChange={(e) => updateExercise(i, 'rest', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Load</label>
+                        <input type="text" placeholder="Load" value={ex.load || ''} onChange={(e) => updateExercise(i, 'load', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Link</label>
+                      <div className="flex space-x-1">
+                        <input type="text" placeholder="Link" value={ex.link} onChange={(e) => updateExercise(i, 'link', e.target.value)} className="flex-1 min-w-0 px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                        <select value={ex.category || 'hitting'} onChange={(e) => updateExercise(i, 'category', e.target.value)} className="px-1 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white flex-shrink-0">
+                          <option value="hitting">Hitting</option>
+                          <option value="pitching">Pitching</option>
+                          <option value="fielding">Fielding</option>
+                          <option value="conditioning">Conditioning</option>
+                          <option value="recovery">Recovery</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Super Set</label>
+                      <select value={ex.superSet || ''} onChange={(e) => updateExercise(i, 'superSet', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white">
+                        {SUPER_SET_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt || '—'}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+                <button type="button" onClick={addExercise} className="w-full flex items-center justify-center gap-1.5 py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:text-green-600 hover:border-green-400 transition">
+                  <Plus size={16} /> Add exercise
+                </button>
+              </div>
+
+              {/* Tablet/desktop: original table, unchanged */}
+              <table className="hidden sm:table w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs font-semibold text-gray-700 border-b border-gray-300">
                     <th className="pb-2 w-8"></th>
