@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog, LayoutGrid } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -6400,6 +6400,12 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const [playersRecurrencePrompt, setPlayersRecurrencePrompt] = useState(false);
   const [showCreatePlayer, setShowCreatePlayer] = useState(false);
 
+  // #313: remove a single lane from a multi-lane event, leaving the rest of
+  // the event intact. laneRecurrencePrompt holds the lane code pending a
+  // one-vs-series choice (null = no prompt open).
+  const [laneDeleting, setLaneDeleting] = useState(false);
+  const [laneRecurrencePrompt, setLaneRecurrencePrompt] = useState(null);
+
   useEffect(() => {
     (async () => {
       const [{ data: teamData, error: teamError }, { data: athleteData, error: athleteError }] = await Promise.all([
@@ -6654,6 +6660,95 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const handlePlayersSave = () => {
     if (event.is_recurring) { setPlayersRecurrencePrompt(true); return; }
     applyPlayersAssignment('all');
+  };
+
+  // #313: remove one lane from event.lanes, leaving the rest of the event
+  // (and any other assigned lanes) intact. This is an edit to the `lanes`
+  // field, not a deletion, so it follows #287's one-vs-whole-series
+  // exception pattern above (team/coach/athlete) rather than #279's
+  // delete-the-occurrence path. "This and future" is deliberately absent —
+  // same reasoning as team/coach/athlete above: splitting the series into
+  // two masters is a separate, bigger piece of work than removing a lane.
+  const applyLaneDelete = async (choice, lane) => {
+    setLaneRecurrencePrompt(null);
+    setLaneDeleting(true);
+    try {
+      if (choice === 'one') {
+        const { data: existingException, error: findError } = await supabase
+          .from('facility_events')
+          .select('id, lanes')
+          .eq('recurrence_parent_id', eventMasterId)
+          .eq('original_date', occurrenceDate)
+          .maybeSingle();
+        if (findError) throw findError;
+        if (existingException) {
+          const { error } = await supabase.from('facility_events').update({ lanes: (existingException.lanes || []).filter(l => l !== lane) }).eq('id', existingException.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('facility_events').insert({
+            recurrence_parent_id: eventMasterId,
+            original_date: occurrenceDate,
+            event_date: occurrenceDate,
+            is_exception: false,
+            is_recurring: false,
+            title: event.title,
+            description: event.description,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            location: event.location,
+            color: event.color,
+            lanes: (event.lanes || []).filter(l => l !== lane),
+            athlete_id: event.athlete_id,
+            // #310 merge: this insert predates athlete_ids and was missing
+            // it — without this, deleting a lane from one occurrence of a
+            // recurring event would create that occurrence's exception row
+            // with athlete_ids defaulted back to empty, silently dropping
+            // its players. Pass through unchanged, same as every other
+            // field here.
+            athlete_ids: event.athlete_ids || [],
+            coach_id: event.coach_id,
+            coach_ids: event.coach_ids || null,
+            team_ids: event.team_ids || [],
+          });
+          if (error) throw error;
+        }
+      } else {
+        // 'all' — and the plain non-recurring case. Unlike team/coach/athlete
+        // above, which blindly overwrite every child with the same new
+        // value, this FILTERS each row's own lanes rather than replacing
+        // them: a child occurrence independently moved to different lanes
+        // (#289) keeps its own lanes minus this one, instead of being reset
+        // back to whatever the master's set is.
+        const { error } = await supabase.from('facility_events').update({ lanes: (event.lanes || []).filter(l => l !== lane) }).eq('id', eventMasterId);
+        if (error) throw error;
+        const { data: children, error: childFetchError } = await supabase.from('facility_events').select('id, lanes').eq('recurrence_parent_id', eventMasterId);
+        if (childFetchError) throw childFetchError;
+        for (const child of children || []) {
+          if ((child.lanes || []).includes(lane)) {
+            const { error: childError } = await supabase.from('facility_events').update({ lanes: (child.lanes || []).filter(l => l !== lane) }).eq('id', child.id);
+            if (childError) throw childError;
+          }
+        }
+      }
+      onUpdate();
+    } catch (err) {
+      alert('Error removing lane: ' + formatUserError(err));
+    } finally {
+      setLaneDeleting(false);
+    }
+  };
+
+  const handleLaneDelete = (lane) => {
+    if ((event.lanes || []).length <= 1) {
+      // Least-surprising choice (#313): refuse rather than silently deleting
+      // the whole event out from under someone who only meant to remove one
+      // lane. The explicit Delete action (context menu) already covers
+      // removing the event entirely.
+      alert('This is the last lane on this event. To remove the event entirely, use Delete instead.');
+      return;
+    }
+    if (event.is_recurring) { setLaneRecurrencePrompt(lane); return; }
+    applyLaneDelete('all', lane);
   };
 
   // Sign-ups lock 12h before the event starts (mirrors the #233 cancel cutoff).
@@ -7065,6 +7160,34 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                 );
               })()}
 
+              {/* #313: per-lane removal, staff only — leaves the rest of the
+                  event (and its other lanes) intact. Only shown for events
+                  actually occupying more than one lane; nothing to remove
+                  from a single-lane event via this control. */}
+              {isStaff && (event.lanes || []).length > 1 && (
+                <div className="text-sm">
+                  <div className="flex items-center space-x-1.5 mb-1.5">
+                    <LayoutGrid size={14} className="text-gray-400" />
+                    <span className="text-gray-700">Lanes:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {event.lanes.map(lane => (
+                      <span key={lane} className="inline-flex items-center gap-1 pl-2 pr-1 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                        {lane}
+                        <button
+                          onClick={() => handleLaneDelete(lane)}
+                          disabled={laneDeleting}
+                          title={`Remove ${lane} from this event`}
+                          className="text-gray-400 hover:text-red-600 disabled:opacity-50 rounded-full p-0.5"
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">
                   {signupsLoading ? (
@@ -7262,6 +7385,17 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
             setAthletes(prev => [...prev, { id: newId, full_name: newName }].sort((a, b) => a.full_name.localeCompare(b.full_name)));
             setPlayersDraft(prev => [...prev, newId]);
           }}
+        />
+      )}
+      {laneRecurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="Remove a lane on a recurring event"
+          message={`Remove ${laneRecurrencePrompt} from just this occurrence, or from the whole series?`}
+          actionLabel="Apply to"
+          allowOne={true}
+          allowFuture={false}
+          onPick={(choice) => applyLaneDelete(choice, laneRecurrencePrompt)}
+          onClose={() => setLaneRecurrencePrompt(null)}
         />
       )}
     </div>

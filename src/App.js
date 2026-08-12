@@ -22,7 +22,7 @@ import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import PublicBookingPage from './PublicBookingPage';
 import PublicPortal from './PublicPortal';
-import NotificationBell from './NotificationBell';
+import NotificationBell, { deletePendingPayment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
@@ -990,12 +990,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     else { setWorkPortalView(view); setCurrentPortal('work'); }
   };
 
-  const handleDeletePayment = async (purchaseId, productName) => {
-    if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.`)) return;
-    const { error } = await supabase.from('store_purchases').delete().eq('id', purchaseId);
-    if (error) { alert('Error deleting payment: ' + error.message); return; }
-    mainCounts.refresh();
-  };
+  // #316: shared with WorkPortal.js — see deletePendingPayment in NotificationBell.js
+  const handleDeletePayment = (purchaseId, productName) => deletePendingPayment(purchaseId, productName, mainCounts.refresh);
 
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
