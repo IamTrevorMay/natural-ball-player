@@ -22,6 +22,14 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// #307: deleting a purchase that was actually paid for is a refund, not a
+// delete — it destroys the record that money was received, and takes the
+// customer's session-usage history with it (store_session_usage.purchase_id
+// is ON DELETE CASCADE). Refunds belong in Square. Delete is only for
+// purchases that never became real money: still pending, or that failed/
+// were canceled before payment landed.
+const DELETABLE_STATUSES = new Set(['pending', 'canceled', 'failed']);
+
 function timeLeftLabel(expiresAt) {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - Date.now();
@@ -237,7 +245,7 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
                         </button>
                         <button onClick={() => editRemaining(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Edit remaining</button>
                         <button onClick={() => editExpiry(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Set expiration</button>
-                        {canDelete && (
+                        {canDelete && DELETABLE_STATUSES.has(p.status) && (
                           <button onClick={() => deletePackage(p)} disabled={busy} className="flex items-center gap-1 border border-red-300 text-red-600 px-2.5 py-1 rounded text-xs font-medium hover:bg-red-50 transition disabled:opacity-50">
                             <Trash2 size={12} /> Delete
                           </button>
