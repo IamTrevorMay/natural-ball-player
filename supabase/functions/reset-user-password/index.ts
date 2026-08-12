@@ -7,6 +7,13 @@
 // admin-only) than to creating a brand-new, empty account. Widened to admin
 // + coach on 2026-08-12 per the business owner's explicit reply to #312:
 // "I would like admins and coaches to be able to do this."
+//
+// A coach caller is additionally blocked from targeting an admin or coach
+// account (checked below, against the TARGET's row, not just the caller's).
+// Without that, "coach can reset a password" plus "no check on who the
+// password belongs to" is a straight privilege-escalation path: a coach
+// resets an admin's password and signs in as them. Admin callers are
+// unrestricted, unchanged from the original admin-only design.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, preflight } from "../_shared/cors.ts";
 
@@ -62,6 +69,30 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: "Missing user_id, or new_password is shorter than 8 characters" }),
         { status: 400, headers: { ...cors, "Content-Type": "application/json" } }
       );
+    }
+
+    // A coach may only reset a player's password — never another staff
+    // member's. Checked against the TARGET's row (not the caller's) so a
+    // coach can't escalate by pointing this at an admin or another coach.
+    if (caller.role === "coach") {
+      const { data: target, error: targetError } = await serviceClient
+        .from("users")
+        .select("role")
+        .eq("id", user_id)
+        .single();
+
+      if (targetError || !target) {
+        return new Response(
+          JSON.stringify({ error: "Target user not found" }),
+          { status: 404, headers: { ...cors, "Content-Type": "application/json" } }
+        );
+      }
+      if (target.role === "admin" || target.role === "coach") {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized: coaches may only reset player passwords" }),
+          { status: 403, headers: { ...cors, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     const { error: updateError } = await serviceClient.auth.admin.updateUserById(user_id, {
