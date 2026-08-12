@@ -44,8 +44,8 @@ async function updateAuthUserEmail(userId, newEmail) {
   return result;
 }
 
-// #312: admin-only manual password reset — see reset-user-password's own
-// comment for why this is narrower than create-user's admin+coach gate.
+// #312: manual password reset, admin + coach — see reset-user-password's own
+// comment for the 2026-08-12 decision that widened this from admin-only.
 async function resetUserPassword(userId, newPassword) {
   const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch(
@@ -1192,10 +1192,15 @@ function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) 
   const [resetSent, setResetSent] = useState(false);
   const [resetSending, setResetSending] = useState(false);
   // #312: manual password set, for when the reset-link email never reaches
-  // the player. Admin-only — see EditUserModal's render for the role check.
+  // the player. Admin + coach — see EditUserModal's render for the role check.
   const [manualResetOpen, setManualResetOpen] = useState(false);
   const [manualPassword, setManualPassword] = useState('');
   const [manualResetSaving, setManualResetSaving] = useState(false);
+  // A coach may only manually reset a player's password, never another
+  // admin's or coach's — mirrors the server-side check in
+  // reset-user-password (the actual enforcement point). Without this, the
+  // button would just 403 for a coach editing another staff member.
+  const canManualReset = callerRole === 'admin' || (callerRole === 'coach' && user.role !== 'admin' && user.role !== 'coach');
 
   const handleManualPasswordReset = async () => {
     if (manualPassword.length < 8) { alert('Password must be at least 8 characters.'); return; }
@@ -1571,10 +1576,14 @@ function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) 
             </div>
           )}
 
-          {/* #312: manual password reset — admin only. Deliberately separate
-              from the "Reset Password" email-link flow above; this is for
-              when that email never reaches the player. */}
-          {callerRole === 'admin' && manualResetOpen && (
+          {/* #312: manual password reset — admin + coach, per the business
+              owner's explicit 2026-08-12 reply ("I would like admins and
+              coaches to be able to do this"), widened from the original
+              admin-only. Deliberately separate from the "Reset Password"
+              email-link flow above; this is for when that email never
+              reaches the player. A coach only sees this for player accounts
+              — see canManualReset above. */}
+          {canManualReset && manualResetOpen && (
             <div className="border border-gray-200 rounded-lg p-4 space-y-2">
               <label className="block text-sm font-medium text-gray-700">New password for {user.full_name}</label>
               <input
@@ -1644,7 +1653,7 @@ function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) 
                 <Mail size={14} />
                 <span>{resetSent ? 'Reset email sent' : resetSending ? 'Sending...' : 'Reset Password'}</span>
               </button>
-              {callerRole === 'admin' && (
+              {canManualReset && (
                 <button
                   onClick={() => setManualResetOpen(v => !v)}
                   className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center space-x-1"

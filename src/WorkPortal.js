@@ -12,7 +12,7 @@ import WorkAdminAnnouncements from './WorkAdminAnnouncements';
 import WorkDocs from './WorkDocs';
 import WorkAdminDocs from './WorkAdminDocs';
 import WorkMyPay from './WorkMyPay';
-import WorkAdminPayroll from './WorkAdminPayroll';
+import WorkAdminPayroll, { PayrollPinGate } from './WorkAdminPayroll';
 import WorkMyHours from './WorkMyHours';
 import WorkAdminHours from './WorkAdminHours';
 import WorkTimeOff from './WorkTimeOff';
@@ -37,6 +37,7 @@ const PAGE_META = {
   'work-docs':                  { title: 'Documents',              description: 'Employee handbook, SOPs, and other staff resources.' },
   'work-directory':             { title: 'Staff Directory',        description: 'Browse the staff roster.' },
   'work-roadmap':               { title: 'Roadmap',                description: 'Plan initiatives across the team.' },
+  'work-admin-finance-hub':     { title: 'Payroll',                description: 'Payroll, hours review, and time off review in one place.' },
   'work-admin-payroll':         { title: 'Payroll',                description: 'Upload paystubs and tax documents for staff.' },
   'work-admin-hours':           { title: 'Hours Review',           description: 'Approve or reject coach hour submissions.' },
   'work-admin-time-off':        { title: 'Time Off Review',        description: 'Approve or reject time off requests.' },
@@ -78,6 +79,41 @@ function WorkMyFinancesHub({ userId, userRole }) {
       {tab === 'invoices' && <WorkInvoices userId={userId} userRole={userRole} />}
       {tab === 'hours'    && <WorkMyHours userId={userId} />}
       {tab === 'time-off' && <WorkTimeOff userId={userId} />}
+    </div>
+  );
+}
+
+function WorkAdminFinanceHub({ userId }) {
+  const [pinVerified, setPinVerified] = useState(false);
+  const [tab, setTab] = useState('payroll');
+  const TABS = [
+    { id: 'payroll',   label: 'Payroll' },
+    { id: 'hours',     label: 'Hours Review' },
+    { id: 'time-off',  label: 'Time Off Review' },
+  ];
+  if (!pinVerified) {
+    return <PayrollPinGate onUnlock={() => setPinVerified(true)} />;
+  }
+  return (
+    <div>
+      <div className="flex border-b border-gray-200 mb-6">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
+              tab === t.id
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'payroll'  && <WorkAdminPayroll userId={userId} defaultUnlocked={true} />}
+      {tab === 'hours'    && <WorkAdminHours userId={userId} />}
+      {tab === 'time-off' && <WorkAdminTimeOff userId={userId} />}
     </div>
   );
 }
@@ -140,6 +176,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <WorkAdminAnnouncements userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-docs':
         return userRole === 'admin' ? <WorkAdminDocs userId={userId} /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-finance-hub':
+        return userRole === 'admin' ? <WorkAdminFinanceHub userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-payroll':
         return userRole === 'admin' ? <WorkAdminPayroll userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-hours':
@@ -230,11 +268,11 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
     </button>
   );
 
-  const SubNavItem = ({ id, icon: Icon, label }) => (
+  const SubNavItem = ({ id, icon: Icon, label, matchIds }) => (
     <button
       onClick={() => setCurrentView(id)}
       className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-        currentView === id ? 'bg-indigo-600' : 'hover:bg-gray-800'
+        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-600' : 'hover:bg-gray-800'
       }`}
     >
       <Icon size={16} />
@@ -296,9 +334,8 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
             </button>
             {adminExpanded && (
               <div className="space-y-1 mt-1">
-                <SubNavItem id="work-admin-payroll"        icon={Upload}      label="Payroll" />
-                <SubNavItem id="work-admin-hours"          icon={CheckSquare} label="Hours Review" />
-                <SubNavItem id="work-admin-time-off"       icon={CheckSquare} label="Time Off Review" />
+                <SubNavItem id="work-admin-finance-hub" icon={Upload} label="Payroll"
+                  matchIds={['work-admin-payroll', 'work-admin-hours', 'work-admin-time-off']} />
                 <SubNavItem id="work-admin-docs"           icon={FolderOpen}  label="Manage Documents" />
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
