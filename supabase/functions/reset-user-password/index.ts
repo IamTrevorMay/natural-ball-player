@@ -1,12 +1,12 @@
-// #312: let an admin set a player's password directly, for the case where
-// the email-link reset (resetPasswordForEmail) never reaches them.
+// #312: let an admin or coach set a player's password directly, for the case
+// where the email-link reset (resetPasswordForEmail) never reaches them.
 //
-// Admin-only, deliberately narrower than create-user (which also allows
-// coaches). Setting an EXISTING person's password hands over access to an
-// account that already has real history on it (messages, medical/PT
-// records, package purchases) — closer in risk to update-user-email (also
-// admin-only) than to creating a brand-new, empty account. Start narrow;
-// widen later if that turns out to be too restrictive in practice.
+// Originally admin-only — setting an EXISTING person's password hands over
+// access to an account with real history on it (messages, medical/PT
+// records, package purchases), closer in risk to update-user-email (still
+// admin-only) than to creating a brand-new, empty account. Widened to admin
+// + coach on 2026-08-12 per the business owner's explicit reply to #312:
+// "I would like admins and coaches to be able to do this."
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, preflight } from "../_shared/cors.ts";
 
@@ -40,8 +40,8 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Admin only — verified server-side against the caller's own row, never
-    // trusted from the client.
+    // Admin or coach — verified server-side against the caller's own row,
+    // never trusted from the client.
     const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
     const { data: caller, error: roleError } = await serviceClient
       .from("users")
@@ -49,9 +49,9 @@ Deno.serve(async (req) => {
       .eq("id", user.id)
       .single();
 
-    if (roleError || !caller || caller.role !== "admin") {
+    if (roleError || !caller || (caller.role !== "admin" && caller.role !== "coach")) {
       return new Response(
-        JSON.stringify({ error: "Unauthorized: admin only" }),
+        JSON.stringify({ error: "Unauthorized: admin or coach only" }),
         { status: 403, headers: { ...cors, "Content-Type": "application/json" } }
       );
     }
