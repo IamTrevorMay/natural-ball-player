@@ -20,7 +20,10 @@ const DOC_TYPE_COLOR = {
 };
 
 /* ─── PIN gate ─── */
-function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
+// #317: exported so WorkPortal.js's combined Payroll/Hours/Time-Off hub can
+// gate all three behind ONE PIN entry, instead of this page's own gate
+// prompting a second time once the hub is already unlocked.
+export function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
   const [storedPin, setStoredPin] = useState(null);   // null = loading, '' = no pin set
   const [pin, setPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -138,8 +141,12 @@ function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
   );
 }
 
-export default function WorkAdminPayroll({ userId }) {
-  const [pinVerified, setPinVerified] = useState(false);
+// #317: skipOwnGate is set when this page is rendered as a tab inside
+// WorkPortal's combined Payroll/Hours/Time-Off hub — that hub already
+// required the PIN before showing this tab at all, so this page's own gate
+// is redundant there. Standalone usage (skipOwnGate omitted) is unchanged.
+export default function WorkAdminPayroll({ userId, skipOwnGate = false }) {
+  const [pinVerified, setPinVerified] = useState(skipOwnGate);
   const [showChangePin, setShowChangePin] = useState(false);
   const [docs, setDocs] = useState([]);
   const [staff, setStaff] = useState([]);

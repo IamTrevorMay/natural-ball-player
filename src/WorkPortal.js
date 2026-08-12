@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
-  Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
+  Megaphone, FolderOpen, ChevronDown, ChevronRight,
   ShoppingBag, UserPlus, BarChart3
 } from 'lucide-react';
 import WorkHome from './WorkHome';
@@ -12,7 +12,7 @@ import WorkAdminAnnouncements from './WorkAdminAnnouncements';
 import WorkDocs from './WorkDocs';
 import WorkAdminDocs from './WorkAdminDocs';
 import WorkMyPay from './WorkMyPay';
-import WorkAdminPayroll from './WorkAdminPayroll';
+import WorkAdminPayroll, { PayrollPinGate } from './WorkAdminPayroll';
 import WorkMyHours from './WorkMyHours';
 import WorkAdminHours from './WorkAdminHours';
 import WorkTimeOff from './WorkTimeOff';
@@ -37,9 +37,13 @@ const PAGE_META = {
   'work-docs':                  { title: 'Documents',              description: 'Employee handbook, SOPs, and other staff resources.' },
   'work-directory':             { title: 'Staff Directory',        description: 'Browse the staff roster.' },
   'work-roadmap':               { title: 'Roadmap',                description: 'Plan initiatives across the team.' },
-  'work-admin-payroll':         { title: 'Payroll',                description: 'Upload paystubs and tax documents for staff.' },
-  'work-admin-hours':           { title: 'Hours Review',           description: 'Approve or reject coach hour submissions.' },
-  'work-admin-time-off':        { title: 'Time Off Review',        description: 'Approve or reject time off requests.' },
+  // #317: all three share one title/description — a single PIN-gated hub
+  // now covers all of them, and currentView can still land on any of the
+  // three keys (sidebar always uses 'work-admin-payroll', but notification-
+  // bell deep links still target 'work-admin-hours'/'work-admin-time-off').
+  'work-admin-payroll':         { title: 'Payroll & Hours',        description: 'Payroll documents, hour approvals, and time off — all behind one PIN.' },
+  'work-admin-hours':           { title: 'Payroll & Hours',        description: 'Payroll documents, hour approvals, and time off — all behind one PIN.' },
+  'work-admin-time-off':        { title: 'Payroll & Hours',        description: 'Payroll documents, hour approvals, and time off — all behind one PIN.' },
   'work-admin-docs':            { title: 'Manage Documents',       description: 'Upload and organize staff documents.' },
   'work-admin-announcements':   { title: 'Manage Announcements',   description: 'Post and manage announcements for staff.' },
   'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
@@ -78,6 +82,52 @@ function WorkMyFinancesHub({ userId, userRole }) {
       {tab === 'invoices' && <WorkInvoices userId={userId} userRole={userRole} />}
       {tab === 'hours'    && <WorkMyHours userId={userId} />}
       {tab === 'time-off' && <WorkTimeOff userId={userId} />}
+    </div>
+  );
+}
+
+// #317: Payroll, Hours Review, and Time Off Review used to be three separate
+// sidebar entries and three separate pages. Hours Review and Time Off
+// Review had NO pin gate at all. This combines all three under one entry
+// with internal tabs (same shape as WorkMyFinancesHub above), wrapped in
+// the existing PayrollPinGate — which deliberately means Hours Review and
+// Time Off Review are now PIN-gated for the first time. That's a real
+// behavior change, not a side effect to gloss over: an admin who used to
+// open Hours/Time Off review with no PIN now needs the payroll PIN for
+// those too, same as Payroll always required.
+function WorkAdminPayrollHub({ userId }) {
+  const [pinVerified, setPinVerified] = useState(false);
+  const [tab, setTab] = useState('payroll');
+  const TABS = [
+    { id: 'payroll',  label: 'Payroll' },
+    { id: 'hours',    label: 'Hours Review' },
+    { id: 'time-off', label: 'Time Off Review' },
+  ];
+
+  if (!pinVerified) {
+    return <PayrollPinGate onUnlock={() => setPinVerified(true)} />;
+  }
+
+  return (
+    <div>
+      <div className="flex border-b border-gray-200 mb-6">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
+              tab === t.id
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'payroll'  && <WorkAdminPayroll userId={userId} skipOwnGate />}
+      {tab === 'hours'    && <WorkAdminHours userId={userId} />}
+      {tab === 'time-off' && <WorkAdminTimeOff userId={userId} />}
     </div>
   );
 }
@@ -140,12 +190,13 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <WorkAdminAnnouncements userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-docs':
         return userRole === 'admin' ? <WorkAdminDocs userId={userId} /> : <ComingSoon viewKey={currentView} />;
+      // #317: one combined hub for all three — kept as three switch cases
+      // (not one) so notification-bell deep links that still target
+      // 'work-admin-hours'/'work-admin-time-off' directly keep working.
       case 'work-admin-payroll':
-        return userRole === 'admin' ? <WorkAdminPayroll userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-hours':
-        return userRole === 'admin' ? <WorkAdminHours userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-time-off':
-        return userRole === 'admin' ? <WorkAdminTimeOff userId={userId} /> : <ComingSoon viewKey={currentView} />;
+        return userRole === 'admin' ? <WorkAdminPayrollHub userId={userId} /> : <ComingSoon viewKey={currentView} />;
       case 'work-invoices':
         return <WorkMyFinancesHub userId={userId} userRole={userRole} />;
       case 'work-admin-invoices':
@@ -230,11 +281,11 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
     </button>
   );
 
-  const SubNavItem = ({ id, icon: Icon, label }) => (
+  const SubNavItem = ({ id, icon: Icon, label, matchIds }) => (
     <button
       onClick={() => setCurrentView(id)}
       className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-        currentView === id ? 'bg-indigo-600' : 'hover:bg-gray-800'
+        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-600' : 'hover:bg-gray-800'
       }`}
     >
       <Icon size={16} />
@@ -296,9 +347,13 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
             </button>
             {adminExpanded && (
               <div className="space-y-1 mt-1">
-                <SubNavItem id="work-admin-payroll"        icon={Upload}      label="Payroll" />
-                <SubNavItem id="work-admin-hours"          icon={CheckSquare} label="Hours Review" />
-                <SubNavItem id="work-admin-time-off"       icon={CheckSquare} label="Time Off Review" />
+                {/* #317: was three separate entries (Payroll, Hours Review,
+                    Time Off Review) — now one, with tabs inside. matchIds
+                    keeps this highlighted when a notification deep-link
+                    lands on 'work-admin-hours'/'work-admin-time-off'
+                    directly instead of via this button. */}
+                <SubNavItem id="work-admin-payroll" icon={DollarSign} label="Payroll & Hours"
+                  matchIds={['work-admin-hours', 'work-admin-time-off']} />
                 <SubNavItem id="work-admin-docs"           icon={FolderOpen}  label="Manage Documents" />
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
