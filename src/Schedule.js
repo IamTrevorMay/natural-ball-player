@@ -2716,16 +2716,37 @@ function replaceSingleLane(eventLanes, sourceLane, targetLane) {
   return LANES.filter((l) => deduped.has(l));
 }
 
-// 15-minute time slots from 8:00 AM to 10:00 PM. Module-level for the same
-// reason LANES is — shiftStartIdx below needs the same canonical slot count
-// the grid renders, without recomputing it or risking drift (#280).
-const START_HOUR = 8;
-const TIME_SLOTS = [];
-for (let h = START_HOUR; h <= 22; h++) {
-  for (let m = 0; m < 60; m += 15) {
-    TIME_SLOTS.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+// 15-minute time slots for the Lanes grid. DEFAULT_START_HOUR/DEFAULT_END_HOUR
+// (8:00 AM to 10:45 PM) are the fallback range LaneView uses whenever
+// nothing scheduled on the selected day falls outside it — the common case,
+// so most days render identically to before. buildTimeSlots is the shared
+// generator: TIME_SLOTS below is just that default range built once at
+// module load; LaneView calls buildTimeSlots again itself, per day, when
+// something needs a wider window (#322 — a booking before 8am or after
+// 11pm used to render nowhere on this grid at all: timeToIndex went
+// negative, or the grid simply had no column past the fixed end, even
+// though the row itself was created successfully).
+//
+// shiftStartIdx used to read TIME_SLOTS directly because it's module-level
+// and the grid's slot count never changed (#280) — that's still true WITHIN
+// any single render/drag interaction, it's just no longer the SAME count on
+// every day. So shiftStartIdx now takes the current slot count as an
+// explicit parameter instead of closing over a fixed module constant; every
+// call site passes the day's actual (possibly expanded) timeSlots.length.
+// The array is never rebuilt mid-drag — only when `laneDate` changes — so
+// the "doesn't drift under your cursor" guarantee #280 fixed is untouched.
+const DEFAULT_START_HOUR = 8;
+const DEFAULT_END_HOUR = 22; // last slot is 22:45
+function buildTimeSlots(startHour, endHour) {
+  const slots = [];
+  for (let h = startHour; h <= endHour; h++) {
+    for (let m = 0; m < 60; m += 15) {
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    }
   }
+  return slots;
 }
+const TIME_SLOTS = buildTimeSlots(DEFAULT_START_HOUR, DEFAULT_END_HOUR);
 
 // Shifts an event's start by the same offset within its own bar that the
 // user grabbed, so the point they grabbed stays under the cursor instead of
@@ -2735,9 +2756,11 @@ for (let h = START_HOUR; h <= 22; h++) {
 // meaning you had to drag past the entire bar before a 1-slot nudge could
 // register (#280). Returns null — refused, not clamped, mirroring
 // shiftLanes — if the event wouldn't fully fit in the grid at the result.
-function shiftStartIdx(pointerSlotIdx, grabOffset, span) {
+// slotsLength is the CALLER's current timeSlots.length (#322) — see the
+// comment above TIME_SLOTS for why this isn't read from a module constant.
+function shiftStartIdx(pointerSlotIdx, grabOffset, span, slotsLength) {
   const startIdx = pointerSlotIdx - grabOffset;
-  if (startIdx < 0 || startIdx + span > TIME_SLOTS.length) return null;
+  if (startIdx < 0 || startIdx + span > slotsLength) return null;
   return startIdx;
 }
 
@@ -2762,21 +2785,58 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
   const [hoveredCell, setHoveredCell] = useState(null); // { lane, slotIdx }
   const clearDragPreview = () => { setDraggedInfo(null); setHoveredCell(null); };
 
-  // START_HOUR and the 15-minute grid are module-level (TIME_SLOTS) so
-  // shiftStartIdx can share them — timeSlots here is just a local alias so
-  // the rest of this component doesn't need to change.
-  const timeSlots = TIME_SLOTS;
-
   const dateStr = laneDate || fmtLocalDate(new Date());
 
   // Filter events for this date
   const dayEvents = events.filter(ev => ev.event_date === dateStr);
 
+  // #322: expand the grid to cover anything actually scheduled outside the
+  // default 8am-10:45pm window, on the same 15-minute grid, instead of
+  // silently having nowhere to render it. Gathered from every kind of entry
+  // this view renders for the day: facility events (dayEvents), Work Portal
+  // shifts (staffEvents) and coach training sessions (coachDaySlots) — both
+  // of those are already scoped to `laneDate` by fetchStaffSchedule, so no
+  // extra date filtering is needed here. Falls back to the default range
+  // when nothing exceeds it.
+  let dayStartHour = DEFAULT_START_HOUR;
+  let dayEndHour = DEFAULT_END_HOUR;
+  const considerRange = (startTimeStr, endTimeStr, durationMinutes) => {
+    if (!startTimeStr) return;
+    const [sh, sm] = startTimeStr.split(':').map(Number);
+    if (Number.isNaN(sh)) return;
+    dayStartHour = Math.min(dayStartHour, sh);
+    const startTotalMin = sh * 60 + (sm || 0);
+    let endTotalMin;
+    if (endTimeStr) {
+      const [eh, em] = endTimeStr.split(':').map(Number);
+      endTotalMin = Number.isNaN(eh) ? startTotalMin + 60 : eh * 60 + (em || 0);
+    } else {
+      endTotalMin = startTotalMin + (durationMinutes || 60);
+    }
+    dayEndHour = Math.max(dayEndHour, Math.ceil(endTotalMin / 60));
+  };
+  dayEvents.forEach(ev => considerRange(ev.start_time || ev.event_time, ev.end_time));
+  staffEvents.forEach(ev => {
+    const start = new Date(ev.start_at);
+    const end = ev.end_at ? new Date(ev.end_at) : null;
+    const fmt = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    considerRange(fmt(start), end ? fmt(end) : null);
+  });
+  coachDaySlots.forEach(s => considerRange(s.start_time, null, s.duration_minutes || 60));
+  // Sane full-day clamp — a malformed row (e.g. an end time that wrapped
+  // past midnight) can't blow the grid out past what's actually renderable.
+  dayStartHour = Math.max(0, dayStartHour);
+  dayEndHour = Math.min(23, dayEndHour);
+
+  const timeSlots = (dayStartHour === DEFAULT_START_HOUR && dayEndHour === DEFAULT_END_HOUR)
+    ? TIME_SLOTS
+    : buildTimeSlots(dayStartHour, dayEndHour);
+
   // Parse time to slot index
   const timeToIndex = (timeStr) => {
     if (!timeStr) return -1;
     const [h, m] = timeStr.split(':').map(Number);
-    return (h - START_HOUR) * 4 + Math.floor(m / 15);
+    return (h - dayStartHour) * 4 + Math.floor(m / 15);
   };
 
   // Derived from draggedInfo + hoveredCell: which lanes (if any) the drop
@@ -2792,7 +2852,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     ? (hoveredCell.lane === draggedInfo.sourceLane ? draggedInfo.lanes : shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, hoveredCell.lane))
     : null;
   const previewStartIdx = draggedInfo && hoveredCell
-    ? shiftStartIdx(hoveredCell.slotIdx, draggedInfo.grabOffset, draggedInfo.span)
+    ? shiftStartIdx(hoveredCell.slotIdx, draggedInfo.grabOffset, draggedInfo.span, timeSlots.length)
     : null;
   const previewTimeOk = previewStartIdx !== null;
   // #289: a multi-lane bar hovered where the whole block wouldn't fit is no
@@ -2955,7 +3015,10 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // #322: timeSlots.length changes when switching to a day whose grid was
+    // expanded (or back to one that wasn't) — recompute column widths for
+    // the new count rather than leaving them sized for the previous day's.
+  }, [timeSlots.length]);
 
   // scrollWidth here is purely cosmetic: it sizes the spacer in the mirrored
   // top scrollbar to match the real table.
@@ -2965,7 +3028,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, []);
+    // #322: re-measure when the day's grid width changes (see above).
+  }, [timeSlots.length]);
   const syncFromTop = () => { if (bodyScrollRef.current && topScrollRef.current && bodyScrollRef.current.scrollLeft !== topScrollRef.current.scrollLeft) bodyScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft; };
   const syncFromBody = () => { if (bodyScrollRef.current && topScrollRef.current && topScrollRef.current.scrollLeft !== bodyScrollRef.current.scrollLeft) topScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft; };
 
@@ -3080,7 +3144,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                                 // #289: a multi-lane event is always lane-valid — if the whole block
                                 // doesn't fit, the drop offers a single-lane move instead of refusing.
                                 const validLane = lane === draggedInfo.sourceLane || draggedInfo.lanes.length > 1 || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
-                                const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span) !== null;
+                                const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span, timeSlots.length) !== null;
                                 valid = validLane && validTime;
                               }
                               e.dataTransfer.dropEffect = valid ? 'move' : 'none';
@@ -3093,8 +3157,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                             const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
                             if (eventId && canManage && onEventMove && draggedInfo) {
                               const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
-                              const targetStartIdx = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span);
-                              if (targetStartIdx !== null) onEventMove(eventId, sourceLane, lane, TIME_SLOTS[targetStartIdx]);
+                              const targetStartIdx = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span, timeSlots.length);
+                              if (targetStartIdx !== null) onEventMove(eventId, sourceLane, lane, timeSlots[targetStartIdx]);
                             }
                             clearDragPreview();
                           }}
@@ -3151,7 +3215,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                               // #289: a multi-lane event is always lane-valid — if the whole block
                               // doesn't fit, the drop offers a single-lane move instead of refusing.
                               const validLane = lane === draggedInfo.sourceLane || draggedInfo.lanes.length > 1 || !!shiftLanes(draggedInfo.lanes, draggedInfo.sourceLane, lane);
-                              const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span) !== null;
+                              const validTime = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span, timeSlots.length) !== null;
                               valid = validLane && validTime;
                             }
                             e.dataTransfer.dropEffect = valid ? 'move' : 'none';
@@ -3164,8 +3228,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           const sourceLane = e.dataTransfer.getData('application/x-event-source-lane');
                           if (eventId && canManage && onEventMove && draggedInfo) {
                             const pointerSlotIdx = slotIdxFromPointerX(e.clientX);
-                            const targetStartIdx = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span);
-                            if (targetStartIdx !== null) onEventMove(eventId, sourceLane, lane, TIME_SLOTS[targetStartIdx]);
+                            const targetStartIdx = shiftStartIdx(pointerSlotIdx, draggedInfo.grabOffset, draggedInfo.span, timeSlots.length);
+                            if (targetStartIdx !== null) onEventMove(eventId, sourceLane, lane, timeSlots[targetStartIdx]);
                           }
                           clearDragPreview();
                         }}
@@ -3221,8 +3285,8 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               const shiftEntries = staffEvents.filter(ev => coachEventIds.includes(ev.id)).map(ev => {
                 const start = new Date(ev.start_at);
                 const end = new Date(ev.end_at);
-                const startIdx = (start.getHours() - START_HOUR) * 4 + Math.floor(start.getMinutes() / 15);
-                const endIdx = (end.getHours() - START_HOUR) * 4 + Math.floor(end.getMinutes() / 15);
+                const startIdx = (start.getHours() - dayStartHour) * 4 + Math.floor(start.getMinutes() / 15);
+                const endIdx = (end.getHours() - dayStartHour) * 4 + Math.floor(end.getMinutes() / 15);
                 return {
                   startIdx: Math.max(startIdx, 0), span: Math.max(endIdx - startIdx, 1), kind: 'shift',
                   title: ev.title,
