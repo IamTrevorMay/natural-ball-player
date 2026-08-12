@@ -1,5 +1,28 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2 } from 'lucide-react';
+import { supabase } from './supabaseClient';
+import { formatUserError } from './errorMessage';
+
+// #316: shared by App.js and WorkPortal.js — both render this bell and both
+// need to delete a pending payment the same way. Was previously copy-pasted
+// verbatim in both files; extracted here so there's one implementation.
+//
+// store_purchases_delete_admin (the RLS policy) is admin-only. A DELETE a
+// non-admin isn't allowed to make returns NO error and ZERO rows — Postgres
+// just matches nothing. Checking only `error` therefore lies: it looks
+// successful. The .select('id') + length check below is load-bearing —
+// don't simplify it away to a plain `if (error)`, or a coach-gated delete
+// (should that ever come back) goes silent again.
+export async function deletePendingPayment(purchaseId, productName, onSuccess) {
+  if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.`)) return;
+  const { data, error } = await supabase.from('store_purchases').delete().eq('id', purchaseId).select('id');
+  if (error) { alert('Error deleting payment: ' + formatUserError(error)); return; }
+  if (!data || data.length === 0) {
+    alert('Nothing was deleted — you may not have permission to remove this payment.');
+    return;
+  }
+  onSuccess?.();
+}
 
 function fmtMoney(cents) {
   return `$${((cents || 0) / 100).toFixed(2)}`;
@@ -109,7 +132,9 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                     {currentPortal !== 'main' && <PortalTag kind="main" />}
                   </div>
                 </a>
-                {(userRole === 'admin' || userRole === 'coach') && onDeletePayment && (
+                {/* #316: matches store_purchases_delete_admin (RLS) — admin only.
+                    Coaches used to see this button too and it silently no-op'd. */}
+                {userRole === 'admin' && onDeletePayment && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onDeletePayment(pay.id, pay.product_name_snapshot); }}
                     className="px-3 text-gray-400 hover:text-red-600 hover:bg-red-50 transition flex items-center"
