@@ -4,7 +4,7 @@ import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
-  ShoppingBag, UserPlus, BarChart3
+  ShoppingBag, UserPlus, BarChart3, Tag
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -21,6 +21,7 @@ import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
 import WorkInvoices from './WorkInvoices';
 import WorkStore from './WorkStore';
+import BulkTagSessions from './BulkTagSessions';
 import Leads from './Leads';
 import UsageDashboard from './UsageDashboard';
 import NotificationBell from './NotificationBell';
@@ -46,6 +47,9 @@ const PAGE_META = {
   'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
   'work-admin-invoices':        { title: 'Coach Invoices',         description: 'Review and manage coach-submitted invoices.' },
   'work-admin-store':           { title: 'Store',                  description: 'Manage Square catalog and view all purchases.' },
+  // #311: coach-only door into WorkStore's Bulk Tag Sessions tab, not the
+  // rest of the Store (catalog/purchases/pricing stay admin-only).
+  'work-bulk-tag':              { title: 'Bulk Tag Sessions',       description: 'Attach a package or plan to many training sessions at once.' },
   'work-admin-leads':           { title: 'Leads',                  description: 'Outside customers who signed up to book & pay for sessions.' },
   'work-admin-usage':           { title: 'Usage (V2 research)',    description: 'Anonymous product-usage analytics.' },
 };
@@ -190,6 +194,12 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <WorkInvoices userId={userId} userRole={userRole} /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-store':
         return userRole === 'admin' ? <WorkStore /> : <ComingSoon viewKey={currentView} />;
+      // #311: BulkTagSessions renders directly — it's already a standalone,
+      // zero-prop component (imported into WorkStore.js, not defined there),
+      // so this reaches it without pulling in WorkStore's catalog/purchases/
+      // pricing tabs.
+      case 'work-bulk-tag':
+        return (userRole === 'coach' || userRole === 'admin') ? <BulkTagSessions /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-leads':
         return userRole === 'admin' ? <Leads /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-usage':
@@ -322,6 +332,12 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         <NavItem id="work-docs"      icon={FileText}      label="Documents" />
         <NavItem id="work-directory" icon={Users}         label="Directory" />
         <NavItem id="work-roadmap"   icon={Map}           label="Roadmap" />
+        {/* #311: coach-only — admins already reach this via Admin > Store's
+            Bulk Tag Sessions tab, so this stays out of their nav to avoid a
+            second, redundant path to the same tool. */}
+        {userRole === 'coach' && (
+          <NavItem id="work-bulk-tag" icon={Tag} label="Bulk Tag Sessions" />
+        )}
 
         {isAdmin && (
           <div className="pt-2">
