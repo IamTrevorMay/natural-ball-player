@@ -20,7 +20,7 @@ const DOC_TYPE_COLOR = {
 };
 
 /* ─── PIN gate ─── */
-function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
+export function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
   const [storedPin, setStoredPin] = useState(null);   // null = loading, '' = no pin set
   const [pin, setPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -138,8 +138,8 @@ function PayrollPinGate({ onUnlock, changeMode, onCancelChange }) {
   );
 }
 
-export default function WorkAdminPayroll({ userId }) {
-  const [pinVerified, setPinVerified] = useState(false);
+export default function WorkAdminPayroll({ userId, defaultUnlocked = false }) {
+  const [pinVerified, setPinVerified] = useState(defaultUnlocked);
   const [showChangePin, setShowChangePin] = useState(false);
   const [docs, setDocs] = useState([]);
   const [staff, setStaff] = useState([]);
