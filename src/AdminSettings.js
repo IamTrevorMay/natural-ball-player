@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle } from 'lucide-react';
+import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle, Key } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
@@ -41,6 +41,27 @@ async function updateAuthUserEmail(userId, newEmail) {
   );
   const result = await res.json();
   if (!res.ok) throw new Error(result.error || 'Failed to update auth email');
+  return result;
+}
+
+// #312: admin-only manual password reset — see reset-user-password's own
+// comment for why this is narrower than create-user's admin+coach gate.
+async function resetUserPassword(userId, newPassword) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(
+    `${supabaseUrl}/functions/v1/reset-user-password`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ user_id: userId, new_password: newPassword }),
+    }
+  );
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'Failed to reset password');
   return result;
 }
 
@@ -1030,7 +1051,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
 
           <div className="grid grid-cols-1 gap-4">
             {sortedUsers.map(user => (
-              <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} onNavigateToProfile={onNavigateToProfile} />
+              <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} userRole={userRole} onNavigateToProfile={onNavigateToProfile} />
             ))}
           </div>
         </>
@@ -1051,7 +1072,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   );
 }
 
-function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
+function UserCard({ user, teams, refreshUsers, userId, userRole, onNavigateToProfile }) {
   const [showEdit, setShowEdit] = useState(false);
 
   const getRoleBadgeColor = (role) => {
@@ -1130,6 +1151,7 @@ function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
           user={user}
           teams={teams}
           userId={userId}
+          callerRole={userRole}
           onClose={() => setShowEdit(false)}
           onSuccess={() => {
             setShowEdit(false);
@@ -1141,7 +1163,7 @@ function UserCard({ user, teams, refreshUsers, userId, onNavigateToProfile }) {
   );
 }
 
-function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
+function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) {
   useModalTracking('EditUserModal');
   const profile = Array.isArray(user.player_profiles) ? user.player_profiles[0] : user.player_profiles || null;
   const currentTeamIds = (user.team_members || []).map(tm => tm.team_id);
@@ -1169,6 +1191,27 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
   const [deleting, setDeleting] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [resetSending, setResetSending] = useState(false);
+  // #312: manual password set, for when the reset-link email never reaches
+  // the player. Admin-only — see EditUserModal's render for the role check.
+  const [manualResetOpen, setManualResetOpen] = useState(false);
+  const [manualPassword, setManualPassword] = useState('');
+  const [manualResetSaving, setManualResetSaving] = useState(false);
+
+  const handleManualPasswordReset = async () => {
+    if (manualPassword.length < 8) { alert('Password must be at least 8 characters.'); return; }
+    if (!window.confirm(`Set a new password for ${user.full_name}? They will need this new password to log in, and any device where they're currently logged in will be signed out.`)) return;
+    setManualResetSaving(true);
+    try {
+      await resetUserPassword(user.id, manualPassword);
+      setManualPassword('');
+      setManualResetOpen(false);
+      alert(`Password updated for ${user.full_name}.`);
+    } catch (err) {
+      alert('Error resetting password: ' + formatUserError(err));
+    } finally {
+      setManualResetSaving(false);
+    }
+  };
 
   const handleSendPasswordReset = async () => {
     setResetSending(true);
@@ -1528,6 +1571,38 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
             </div>
           )}
 
+          {/* #312: manual password reset — admin only. Deliberately separate
+              from the "Reset Password" email-link flow above; this is for
+              when that email never reaches the player. */}
+          {callerRole === 'admin' && manualResetOpen && (
+            <div className="border border-gray-200 rounded-lg p-4 space-y-2">
+              <label className="block text-sm font-medium text-gray-700">New password for {user.full_name}</label>
+              <input
+                type="text"
+                value={manualPassword}
+                onChange={(e) => setManualPassword(e.target.value)}
+                placeholder="At least 8 characters"
+                className={inputClass}
+              />
+              <p className="text-xs text-gray-500">They'll need to log in with this new password. Any device where they're currently signed in will be signed out.</p>
+              <div className="flex justify-end space-x-2 pt-1">
+                <button
+                  onClick={() => { setManualResetOpen(false); setManualPassword(''); }}
+                  className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded text-sm hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleManualPasswordReset}
+                  disabled={manualResetSaving}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {manualResetSaving ? 'Saving...' : 'Set Password'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex items-center justify-between pt-4 border-t border-gray-200">
             {user.id !== userId ? (
@@ -1569,6 +1644,16 @@ function EditUserModal({ user, teams, userId, onClose, onSuccess }) {
                 <Mail size={14} />
                 <span>{resetSent ? 'Reset email sent' : resetSending ? 'Sending...' : 'Reset Password'}</span>
               </button>
+              {callerRole === 'admin' && (
+                <button
+                  onClick={() => setManualResetOpen(v => !v)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center space-x-1"
+                  title="Set a new password directly, without sending an email"
+                >
+                  <Key size={14} />
+                  <span>Manual Reset</span>
+                </button>
+              )}
               <button
                 onClick={onClose}
                 className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition"
