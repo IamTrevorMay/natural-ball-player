@@ -259,6 +259,12 @@ export default function Schedule({ userId, userRole }) {
   // #292: a repeating training slot's master bar dropped on a new day suspends
   // the move until the user picks this-occurrence vs whole-series.
   const [pendingSlotMove, setPendingSlotMove] = useState(null); // { slot, newDate }
+  // #309: dragging a slot horizontally within its own row on the Lanes
+  // Staff Schedule band changes its TIME (same day) — a different axis than
+  // pendingSlotMove above (which changes the DAY via CoachSlotsWeekView's
+  // week grid), so this is its own state/prompt rather than overloading
+  // that one with a message that would need to talk about both.
+  const [pendingSlotTimeMove, setPendingSlotTimeMove] = useState(null); // { slot, newStartTime }
   const [copyToPicker, setCopyToPicker] = useState(null); // { event, source, options, onPick, title }
   const selectedIds = useMemo(() => new Set(selectedEvents.map((e) => String(e.id))), [selectedEvents]);
   const toggleSelect = (ev) => setSelectedEvents((arr) => {
@@ -861,6 +867,101 @@ export default function Schedule({ userId, userRole }) {
     setPendingSlotMove({ slot, newDate });
   };
 
+  // #309: applies a TIME change (same day) to one training_slots occurrence,
+  // dragged within its own row on the Lanes Staff Schedule band. Choice
+  // 'one' finds-or-creates a per-occurrence exception row — the same shape
+  // applyTeamAssignment/applyCoachAssignment already use for facility_events
+  // (#287), applied to training_slots here rather than a new mechanism.
+  // Choice 'all' updates the master directly. Deliberately does NOT touch
+  // slot_reservations or public_bookings the way moveSlotOccurrence's DATE
+  // change does — the occurrence's identity (id, date) isn't changing here,
+  // only its start_time, so there's nothing that needs to follow it.
+  const applySlotTimeChange = async (choice, slot, newStartTime) => {
+    try {
+      if (choice === 'one') {
+        if (slot.recurrence_parent_id) {
+          // Already its own per-occurrence row (a previous move or time
+          // change) — update in place.
+          const { error } = await supabase.from('training_slots').update({ start_time: newStartTime }).eq('id', slot.slot_id);
+          if (error) throw error;
+        } else {
+          const { data: existingChild, error: findErr } = await supabase
+            .from('training_slots')
+            .select('id')
+            .eq('recurrence_parent_id', slot.slot_id)
+            .eq('original_date', slot.slot_date)
+            .maybeSingle();
+          if (findErr) throw findErr;
+          if (existingChild) {
+            const { error } = await supabase.from('training_slots').update({ start_time: newStartTime }).eq('id', existingChild.id);
+            if (error) throw error;
+          } else {
+            const { data: master, error: masterErr } = await supabase.from('training_slots').select('*').eq('id', slot.slot_id).single();
+            if (masterErr) throw masterErr;
+            const { error } = await supabase.from('training_slots').insert({
+              recurrence_parent_id: slot.slot_id,
+              original_date: slot.slot_date,
+              slot_date: slot.slot_date,
+              is_exception: false,
+              repeat_weekly: false,
+              coach_id: master.coach_id,
+              start_time: newStartTime,
+              duration_minutes: master.duration_minutes,
+              is_public: master.is_public,
+              public_price_cents: master.public_price_cents ?? null,
+              is_subscription_session: master.is_subscription_session,
+              store_product_id: master.store_product_id ?? null,
+              store_product_ids: master.store_product_ids,
+              max_players: master.max_players,
+              auto_confirm: master.auto_confirm,
+              notes: master.notes ?? null,
+            });
+            if (error) throw error;
+          }
+        }
+      } else {
+        // 'all' — the whole series moves to the new time. An existing
+        // per-occurrence exception child keeps whatever start_time it
+        // already has (it was independently customized already) — the same
+        // "children don't auto-inherit a later master edit" limitation
+        // #310's merge already accepted for facility_events, not new here.
+        const masterId = slot.recurrence_parent_id || slot.slot_id;
+        const { error } = await supabase.from('training_slots').update({ start_time: newStartTime }).eq('id', masterId);
+        if (error) throw error;
+      }
+      fetchStaffSchedule(laneDate);
+    } catch (err) {
+      alert('Failed to move session: ' + formatUserError(err));
+    }
+  };
+
+  // #309: reuses the application/x-slot-id drag payload CoachSlotsWeekView's
+  // day-to-day drag already uses (same MIME keys, not a second mechanism) —
+  // here the drop target is a TIME cell within the SAME coach's row rather
+  // than a different day column, so it changes start_time instead of
+  // slot_date. Dropping on a different coach's row is not supported (that
+  // would be reassigning the session to a different coach — a separate
+  // feature; see the #309 report).
+  const handleSlotTimeDrop = async (slotId, newStartTime) => {
+    const slot = coachDaySlots.find((s) => String(s.slot_id) === String(slotId));
+    if (!slot || slot.start_time === newStartTime) return;
+    if (slot.recurrence_parent_id) {
+      await applySlotTimeChange('one', slot, newStartTime);
+      return;
+    }
+    if (!slot.repeat_weekly) {
+      await applySlotTimeChange('all', slot, newStartTime);
+      return;
+    }
+    // Recurring, and this is the master/virtual occurrence — ambiguous
+    // (just today's time, or the whole series'?), so ask, same #279/#292
+    // pattern. Unlike handleSlotDrop's _occurrence_index shortcut (which
+    // can tell "a later week's copy" from "the master's own anchor date"),
+    // this band shows one day at a time and coachDaySlots carries no such
+    // signal — always ask here rather than risk guessing wrong.
+    setPendingSlotTimeMove({ slot, newStartTime });
+  };
+
   const fetchCoaches = async () => {
     const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills, show_on_facility_schedule').in('role', ['coach', 'admin']).order('full_name');
     setCoaches(data || []);
@@ -936,6 +1037,15 @@ export default function Schedule({ userId, userRole }) {
       capacity: s.max_players || 1,
       reserved: resCount[s.id] || 0,
       publicBookings: pubBySlot[s.id] || [],
+      // #309: needed to drag-move this occurrence's TIME (not just click it)
+      // — recurrence_parent_id/repeat_weekly decide whether moving it needs
+      // the one-vs-series prompt; slot_date is THIS OCCURRENCE's own date
+      // (dateStr, the function's own day) — s.slot_date is the wrong thing
+      // to use here for a repeating master, since that's the SERIES anchor
+      // date, not necessarily today's.
+      recurrence_parent_id: s.recurrence_parent_id,
+      repeat_weekly: s.repeat_weekly,
+      slot_date: dateStr,
     })));
     setEventPublicBookings(pubByEvent);
   };
@@ -1824,6 +1934,7 @@ export default function Schedule({ userId, userRole }) {
                       setCoachModalOpen(true);
                     }}
                     onShiftEntryClick={(ev) => setShiftDetailEvent(ev)}
+                    onSlotTimeDrop={handleSlotTimeDrop}
                   />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
@@ -2268,6 +2379,24 @@ export default function Schedule({ userId, userRole }) {
             fetchCoachSlots(selectedCoach.id);
           }}
           onClose={() => setPendingSlotMove(null)}
+        />
+      )}
+      {/* #309: dragging a repeating slot's time on the Lanes Staff Schedule
+          band is the same one-vs-series ambiguity #292 already solved for a
+          DAY change — same modal, applied here to a TIME change instead. */}
+      {pendingSlotTimeMove && (
+        <RecurrenceDecisionModal
+          title="Change the time of a repeating slot"
+          message={`Change just today's session to ${formatTimeDisplay(pendingSlotTimeMove.newStartTime)}, or change the whole series' time?`}
+          actionLabel="Change"
+          allowOne={true}
+          allowFuture={false}
+          onPick={async (choice) => {
+            const move = pendingSlotTimeMove;
+            setPendingSlotTimeMove(null);
+            await applySlotTimeChange(choice === 'one' ? 'one' : 'all', move.slot, move.newStartTime);
+          }}
+          onClose={() => setPendingSlotTimeMove(null)}
         />
       )}
       {/* #309/#314: CoachSlotsWeekView reused as a modal over the Lanes view
@@ -2889,7 +3018,7 @@ function shiftStartIdx(pointerSlotIdx, grabOffset, span, slotsLength) {
   return startIdx;
 }
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule, onSlotEntryClick, onShiftEntryClick }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule, onSlotEntryClick, onShiftEntryClick, onSlotTimeDrop }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
@@ -3437,6 +3566,12 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   // this exact session in CoachSlotsWeekView. Opens that
                   // same component as a modal (see coachModalOpen).
                   onClick: onSlotEntryClick ? () => onSlotEntryClick(coach) : null,
+                  // #309: drag-to-retime — see the onDragStart/onDrop wiring
+                  // below. Only slot entries are draggable in this band;
+                  // shifts and facility events keep their existing
+                  // click-only behaviour (out of scope here).
+                  slotId: s.slot_id,
+                  draggableSlot: canManage && !!onSlotTimeDrop,
                 };
               });
 
@@ -3486,7 +3621,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           className={`border-y border-r border-indigo-100 ${entryIsHourStart ? 'border-l border-l-indigo-300' : 'border-l border-l-indigo-100'} p-0 overflow-hidden`}
                         >
                           {entry.onClick ? (
-                            <button type="button" onClick={entry.onClick} title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}>{inner}</button>
+                            <button
+                              type="button"
+                              onClick={entry.onClick}
+                              title={entryTitleAttr}
+                              draggable={entry.draggableSlot || undefined}
+                              onDragStart={entry.draggableSlot ? (e) => {
+                                e.stopPropagation();
+                                e.dataTransfer.setData('application/x-slot-id', String(entry.slotId));
+                                e.dataTransfer.setData('application/x-slot-date', String(dateStr));
+                                e.dataTransfer.effectAllowed = 'move';
+                              } : undefined}
+                              className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden ${entry.draggableSlot ? 'cursor-grab' : ''}`}
+                            >{inner}</button>
                           ) : (
                             <div title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left leading-none flex items-center overflow-hidden`}>{inner}</div>
                           )}
@@ -3501,6 +3648,22 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         key={slot}
                         className={`border-y border-r border-indigo-100 ${isHour ? 'border-l border-l-indigo-300 bg-indigo-50/30' : 'border-l border-l-indigo-100'}`}
                         style={{ height: 26 }}
+                        onDragOver={canManage && onSlotTimeDrop ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } : undefined}
+                        onDrop={canManage && onSlotTimeDrop ? (e) => {
+                          e.preventDefault();
+                          const slotId = e.dataTransfer.getData('application/x-slot-id');
+                          if (!slotId) return;
+                          // #309: same-coach-row only — dropping on a different
+                          // coach's row would mean reassigning the session to
+                          // that coach, a separate feature this doesn't build.
+                          // Checked here (not left to the handler) so a
+                          // cross-row drop is a clean no-op, not an accidental
+                          // time-only move that silently ignores which row it
+                          // landed on.
+                          const draggedSlot = coachDaySlots.find(s => String(s.slot_id) === String(slotId));
+                          if (!draggedSlot || draggedSlot.coach_id !== coach.id) return;
+                          onSlotTimeDrop(slotId, slot);
+                        } : undefined}
                       />
                     );
                   })}
