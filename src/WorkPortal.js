@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { supabase } from './supabaseClient';
 import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
@@ -111,6 +112,13 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
     else onSwitchPortalAndView?.(view);
   };
 
+  const handleDeletePayment = async (purchaseId, productName) => {
+    if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.`)) return;
+    const { error } = await supabase.from('store_purchases').delete().eq('id', purchaseId);
+    if (error) { alert('Error deleting payment: ' + error.message); return; }
+    mainCounts.refresh();
+  };
+
   const renderContent = () => {
     switch (currentView) {
       case 'work-home':
@@ -191,6 +199,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
             mainCounts={mainCounts}
             workCounts={workCounts}
             onJump={handleNotifJump}
+            userRole={userRole}
+            onDeletePayment={handleDeletePayment}
           />
         </div>
 
