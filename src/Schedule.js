@@ -10,6 +10,7 @@ import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
+import { CreateUserModal } from './AdminSettings';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -6343,6 +6344,17 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
 // FACILITY EVENT DETAIL
 // ============================================
 
+// #310: Postgres 42703 ("column does not exist") — what a write against
+// athlete_ids looks like before its migration has been run. Detected
+// specifically so that case gets an actionable message instead of falling
+// through to formatUserError's generic fallback.
+function isMissingColumnError(err, column) {
+  if (!err) return false;
+  if (err.code === '42703') return true;
+  const msg = err.message || err.error_description || '';
+  return new RegExp(`column .*${column}.* does not exist`, 'i').test(msg);
+}
+
 function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete, coaches = [] }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -6377,6 +6389,16 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const [athleteDraft, setAthleteDraft] = useState(event.athlete_id || '');
   const [athleteSaving, setAthleteSaving] = useState(false);
   const [athleteRecurrencePrompt, setAthleteRecurrencePrompt] = useState(false);
+
+  // #310: MULTIPLE players on this event (athlete_ids, uuid[]) — additive
+  // to the single athlete_id field above, which is untouched and keeps
+  // working exactly as it does today. Reuses the `athletes` list already
+  // fetched above for the single-select dropdown.
+  const [editingPlayers, setEditingPlayers] = useState(false);
+  const [playersDraft, setPlayersDraft] = useState(event.athlete_ids || []);
+  const [playersSaving, setPlayersSaving] = useState(false);
+  const [playersRecurrencePrompt, setPlayersRecurrencePrompt] = useState(false);
+  const [showCreatePlayer, setShowCreatePlayer] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -6565,6 +6587,73 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const handleAthleteSave = () => {
     if (event.is_recurring) { setAthleteRecurrencePrompt(true); return; }
     applyAthleteAssignment('all');
+  };
+
+  // #310: same one-occurrence-vs-series find-or-create as team/coach/athlete
+  // above — reused, not reinvented, per the #279/#287 exception model.
+  // athlete_id is kept in sync with athlete_ids[0], the same way
+  // applyCoachAssignment above keeps coach_id in sync with coach_ids[0].
+  const applyPlayersAssignment = async (choice) => {
+    setPlayersRecurrencePrompt(false);
+    setPlayersSaving(true);
+    const patch = { athlete_ids: playersDraft, athlete_id: playersDraft[0] || null };
+    try {
+      if (choice === 'one') {
+        const { data: existingException, error: findError } = await supabase
+          .from('facility_events')
+          .select('id')
+          .eq('recurrence_parent_id', eventMasterId)
+          .eq('original_date', occurrenceDate)
+          .maybeSingle();
+        if (findError) throw findError;
+        if (existingException) {
+          const { error } = await supabase.from('facility_events').update(patch).eq('id', existingException.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('facility_events').insert({
+            recurrence_parent_id: eventMasterId,
+            original_date: occurrenceDate,
+            event_date: occurrenceDate,
+            is_exception: false,
+            is_recurring: false,
+            title: event.title,
+            description: event.description,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            location: event.location,
+            color: event.color,
+            lanes: event.lanes || [],
+            coach_id: event.coach_id,
+            coach_ids: event.coach_ids || null,
+            team_ids: event.team_ids || [],
+            ...patch,
+          });
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabase.from('facility_events').update(patch).eq('id', eventMasterId);
+        if (error) throw error;
+        const { error: childError } = await supabase.from('facility_events').update(patch).eq('recurrence_parent_id', eventMasterId);
+        if (childError) throw childError;
+      }
+      onUpdate();
+    } catch (err) {
+      // #310: athlete_ids doesn't exist until the pending migration
+      // (20260812_facility_events_athlete_ids.sql) is run — degrade to a
+      // clear, specific message instead of a generic error or a crash.
+      if (isMissingColumnError(err, 'athlete_ids')) {
+        alert('Adding multiple players needs a database update that has not been applied yet. Ask an admin to run the pending migration, then try again.');
+      } else {
+        alert('Error adding players: ' + formatUserError(err));
+      }
+    } finally {
+      setPlayersSaving(false);
+    }
+  };
+
+  const handlePlayersSave = () => {
+    if (event.is_recurring) { setPlayersRecurrencePrompt(true); return; }
+    applyPlayersAssignment('all');
   };
 
   // Sign-ups lock 12h before the event starts (mirrors the #233 cancel cutoff).
@@ -6925,6 +7014,57 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                 );
               })()}
 
+              {/* #310: MULTIPLE players on this event — additive to the
+                  single Athlete field above, which is unchanged. Reuses the
+                  `athletes` list already fetched for that field. */}
+              {(() => {
+                const playerNames = (event.athlete_ids || []).map(id => athletes.find(a => a.id === id)?.full_name).filter(Boolean);
+                if (playerNames.length === 0 && !isStaff) return null;
+                return (
+                  <div className="text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <Users size={14} className="text-gray-400" />
+                        <span className="text-gray-700">
+                          Players:{' '}
+                          {playerNames.length > 0
+                            ? <span className="font-medium text-gray-900">{playerNames.join(', ')}</span>
+                            : <span className="text-gray-400 italic">none added</span>}
+                        </span>
+                      </div>
+                      {isStaff && !editingPlayers && (
+                        <button onClick={() => { setPlayersDraft(event.athlete_ids || []); setEditingPlayers(true); }} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                          {playerNames.length > 0 ? 'Edit players' : 'Add player'}
+                        </button>
+                      )}
+                    </div>
+                    {editingPlayers && (
+                      <div className="mt-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                          {athletes.map(a => (
+                            <label key={a.id} className="flex items-center space-x-2 text-sm py-0.5">
+                              <input type="checkbox" checked={playersDraft.includes(a.id)} onChange={(e) => {
+                                setPlayersDraft(e.target.checked ? [...playersDraft, a.id] : playersDraft.filter(id => id !== a.id));
+                              }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                              <span className="text-gray-700 truncate">{a.full_name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <button type="button" onClick={() => setShowCreatePlayer(true)} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+                          + New player
+                        </button>
+                        <div className="flex justify-end space-x-2">
+                          <button onClick={() => setEditingPlayers(false)} className="px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+                          <button onClick={handlePlayersSave} disabled={playersSaving} className="px-3 py-1.5 text-xs bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition disabled:opacity-50">
+                            {playersSaving ? 'Saving…' : 'Save players'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">
                   {signupsLoading ? (
@@ -7094,6 +7234,34 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           allowFuture={false}
           onPick={applyAthleteAssignment}
           onClose={() => setAthleteRecurrencePrompt(false)}
+        />
+      )}
+      {playersRecurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="Add players on a recurring event"
+          message="Apply this player change to just this occurrence, or to the whole series?"
+          actionLabel="Apply to"
+          allowOne={true}
+          allowFuture={false}
+          onPick={applyPlayersAssignment}
+          onClose={() => setPlayersRecurrencePrompt(false)}
+        />
+      )}
+      {/* #310: reuses AdminSettings.js's CreateUserModal rather than a second
+          signup form. callerRole="coach" locks its role dropdown to Player
+          regardless of who's actually viewing this event (its "Coaches can
+          only create player accounts" hint text is a known, harmless
+          mismatch when an admin is the one using it here). */}
+      {showCreatePlayer && (
+        <CreateUserModal
+          teams={teams}
+          callerRole="coach"
+          onClose={() => setShowCreatePlayer(false)}
+          onSuccess={(newId, newName) => {
+            setShowCreatePlayer(false);
+            setAthletes(prev => [...prev, { id: newId, full_name: newName }].sort((a, b) => a.full_name.localeCompare(b.full_name)));
+            setPlayersDraft(prev => [...prev, newId]);
+          }}
         />
       )}
     </div>
