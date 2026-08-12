@@ -657,6 +657,12 @@ export default function Schedule({ userId, userRole }) {
         color: ev.color,
         lanes: currentLanes,
         athlete_id: ev.athlete_id,
+        // #310 merge: this insert predates athlete_ids and was missing it —
+        // without this, moving a lane (or the whole event) on one occurrence
+        // of a recurring event would create that occurrence's exception row
+        // with athlete_ids defaulted back to empty, silently dropping its
+        // players. Pass through unchanged, same as every other field here.
+        athlete_ids: ev.athlete_ids || [],
         coach_id: ev.coach_id,
         coach_ids: ev.coach_ids || null,
         team_ids: ev.team_ids || [],
@@ -6453,6 +6459,13 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
             color: event.color,
             lanes: event.lanes || [],
             athlete_id: event.athlete_id,
+            // #310 merge: this insert predates athlete_ids and was missing
+            // it — without this, reassigning teams on one occurrence of a
+            // recurring event would create that occurrence's exception row
+            // with athlete_ids defaulted back to empty, silently dropping
+            // its players. Pass through unchanged, same as every other
+            // field here.
+            athlete_ids: event.athlete_ids || [],
             coach_id: event.coach_id,
             coach_ids: event.coach_ids || null,
             team_ids: teamDraft,
@@ -6515,6 +6528,13 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
             color: event.color,
             lanes: event.lanes || [],
             athlete_id: event.athlete_id,
+            // #310 merge: this insert predates athlete_ids and was missing
+            // it — without this, reassigning coach(es) on one occurrence of
+            // a recurring event would create that occurrence's exception
+            // row with athlete_ids defaulted back to empty, silently
+            // dropping its players. Pass through unchanged, same as every
+            // other field here.
+            athlete_ids: event.athlete_ids || [],
             team_ids: event.team_ids || [],
             ...patch,
           });
@@ -6569,6 +6589,13 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
             location: event.location,
             color: event.color,
             lanes: event.lanes || [],
+            // #310 merge: this insert predates athlete_ids and was missing
+            // it — without this, reassigning the single athlete on one
+            // occurrence of a recurring event would create that occurrence's
+            // exception row with athlete_ids defaulted back to empty,
+            // silently dropping its players. Pass through unchanged, same
+            // as every other field here.
+            athlete_ids: event.athlete_ids || [],
             coach_id: event.coach_id,
             coach_ids: event.coach_ids || null,
             team_ids: event.team_ids || [],
