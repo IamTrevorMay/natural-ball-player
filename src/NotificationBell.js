@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2 } from 'lucide-react';
 
 function fmtMoney(cents) {
   return `$${((cents || 0) / 100).toFixed(2)}`;
@@ -15,7 +15,7 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump }) {
+export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -88,27 +88,37 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
             ))}
 
             {(mainCounts?.pendingPayments || []).map(pay => (
-              <a
-                key={`main-pay-${pay.id}`}
-                href={pay.checkout_url}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setOpen(false)}
-                className="block w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition"
-              >
-                <div className="flex items-start space-x-3">
-                  <div className="mt-0.5"><CreditCard size={16} className="text-green-600" /></div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-900">
-                      Payment due: <span className="font-medium">{pay.product_name_snapshot}</span>
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {fmtMoney(pay.amount_cents)} · tap to complete payment
-                    </p>
+              <div key={`main-pay-${pay.id}`} className="flex items-stretch border-b border-gray-100">
+                <a
+                  href={pay.checkout_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setOpen(false)}
+                  className="flex-1 text-left px-4 py-3 hover:bg-gray-50 transition"
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className="mt-0.5"><CreditCard size={16} className="text-green-600" /></div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-900">
+                        Payment due: <span className="font-medium">{pay.product_name_snapshot}</span>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {fmtMoney(pay.amount_cents)} · tap to complete payment
+                      </p>
+                    </div>
+                    {currentPortal !== 'main' && <PortalTag kind="main" />}
                   </div>
-                  {currentPortal !== 'main' && <PortalTag kind="main" />}
-                </div>
-              </a>
+                </a>
+                {(userRole === 'admin' || userRole === 'coach') && onDeletePayment && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeletePayment(pay.id, pay.product_name_snapshot); }}
+                    className="px-3 text-gray-400 hover:text-red-600 hover:bg-red-50 transition flex items-center"
+                    title="Delete this pending payment"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
             ))}
 
             {(mainCounts?.unreadMessages > 0) && (

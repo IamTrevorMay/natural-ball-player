@@ -1110,8 +1110,8 @@ export function TrainingTab({ teams, players }) {
                       </div>
                     </div>
                     {expandedWorkout === wt.id && exercises.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-gray-200">
-                        <table className="w-full text-sm">
+                      <div className="mt-3 pt-3 border-t border-gray-200 overflow-x-auto">
+                        <table className="w-full text-sm min-w-max">
                           <thead>
                             <tr className="text-left text-xs text-gray-500">
                               <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
@@ -1191,8 +1191,8 @@ export function TrainingTab({ teams, players }) {
                                   </div>
                                 </div>
                                 {expandedWorkout === wt.id && exercises.length > 0 && (
-                                  <div className="mt-3 pt-3 border-t border-gray-200">
-                                    <table className="w-full text-sm">
+                                  <div className="mt-3 pt-3 border-t border-gray-200 overflow-x-auto">
+                                    <table className="w-full text-sm min-w-max">
                                       <thead>
                                         <tr className="text-left text-xs text-gray-500">
                                           <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
@@ -1458,10 +1458,12 @@ function ExerciseRow({ exercise, onRefresh }) {
           )}
         </div>
         {exercise.description && <p className="text-xs text-gray-500 mt-0.5">{exercise.description}</p>}
-        <div className="flex items-center space-x-3 mt-1 text-xs text-gray-600">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-600">
           {exercise.sets && <span><strong>{exercise.sets}</strong> sets</span>}
           {exercise.reps && <span><strong>{exercise.reps}</strong> reps</span>}
           {exercise.weight && <span><strong>{exercise.weight}</strong></span>}
+          {exercise.rest && <span>Rest: <strong>{exercise.rest}</strong></span>}
+          {exercise.load && <span>Load: <strong>{exercise.load}</strong></span>}
         </div>
       </div>
       <button onClick={handleDelete} className="text-gray-400 hover:text-red-600 transition ml-2"><Trash2 size={14} /></button>

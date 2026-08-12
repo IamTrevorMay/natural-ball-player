@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { X, ChevronDown, ChevronRight, Plus, Calendar, Package } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2 } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 
 // #235: full package history for a single player. Shows every active & past
@@ -32,7 +32,7 @@ function timeLeftLabel(expiresAt) {
   return { text: `${days}d left`, cls: 'text-gray-500' };
 }
 
-export default function PackagesModal({ userId, userName, canManage, onClose }) {
+export default function PackagesModal({ userId, userName, canManage, canDelete = false, onClose }) {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState([]);
   const [usageByPurchase, setUsageByPurchase] = useState({});
@@ -139,6 +139,24 @@ export default function PackagesModal({ userId, userName, canManage, onClose }) 
     } catch (e) { alert('Error: ' + formatUserError(e)); } finally { setBusyId(null); }
   };
 
+  const deletePackage = async (purchase) => {
+    const usageCount = (usageByPurchase[purchase.id] || []).length;
+    const confirmMsg = usageCount > 0
+      ? `This package has ${usageCount} logged session(s). Deleting it will also remove those usage records. Continue?`
+      : `Delete "${purchase.product_name_snapshot}" from this account? This cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+    setBusyId(purchase.id);
+    try {
+      if (usageCount > 0) {
+        const { error: usageErr } = await supabase.from('store_session_usage').delete().eq('purchase_id', purchase.id);
+        if (usageErr) throw usageErr;
+      }
+      const { error } = await supabase.from('store_purchases').delete().eq('id', purchase.id);
+      if (error) throw error;
+      await load();
+    } catch (e) { alert('Error deleting package: ' + formatUserError(e)); } finally { setBusyId(null); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[88vh] flex flex-col">
@@ -223,6 +241,11 @@ export default function PackagesModal({ userId, userName, canManage, onClose }) 
                         </button>
                         <button onClick={() => editRemaining(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Edit remaining</button>
                         <button onClick={() => editExpiry(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Set expiration</button>
+                        {canDelete && (
+                          <button onClick={() => deletePackage(p)} disabled={busy} className="flex items-center gap-1 border border-red-300 text-red-600 px-2.5 py-1 rounded text-xs font-medium hover:bg-red-50 transition disabled:opacity-50">
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

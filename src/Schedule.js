@@ -6158,7 +6158,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
 function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDelete, coaches = [] }) {
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal', is_public: !!event.is_public, booking_type: event.booking_type || PUBLIC_BOOKING_TYPES[0].value, public_price: event.public_price_cents != null ? (event.public_price_cents / 100).toFixed(2) : '', public_capacity: event.public_capacity || 1 });
+  const [formData, setFormData] = useState({ title: event.title, description: event.description || '', event_date: event.event_date || '', start_time: event.start_time || '', end_time: event.end_time || '', location: event.location || '', color: event.color || 'teal', is_public: !!event.is_public, booking_type: event.booking_type || PUBLIC_BOOKING_TYPES[0].value, public_price: event.public_price_cents != null ? (event.public_price_cents / 100).toFixed(2) : '', public_capacity: event.public_capacity || 1 });
 
   const isStaff = userRole === 'admin' || userRole === 'coach';
   const isPlayer = userRole === 'player';
@@ -6360,6 +6360,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     try {
       const { error } = await supabase.from('facility_events').update({
         title: formData.title, description: formData.description || null,
+        event_date: formData.event_date || null,
         start_time: formData.start_time || null, end_time: formData.end_time || null,
         location: formData.location || null,
         color: formData.is_public ? bookingTypeColor(formData.booking_type) : (formData.color || null),
@@ -6405,6 +6406,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           {editing ? (
             <div className="space-y-4">
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Title</label><input type="text" value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+              <div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={formData.event_date} onChange={(e) => setFormData({...formData, event_date: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={formData.start_time} onChange={(e) => setFormData({...formData, start_time: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
                 <div><label className="block text-sm font-medium text-gray-700 mb-1">End Time</label><input type="time" value={formData.end_time} onChange={(e) => setFormData({...formData, end_time: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
