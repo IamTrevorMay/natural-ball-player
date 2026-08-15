@@ -1379,9 +1379,12 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
             {program.duration_weeks && <span className="text-xs text-gray-500">{program.duration_weeks} weeks</span>}
           </div>
           {program.description && <p className="text-sm text-gray-600 mt-1">{program.description}</p>}
-          <div className="flex items-center space-x-4 mt-2 text-sm">
+          {/* QA 2026-08-15: both rows now wrap. The category pills ran off the
+              right edge on a phone, and adding the "other" bucket made it one
+              pill worse. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm">
             <span className="text-gray-500">{days.length} days &bull; {totalExercises} exercises</span>
-            <div className="flex space-x-1">
+            <div className="flex flex-wrap gap-1">
               {allCategories.map(cat => (
                 <span key={cat} className={`px-2 py-0.5 rounded-full text-xs font-medium ${categoryColors[cat] || categoryColors.other}`}>{cat}</span>
               ))}

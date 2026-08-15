@@ -394,13 +394,17 @@ export default function WorkAdminHoursAnalytics() {
       [],
       header,
       ...sortedRows.map((r) => [
+        // QA 2026-08-15: the export must say exactly what the screen says. Both
+        // of these cells render an em dash when there is nothing to average and
+        // no share to take, so write that rather than a fake 0.00 / blank.
         r.name, fmtHours(r.approved), fmtHours(r.pending), fmtHours(r.hours), r.daysWorked,
-        fmtHours(r.avgPerDay), r.daysOff, ...agg.typesPresent.map((t) => r.byType[t] || 0),
-        ...(showMonthOff ? [r.monthOff] : []), r.yearOff, r.share.toFixed(1),
+        r.daysWorked ? fmtHours(r.avgPerDay) : '—', r.daysOff, ...agg.typesPresent.map((t) => r.byType[t] || 0),
+        ...(showMonthOff ? [r.monthOff] : []), r.yearOff, agg.totals.hours > 0 ? r.share.toFixed(1) : '—',
       ]),
       ['TOTAL', fmtHours(agg.totals.approved), fmtHours(agg.totals.pending), fmtHours(agg.totals.hours),
-        agg.totals.daysWorked, '', agg.totals.daysOff, ...agg.typesPresent.map((t) => sortedRows.reduce((s, r) => s + (r.byType[t] || 0), 0)),
-        ...(showMonthOff ? [agg.totals.monthOff] : []), agg.totals.yearOff, totalShare.toFixed(1)],
+        agg.totals.daysWorked, '—', agg.totals.daysOff, ...agg.typesPresent.map((t) => sortedRows.reduce((s, r) => s + (r.byType[t] || 0), 0)),
+        ...(showMonthOff ? [agg.totals.monthOff] : []), agg.totals.yearOff,
+        agg.totals.hours > 0 ? totalShare.toFixed(1) : '—'],
     ];
     const csv = lines.map((row) => row.map(esc).join(',')).join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

@@ -384,7 +384,9 @@ function CatalogTab() {
       ) : products.length === 0 ? (
         <div className="text-center py-12 text-gray-500">No products yet.</div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+        // QA 2026-08-15: was `overflow-hidden`, which clipped the catalog table
+        // on a phone instead of letting it scroll.
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>

@@ -1378,9 +1378,11 @@ function OpenCageTab({ adminId, audience, lastSentByUser, onLogged, onLogUnavail
               <> <span className="font-semibold text-amber-700">{audience.excluded}</span> buyer
                 {audience.excluded === 1 ? ' also holds' : 's also hold'} a monthly membership and{' '}
                 {audience.excluded === 1 ? 'is' : 'are'}{' '}
+                {/* QA 2026-08-15: name the control, matching the standard the
+                    Package Reminders banner sets. "that setting" was ambiguous. */}
                 {audience.excludingMonthly
-                  ? 'excluded — untick that setting above to include them.'
-                  : 'included, because that setting is unticked above.'}</>
+                  ? <>excluded — untick <span className="font-semibold">Open Cage: exclude monthly members</span> above to include them.</>
+                  : <>included, because <span className="font-semibold">Open Cage: exclude monthly members</span> is unticked above.</>}</>
             )}
             {kept.length === 0 && (
               <> <span className="font-semibold text-red-700">There are no openings selected</span>, so the message

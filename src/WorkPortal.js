@@ -232,7 +232,13 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         setMobileOpen={setMobileOpen}
       />
 
-      <div className="flex-1 md:ml-64">
+      {/* QA 2026-08-15: `min-w-0` is load-bearing. Without it this flex item keeps
+          its automatic min-content width, so every wide child (tab rows, tables,
+          the hours chart) pushes the whole page sideways on a phone and the
+          `overflow-x-auto` wrappers inside those children never get a constrained
+          width to scroll inside. App.js:1053 has had this on the main portal all
+          along; the work portal never got it. */}
+      <div className="flex-1 min-w-0 md:ml-64">
         <div className="sticky top-0 z-30 bg-white border-b px-4 md:px-8 py-3 flex items-center justify-between">
           <div className="flex items-center min-w-0">
             <button
