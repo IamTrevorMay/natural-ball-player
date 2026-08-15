@@ -10,6 +10,7 @@ import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
+import { capsForPurchases, isLiftingCoach, weekRangeForDate, capWarningMessage } from './bookingCaps';
 import { CreateUserModal } from './AdminSettings';
 import { familyKey, familyLabel, sameFamily } from './productFamily';
 // #277: per-occurrence RSVP (Going / Not going / Maybe) + coach roster & nudge.
@@ -43,6 +44,104 @@ function getWeekRangeLabel(date) {
     return `${start.toLocaleDateString('en-US', optsY)} – ${end.toLocaleDateString('en-US', optsY)}`;
   }
   return `${start.toLocaleDateString('en-US', opts)} – ${end.toLocaleDateString('en-US', opts)}, ${end.getFullYear()}`;
+}
+
+// #276 — weekly booking caps. Returns a warning string when booking one more
+// session for `playerId` on `slotDate` would exceed the allowance their package
+// name implies, or null when it would not (or when we cannot tell, in which
+// case we stay silent). This NEVER blocks: callers show the message and offer
+// "Book anyway".
+//
+// Facility-wide by design: every reservation the player holds that week counts,
+// whichever coach or lane it belongs to.
+async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slotCoach, slotCoachId, excludeReservationId, purchases }) {
+  try {
+    if (!playerId || !slotDate) return null;
+
+    // What the player owns. Same filter the reserve modal already uses for its
+    // "payment confirmed" badge: currently-held, unexpired purchases.
+    let owned = purchases;
+    if (!owned) {
+      const nowIso = new Date().toISOString();
+      const { data } = await supabase
+        .from('store_purchases')
+        .select('product_name_snapshot, product_kind, status')
+        .eq('user_id', playerId)
+        .in('product_kind', ['package', 'bundle', 'lesson'])
+        .in('status', ['active', 'paid'])
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
+      owned = data || [];
+    }
+    const caps = capsForPurchases(owned);
+
+    // Is the session being booked a lifting session? (Its coach carries the
+    // Strength & Conditioning skill tag.)
+    let coach = slotCoach;
+    if ((!coach || !Array.isArray(coach.skills)) && slotCoachId) {
+      const { data } = await supabase.from('users').select('id, skills').eq('id', slotCoachId).maybeSingle();
+      coach = data || coach;
+    }
+    const bookingIsLifting = isLiftingCoach(coach);
+
+    // Nothing to say if the relevant cap is unknown — bail before querying.
+    if (bookingIsLifting ? caps.liftingCap === null : caps.nonLiftingCap === null) return null;
+
+    // Everything already on the player's schedule that Sun–Sat week. Only
+    // live bookings count: 'cancelled' is excluded because the athlete gave the
+    // spot back, and 'declined' because the coach never gave it to them — a
+    // declined request is not a session they hold.
+    const { startStr, endStr } = weekRangeForDate(slotDate);
+    const { data: existing, error } = await supabase
+      .from('slot_reservations')
+      .select('id, slot_date, status, training_slots(coach_id)')
+      .eq('player_id', playerId)
+      .gte('slot_date', startStr)
+      .lte('slot_date', endStr)
+      .in('status', ['pending', 'confirmed']);
+    if (error) return null; // a failed count must not stand in the way of a booking
+
+    const rows = (existing || []).filter(r => r.id !== excludeReservationId);
+    const coachIds = [...new Set(rows.map(r => r.training_slots?.coach_id).filter(Boolean))];
+    let skillsByCoach = {};
+    if (coachIds.length > 0) {
+      const { data: coachRows } = await supabase.from('users').select('id, skills').in('id', coachIds);
+      (coachRows || []).forEach(c => { skillsByCoach[c.id] = c.skills; });
+    }
+    let liftingCount = 0;
+    let nonLiftingCount = 0;
+    rows.forEach(r => {
+      if (isLiftingCoach({ skills: skillsByCoach[r.training_slots?.coach_id] })) liftingCount++;
+      else nonLiftingCount++;
+    });
+
+    return capWarningMessage({ playerName, self, caps, liftingCount, nonLiftingCount, bookingIsLifting });
+  } catch (_) {
+    return null; // never let the cap check break a booking
+  }
+}
+
+// #276 — the warning itself. Warn, never block: Cancel backs out, the primary
+// button goes ahead with the booking anyway.
+function BookingCapWarningModal({ message, onCancel, onProceed, proceedLabel = 'Book anyway' }) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-sm w-full">
+        <div className="p-6 space-y-3">
+          <div className="flex items-start space-x-2">
+            <AlertTriangle size={20} className="mt-0.5 shrink-0 text-amber-500" />
+            <div>
+              <h4 className="font-semibold text-gray-900">Weekly session limit reached</h4>
+              <p className="text-sm text-gray-600 mt-1">{message}</p>
+            </div>
+          </div>
+          <div className="flex space-x-3 pt-1">
+            <button onClick={onCancel} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+            <button onClick={onProceed} className="flex-1 bg-amber-600 text-white py-2 rounded-lg hover:bg-amber-700 transition">{proceedLabel}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Categorize workout events by title for color-coding
@@ -237,6 +336,8 @@ export default function Schedule({ userId, userRole }) {
   const [publicSlotBookings, setPublicSlotBookings] = useState([]);
   const [showCreateSlot, setShowCreateSlot] = useState(null);
   const [showReserveSlot, setShowReserveSlot] = useState(null);
+  // #276: pending over-the-weekly-cap warning on the coach-side confirm.
+  const [capConfirm, setCapConfirm] = useState(null); // { message, reservationId }
   const [showEditSlot, setShowEditSlot] = useState(null);
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
@@ -808,7 +909,25 @@ export default function Schedule({ userId, userRole }) {
   // (coachModalOpen below) — one implementation, two render call sites,
   // both driven by the same selectedCoach the rest of this file already
   // uses. No behaviour change from what these bodies did inline.
-  const handleConfirmReservation = async (reservationId) => {
+  const handleConfirmReservation = async (reservationId, force = false) => {
+    // #276: this is the coach-side booking decision — confirming is what puts
+    // the athlete on the schedule — so the weekly-allowance check runs here
+    // too. It warns; the coach can still confirm ("Confirm anyway").
+    if (!force) {
+      const res = slotReservations.find(r => r.id === reservationId);
+      if (res) {
+        const warning = await checkWeeklyBookingCap({
+          playerId: res.player_id,
+          playerName: res.users?.full_name,
+          slotDate: res.slot_date,
+          slotCoach: selectedCoach,
+          // Don't count the request being confirmed as one of the sessions
+          // already booked — it is the one being added.
+          excludeReservationId: reservationId,
+        });
+        if (warning) { setCapConfirm({ message: warning, reservationId }); return; }
+      }
+    }
     const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
     if (error) { alert('Failed to confirm reservation: ' + formatUserError(error)); return; }
     fetchCoachSlots(selectedCoach.id);
@@ -2520,6 +2639,16 @@ export default function Schedule({ userId, userRole }) {
           coach={selectedCoach}
           onClose={() => setShowReserveSlot(null)}
           onSuccess={() => { setShowReserveSlot(null); if (selectedCoach) fetchCoachSlots(selectedCoach.id); }}
+        />
+      )}
+      {/* #276: coach confirming a booking that puts the athlete over their
+          weekly allowance — warn, but let the coach go ahead. */}
+      {capConfirm && (
+        <BookingCapWarningModal
+          message={capConfirm.message}
+          proceedLabel="Confirm anyway"
+          onCancel={() => setCapConfirm(null)}
+          onProceed={() => { const id = capConfirm.reservationId; setCapConfirm(null); handleConfirmReservation(id, true); }}
         />
       )}
       {ctxMenu && (
@@ -8261,6 +8390,10 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null, reason: null });
   // #244/#249: names of the subscription plan(s) this session accepts (if any).
   const [subNames, setSubNames] = useState([]);
+  // #276: the player's held purchases (reused for the weekly-cap check) and the
+  // pending over-cap warning, if any.
+  const [ownedPurchases, setOwnedPurchases] = useState([]);
+  const [capWarning, setCapWarning] = useState(null);
 
   // #305: the product(s) this specific session was tagged with (CreateSlotPanel
   // / BulkTagSessions). Matching is by id against THIS list, never by name or
@@ -8288,6 +8421,10 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           .in('product_kind', ['package', 'bundle', 'lesson'])
           .in('status', ['active', 'paid']);
         const purchases = data || [];
+        // #276: the weekly-cap check needs the player's live (unexpired)
+        // packages. #305's query above deliberately does NOT filter on expiry
+        // so it can tell "expired" apart from "never had one", so filter here.
+        setOwnedPurchases(purchases.filter(p => !p.expires_at || p.expires_at > today));
         // remaining_qty === null means "uncounted" — only true unlimited for a
         // recurring monthly package. For a one-time bundle/lesson purchase,
         // null means no session count was ever set on it (a plain single-lesson
@@ -8404,7 +8541,10 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const slotStartAt = new Date(`${slot.slot_date}T${(slot.start_time || '00:00').slice(0, 5)}:00`);
   const bookingClosed = Date.now() > slotStartAt.getTime() - RESERVE_CUTOFF_MS;
 
-  const handleReserve = async () => {
+  // #276: before writing the reservation, check the athlete's weekly allowance.
+  // A warning is a confirmation step, not a block — `force` is the second pass
+  // after they choose "Book anyway".
+  const handleReserve = async (force = false) => {
     if (bookingClosed) { alert('Booking is closed — reservations close 12 hours before the session starts.'); return; }
     // #305: server-side belt for the button's own disabled state below —
     // this is a client-side gate, same tier as the cutoff check just above
@@ -8413,6 +8553,17 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!force) {
+        const warning = await checkWeeklyBookingCap({
+          playerId: user.id,
+          self: true,
+          slotDate: slot.slot_date,
+          slotCoach: coach,
+          slotCoachId: slot.coach_id,
+          purchases: ownedPurchases,
+        });
+        if (warning) { setCapWarning(warning); setLoading(false); return; }
+      }
       const status = slot.auto_confirm ? 'confirmed' : 'pending';
       const { error } = await supabase.from('slot_reservations').insert({
         slot_id: slot.id, player_id: user.id, slot_date: slot.slot_date, status,
@@ -8493,10 +8644,18 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           )}
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleReserve} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
+            <button onClick={() => handleReserve(false)} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
           </div>
         </div>
       </div>
+      {/* #276: over the weekly allowance — a warning, not a block. */}
+      {capWarning && (
+        <BookingCapWarningModal
+          message={capWarning}
+          onCancel={() => setCapWarning(null)}
+          onProceed={() => { setCapWarning(null); handleReserve(true); }}
+        />
+      )}
     </div>
   );
 }

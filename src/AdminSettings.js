@@ -3,7 +3,8 @@ import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle, Key } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
-import { COACH_SKILL_OPTIONS } from './skillOptions';
+import { COACH_SKILL_OPTIONS, SC_SKILL } from './skillOptions';
+import { weeklyNonLiftingCap, stripFrequencySuffix, LIFTING_WEEKLY_CAP } from './bookingCaps';
 import BulkTagFacilityEventTeams from './BulkTagFacilityEventTeams';
 
 async function deleteAuthUser(userId) {
@@ -582,6 +583,8 @@ function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refresh
         </div>
       )}
 
+      <WeeklyBookingCapsPanel coaches={coaches} />
+
       {showAssignRole && (
         <AssignRoleModal
           users={users}
@@ -591,6 +594,112 @@ function CoachesTab({ coaches, users, showAssignRole, setShowAssignRole, refresh
             refreshUsers();
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// #276 — read-only visibility on the weekly booking caps. Lists every active
+// package/lesson product and the cap the name-parsing rule derives from it, so
+// the owner can eyeball that the parsing is right before trusting the warnings.
+// Nothing here is editable and nothing is written; overrides are out of scope.
+// Lives next to the coach list on purpose: the other half of the rule is which
+// coaches carry the "Strength & Conditioning" tag above.
+function WeeklyBookingCapsPanel({ coaches }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || rows) return;
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from('store_products')
+        .select('id, name, kind, active')
+        .eq('active', true)
+        .in('kind', ['package', 'lesson'])
+        .order('name');
+      if (error) {
+        console.error('Error loading products for booking caps:', error);
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+      // Square exported the same package once per billing frequency. Group on
+      // the family name so this reads as one row per real package.
+      const byFamily = {};
+      (data || []).forEach(p => {
+        const family = stripFrequencySuffix(p.name);
+        const key = family.toLowerCase();
+        if (!byFamily[key]) byFamily[key] = { family, cap: weeklyNonLiftingCap(p.name), variants: 0 };
+        byFamily[key].variants++;
+      });
+      setRows(Object.values(byFamily).sort((a, b) => a.family.localeCompare(b.family)));
+      setLoading(false);
+    })();
+  }, [open, rows]);
+
+  const scCoaches = (coaches || []).filter(c => (c.skills || []).includes(SC_SKILL));
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <div className="font-semibold text-gray-900 text-sm">Weekly booking caps by package</div>
+          <div className="text-xs text-gray-500">How many non-lifting sessions a week each package allows (read-only)</div>
+        </div>
+        <ChevronRight size={18} className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div className="border-t border-gray-200 p-4 space-y-3">
+          <div className="text-xs text-gray-600 space-y-1">
+            <p>A package named <span className="font-medium">one time a week</span> allows 1 non-lifting session a week; a package named <span className="font-medium">2–4 times a week</span> allows 2. Every package allows up to {LIFTING_WEEKLY_CAP} lifting sessions a week.</p>
+            <p>A session counts as <span className="font-medium">lifting</span> when its coach carries the “{SC_SKILL}” skill tag. Packages whose name says nothing about frequency show “—”: no cap is applied and no warning is shown.</p>
+            <p className="text-gray-500">Going over the cap only warns the athlete or coach — it never blocks the booking.</p>
+          </div>
+
+          <div className={`rounded-lg px-3 py-2 text-xs ${scCoaches.length === 0 ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-gray-50 border border-gray-200 text-gray-700'}`}>
+            {scCoaches.length === 0
+              ? <>No coach is tagged “{SC_SKILL}” yet, so every session counts as non-lifting. Tag your S&amp;C coaches on their cards above.</>
+              : <>Tagged “{SC_SKILL}”: <span className="font-medium">{scCoaches.map(c => c.full_name).join(', ')}</span></>}
+          </div>
+
+          {loading && <div className="text-xs text-gray-400">Loading packages…</div>}
+          {rows && rows.length === 0 && !loading && <div className="text-xs text-gray-400">No active packages found.</div>}
+          {rows && rows.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                    <th className="py-2 pr-3 font-medium">Package</th>
+                    <th className="py-2 pr-3 font-medium whitespace-nowrap">Non-lifting / week</th>
+                    <th className="py-2 font-medium whitespace-nowrap">Lifting / week</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.family} className="border-b border-gray-100 last:border-0">
+                      <td className="py-2 pr-3 text-gray-900">
+                        {r.family}
+                        {r.variants > 1 && <span className="ml-2 text-[11px] text-gray-400">{r.variants} Square listings</span>}
+                      </td>
+                      <td className="py-2 pr-3">
+                        {r.cap === null
+                          ? <span className="text-gray-400">—</span>
+                          : <span className="font-medium text-gray-900">{r.cap}</span>}
+                      </td>
+                      <td className="py-2 text-gray-900">{LIFTING_WEEKLY_CAP}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
