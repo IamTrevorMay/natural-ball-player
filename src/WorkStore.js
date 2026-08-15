@@ -307,7 +307,9 @@ function CatalogTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-sm text-gray-600">Active products show to players in the Store on their profile.</p>
-        <div className="flex items-center space-x-2">
+        {/* QA 2026-08-15: this 415px button row did not wrap, so "Add Product"
+            was sliced off at 390px. Its parent already wraps; this one didn't. */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={syncFromSquare}
             disabled={syncing}

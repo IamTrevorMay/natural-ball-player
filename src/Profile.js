@@ -1890,7 +1890,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 {userData.created_at && <span>Member since: <span className="text-gray-700 font-medium">{new Date(userData.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span></span>}
               </div>
             </div>
-            <div className="ml-auto flex items-center gap-3">
+            {/* QA 2026-08-15: this strip (Pay pill + attendance rings) is 455px
+                and did not wrap, so the whole Profile page panned sideways on a
+                phone — the page #321 is about. Pre-existing, fixed here. */}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-3 min-w-0">
               {!onBack && (
                 <button
                   onClick={() => setShowStore(true)}

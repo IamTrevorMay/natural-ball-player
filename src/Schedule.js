@@ -1694,7 +1694,9 @@ export default function Schedule({ userId, userRole }) {
         </div>
         
         {/* View Toggle */}
-        <div className="flex items-center space-x-2">
+        {/* QA 2026-08-15: added flex-wrap — this row is 253px+ and did not wrap,
+            so the Schedule page panned sideways on a phone. Pre-existing. */}
+        <div className="flex flex-wrap items-center gap-2">
           {userRole === 'player' ? (
             <>
               <button
@@ -1758,8 +1760,11 @@ export default function Schedule({ userId, userRole }) {
           )}
           <div className="bg-white rounded-lg shadow flex-1 min-w-0">
           <div className="border-b border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
+            {/* QA 2026-08-15: added flex-wrap + gap so the title/Add Game group
+                and the Week/Month/Lanes toggle stack on a phone instead of
+                pushing the whole Schedule page sideways. Pre-existing. */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <h3 className="text-lg font-semibold text-gray-900">My Schedule</h3>
                 <button
                   onClick={() => setShowPlayerAddGame(true)}
@@ -1910,8 +1915,9 @@ export default function Schedule({ userId, userRole }) {
             {/* Main Calendar Area */}
             <div className="flex-1 min-w-0">
               <div className="border-b border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-4">
+                {/* QA 2026-08-15: flex-wrap, same reason as the My Schedule bar. */}
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                  <div className="flex flex-wrap items-center gap-4">
                     <button
                       onClick={() => setCoachesDrawerOpen(true)}
                       className="flex items-center space-x-1 bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium transition"
@@ -2085,9 +2091,10 @@ export default function Schedule({ userId, userRole }) {
       {view !== 'facility' && view !== 'my-schedule' && <><div className="flex space-x-4">{(userRole === 'admin' || userRole === 'coach') && <ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} />}<div className="bg-white rounded-lg shadow flex-1 min-w-0">
         {/* Calendar Header */}
         <div className="border-b border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
+          {/* QA 2026-08-15: flex-wrap, same reason as the My Schedule bar. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             {/* Team/Player Selector */}
-            <div className="flex items-center space-x-4">
+            <div className="flex flex-wrap items-center gap-4">
               {view === 'team' ? (
                 <select
                   value={selectedTeam || ''}
