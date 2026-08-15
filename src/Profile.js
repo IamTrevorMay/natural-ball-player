@@ -80,6 +80,34 @@ const PT_STATUS_COLORS = {
 const PT_VISIT_TYPES = ['Evaluation', 'Treatment', 'Follow-up', 'Re-evaluation', 'Discharge'];
 const PT_BODY_AREAS = ['Shoulder', 'Elbow', 'Forearm/Wrist', 'Lower back', 'Hip', 'Knee', 'Ankle/Foot', 'Core', 'Other'];
 
+/* #321 — Sets / Reps / Rest / Load, readable on a 375px phone.
+ *
+ * The reporter said the numbers he trains off still weren't legible on his
+ * phone after the first fix. The failure mode is the same everywhere: these
+ * four values get packed onto one un-wrapping line (or into squeezed table
+ * columns) with no label, so "3 × 8 · 135 · 60" is both unreadable and
+ * ambiguous — which number is the rest and which is the load?
+ *
+ * This renders them as labelled chips that WRAP instead of truncating, and
+ * always prints an em-dash for a value that was never programmed, so a blank
+ * is never mistaken for a layout bug. Presentation only.
+ */
+function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
+  const items = [['Sets', sets], ['Reps', reps], ['Load', load], ['Rest', rest]];
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1 text-sm ${className}`}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || '—'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const PROGRAM_HEADER_COLOR = {
   hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
   pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
@@ -2656,28 +2684,50 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                           </div>
                           {v.content && <p className="text-sm text-gray-800 whitespace-pre-wrap">{v.content}</p>}
                           {Array.isArray(v.exercises) && v.exercises.length > 0 && (
-                            <div className="mt-2 overflow-x-auto">
-                              <table className="w-full text-xs border-collapse">
-                                <thead className="bg-gray-50">
-                                  <tr>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Exercise</th>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Sets</th>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Reps</th>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {v.exercises.map((ex, i) => (
-                                    <tr key={i} className="border-t border-gray-100">
-                                      <td className="px-2 py-1 text-gray-900">{ex.name || '—'}</td>
-                                      <td className="px-2 py-1 text-gray-700">{ex.sets || '—'}</td>
-                                      <td className="px-2 py-1 text-gray-700">{ex.reps || '—'}</td>
-                                      <td className="px-2 py-1 text-gray-600">{ex.notes || ''}</td>
+                            <>
+                              {/* #321: below sm this 4-column table squeezed Exercise and
+                                  Notes into ~85px each (Sets/Reps hold fixed w-20), so the
+                                  athlete's home-plan numbers wrapped one character per line.
+                                  Stack as labelled cards on a phone; table unchanged at sm+. */}
+                              <div className="sm:hidden mt-2 space-y-2">
+                                {v.exercises.map((ex, i) => (
+                                  <div key={i} className="border border-gray-200 rounded-lg p-2.5 bg-white">
+                                    <div className="text-sm font-medium text-gray-900 break-words">{ex.name || '—'}</div>
+                                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                                      {[['Sets', ex.sets], ['Reps', ex.reps]].map(([label, value]) => (
+                                        <span key={label} className="inline-flex items-baseline gap-1">
+                                          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+                                          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>{value || '—'}</span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {ex.notes && <div className="mt-1 text-xs text-gray-600 break-words">{ex.notes}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="hidden sm:block mt-2 overflow-x-auto">
+                                <table className="w-full text-xs border-collapse">
+                                  <thead className="bg-gray-50">
+                                    <tr>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Exercise</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Sets</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Reps</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                  </thead>
+                                  <tbody>
+                                    {v.exercises.map((ex, i) => (
+                                      <tr key={i} className="border-t border-gray-100">
+                                        <td className="px-2 py-1 text-gray-900">{ex.name || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-700">{ex.sets || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-700">{ex.reps || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-600">{ex.notes || ''}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
                           )}
                           {v.follow_up_at && (
                             <p className="text-xs text-blue-700 mt-2">
@@ -3520,19 +3570,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               <div className="p-2 bg-blue-50 rounded border border-blue-100 space-y-1.5">
                                 <div className="text-xs font-semibold text-blue-700">Exercises</div>
                                 {exercises.map((ex, j) => (
-                                  <div key={j} className="bg-white rounded p-2 border border-blue-100 flex items-center justify-between text-xs">
-                                    <div>
-                                      <span className="font-medium text-gray-900">{ex.name}</span>
-                                      <div className="flex items-center gap-2 text-gray-500 mt-0.5">
-                                        {(ex.sets || ex.reps) && (
-                                          <span>{ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}</span>
-                                        )}
-                                        {ex.rest && <span>Rest: {ex.rest}</span>}
-                                        {ex.load && <span>Load: {ex.load}</span>}
-                                      </div>
+                                  <div key={j} className="bg-white rounded p-2 border border-blue-100 flex items-start justify-between gap-2 text-xs">
+                                    <div className="min-w-0 flex-1">
+                                      <span className="font-medium text-gray-900 break-words">{ex.name}</span>
+                                      {/* #321: was a non-wrapping `flex items-center gap-2` with no
+                                          label on sets/reps — at 375px the rest/load values ran off
+                                          the card, and a reps-only exercise rendered nothing at all
+                                          (`ex.sets && ex.reps ? … : ex.sets`). */}
+                                      <ExerciseMetrics
+                                        className="mt-1"
+                                        sets={ex.sets}
+                                        reps={ex.reps}
+                                        load={ex.load}
+                                        rest={ex.rest}
+                                      />
                                     </div>
                                     {ex.link && (
-                                      <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2">
+                                      <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2 flex-shrink-0">
                                         <ExternalLink size={12} />
                                       </a>
                                     )}
@@ -4355,32 +4409,32 @@ function ProgramViewerModal({ programId, programName, onClose }) {
                 ) : (
                   <>
                     <div className="sm:hidden space-y-2">
-                      {day.exercises.map(ex => {
-                        const sr = ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : (ex.sets || ex.reps || '');
-                        const loadVal = ex.load || ex.weight;
-                        const meta = [sr, loadVal, ex.rest].filter(Boolean);
-                        return (
-                          <div key={ex.id} className="border border-gray-200 rounded-lg p-3 bg-white">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="font-semibold text-gray-900 break-words min-w-0 flex-1">{ex.name}</div>
-                              {ex.video_url && (
-                                <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0">
-                                  <ExternalLink size={12} />
-                                  Video
-                                </a>
-                              )}
-                            </div>
-                            {meta.length > 0 && (
-                              <div className="mt-2 text-sm text-gray-700 tabular-nums">
-                                {meta.join(' · ')}
-                              </div>
+                      {day.exercises.map(ex => (
+                        <div key={ex.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-semibold text-gray-900 break-words min-w-0 flex-1">{ex.name}</div>
+                            {ex.video_url && (
+                              <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0">
+                                <ExternalLink size={12} />
+                                Video
+                              </a>
                             )}
                           </div>
-                        );
-                      })}
+                          {/* #321: was `[sets × reps, load, rest].join(' · ')` — unlabelled,
+                              so the athlete couldn't tell rest from load, and any value that
+                              wasn't set just vanished. */}
+                          <ExerciseMetrics
+                            className="mt-2"
+                            sets={ex.sets}
+                            reps={ex.reps}
+                            load={ex.load || ex.weight}
+                            rest={ex.rest}
+                          />
+                        </div>
+                      ))}
                     </div>
-                    <div className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
+                    <div className="hidden sm:block border border-gray-200 rounded-lg overflow-x-auto">
+                      <table className="w-full text-sm min-w-max">
                         <thead className="bg-gray-50">
                           <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                             <th className="px-3 py-2">Exercise</th>
@@ -4876,39 +4930,42 @@ function PtVisitEditor({ draft, setDraft, addExercise, updateExercise, removeExe
         ) : (
           <div className="space-y-2">
             {exercises.map((ex, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+              /* #321: at 375px a 12-column grid gave the Sets and Reps inputs ~45px
+                 each — too narrow to read what you just typed. Below sm the fields
+                 stack onto their own rows; sm+ keeps the original 12-col layout. */
+              <div key={i} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
                 <input
                   type="text"
                   placeholder="Exercise name"
                   value={ex.name || ''}
                   onChange={(e) => updateExercise(i, 'name', e.target.value)}
-                  className="col-span-4 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-2 sm:col-span-4 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   placeholder="Sets"
                   value={ex.sets || ''}
                   onChange={(e) => updateExercise(i, 'sets', e.target.value)}
-                  className="col-span-2 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-1 sm:col-span-2 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   placeholder="Reps"
                   value={ex.reps || ''}
                   onChange={(e) => updateExercise(i, 'reps', e.target.value)}
-                  className="col-span-2 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-1 sm:col-span-2 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   placeholder="Notes (optional)"
                   value={ex.notes || ''}
                   onChange={(e) => updateExercise(i, 'notes', e.target.value)}
-                  className="col-span-3 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-1 sm:col-span-3 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <button
                   type="button"
                   onClick={() => removeExercise(i)}
-                  className="col-span-1 text-gray-400 hover:text-red-600"
+                  className="col-span-1 justify-self-end sm:justify-self-auto text-gray-400 hover:text-red-600"
                   title="Remove exercise"
                 >
                   <Trash2 size={14} />
