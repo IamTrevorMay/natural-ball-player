@@ -1793,7 +1793,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <p className="text-gray-600 mt-1">{onBack ? 'Viewing player profile' : 'Manage your personal information'}</p>
           </div>
         </div>
-        <div className="flex items-center space-x-2">
+        {/* QA 2026-08-15: wrap, so Email Player / Edit Profile stack on a phone
+            instead of pushing the page sideways. */}
+        <div className="flex flex-wrap items-center gap-2">
           {onBack && userData.email && (userRole === 'admin' || userRole === 'coach') && (
             <button
               onClick={() => setShowEmailCompose(true)}
@@ -1821,7 +1823,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       <div className="bg-white rounded-lg shadow">
         <div className="p-6">
           {/* Avatar and Name */}
-          <div className="flex items-center space-x-6 mb-6 pb-6 border-b border-gray-200">
+          {/* QA 2026-08-15: the whole header row wraps on a phone. Previously it
+              was a single non-wrapping row (avatar + name block + the Pay pill /
+              attendance-rings strip), which made the entire Profile page pan
+              sideways at 390px — the page #321 is about. Wrapping here rather
+              than shrinking the strip: `min-w-0` on the strip made it collapse
+              and its children spilled leftwards over the name. */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-4 mb-6 pb-6 border-b border-gray-200">
             {/* Avatar upload follows the same rule as Edit Profile: staff, or
                 the viewer's own profile. Otherwise it is a plain image. */}
             <div
@@ -1893,7 +1901,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             {/* QA 2026-08-15: this strip (Pay pill + attendance rings) is 455px
                 and did not wrap, so the whole Profile page panned sideways on a
                 phone — the page #321 is about. Pre-existing, fixed here. */}
-            <div className="ml-auto flex flex-wrap items-center justify-end gap-3 min-w-0">
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
               {!onBack && (
                 <button
                   onClick={() => setShowStore(true)}

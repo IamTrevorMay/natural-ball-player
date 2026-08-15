@@ -2179,7 +2179,9 @@ export default function Schedule({ userId, userRole }) {
             </div>
 
             {/* View Mode Toggle */}
-            <div className="flex items-center space-x-2">
+            {/* QA 2026-08-15: wrap this inner group too — the 240px player picker
+                beside it meant the outer row had no break point on a phone. */}
+            <div className="flex flex-wrap items-center gap-2">
               {canManageCalendar() && (
                 <button
                   onClick={() => { if (selecting) exitSelectMode(); else setSelecting(true); }}
