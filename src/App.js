@@ -76,7 +76,10 @@ export default function App() {
     // view. Those render blocks fail their gates and show a blank page with no
     // redirect, so reset to the role's default instead.
     const adminOnly = ['manage-coaches', 'manage-interns'];
-    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'programming', 'settings'];
+    // 'profile-view' is the "someone else's profile" screen. Athletes have no
+    // legitimate route into it (their own profile is 'profile'), and it is
+    // persisted to localStorage, so a stale value must not survive a reload.
+    const staffOnly = ['training-groups', 'manage-athletes', 'coach-tools', 'programming', 'settings', 'profile-view'];
     const forbidden =
       (userRole !== 'admin' && adminOnly.includes(currentView)) ||
       (userRole === 'player' && staffOnly.includes(currentView));
@@ -814,9 +817,16 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const [profileReturn, setProfileReturn] = useState({ view: 'settings', scrollY: 0 });
   const [pendingScrollY, setPendingScrollY] = useState(null);
 
+  // Athlete privacy: a player may only ever open their OWN full profile.
+  // Every route into 'profile-view' goes through this predicate, and the
+  // render gate re-checks it so a stale/persisted view can't slip through.
+  // (`effectiveRole` is declared below but only read at call time.)
+  const canViewProfileOf = (profileUserId) => effectiveRole !== 'player' || profileUserId === userId;
+
   // Opens a profile and records where we came from. Used by every list that
   // links to a profile (Settings, Manage Athletes, Teams, Coach Tools, ...).
   const openProfileFrom = (fromView) => (profileUserId) => {
+    if (!canViewProfileOf(profileUserId)) return;
     setProfileReturn({ view: fromView, scrollY: window.scrollY });
     setViewProfileUserId(profileUserId);
     setCurrentView('profile-view');
@@ -1067,8 +1077,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
               )
             )}
             {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} initialTab={profileInitialTab} onInitialTabHandled={() => setProfileInitialTab(null)} onNavigateToProfile={openProfileFrom('profile')} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
-            {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={backFromProfile} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); window.scrollTo(0, 0); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
-            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={openProfileFrom('team')} />}
+            {currentView === 'profile-view' && viewProfileUserId && canViewProfileOf(viewProfileUserId) && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={backFromProfile} onNavigateToProfile={effectiveRole === 'player' ? null : (profileUserId) => { setViewProfileUserId(profileUserId); window.scrollTo(0, 0); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {/* Athletes get the roster read-only: no profile links off teammate/coach cards. */}
+            {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={effectiveRole === 'player' ? null : openProfileFrom('team')} />}
             {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('training-groups')} />}
             {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
@@ -1199,13 +1210,22 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                   <ul className="space-y-1">
                     {birthdayPlayers.map(p => (
                       <li key={p.id}>
-                        <button
-                          type="button"
-                          onClick={() => { setShowBirthday(false); setViewProfileUserId(p.id); setCurrentView('profile-view'); }}
-                          className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
-                        >
-                          🎉 {p.full_name}
-                        </button>
+                        {/* The list is only populated for staff, but a coach in
+                            "view as player" mode must not deep-link into another
+                            athlete's profile either — show plain text instead. */}
+                        {effectiveRole === 'player' ? (
+                          <span className="text-sm text-gray-700 flex items-center gap-1.5">
+                            🎉 {p.full_name}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => { setShowBirthday(false); openProfileFrom('dashboard')(p.id); }}
+                            className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                          >
+                            🎉 {p.full_name}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>

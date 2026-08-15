@@ -1588,6 +1588,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
     setAgeGroupLoading(prev => ({ ...prev, [templateId]: true }));
     try {
+      // Athlete privacy: players can no longer read the whole cohort's raw
+      // submissions (RLS now scopes assessment_submissions to self-or-staff),
+      // so the aggregation happens server-side and returns averages only.
+      // Staff keep the client-side path below, which is unchanged.
+      if (userRole === 'player') {
+        const { data: agg, error: aggError } = await supabase
+          .rpc('assessment_age_group_averages', { p_template_id: templateId });
+        if (aggError) console.error('Error fetching age group averages:', aggError);
+        setAgeGroupAverages(prev => ({ ...prev, [templateId]: agg || null }));
+        return;
+      }
+
       const { data: allSubs } = await supabase
         .from('assessment_submissions')
         .select('player_id, responses, created_at')
@@ -1700,6 +1712,35 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   const profile = userData._profile;
   const canEditProfile = userRole === 'coach' || userRole === 'admin';
+  // `onBack` is only passed when viewing SOMEONE ELSE's profile, so
+  // "staff, or my own profile" is the rule for every mutating control here.
+  const canUploadAvatar = canEditProfile || !onBack;
+
+  // Athlete privacy: a player may only ever see their OWN full profile. This
+  // single gate covers everything below it — the tab bar (assessments,
+  // trackman, arm care, PT, documents, codes, goals, the coach "Athletes"
+  // roster), the Edit Profile button, the avatar upload and the goal
+  // add/edit/delete controls. Staff (coach/admin) are unaffected, and a player
+  // viewing themselves (loggedInUserId === userId) falls straight through.
+  if (userRole === 'player' && loggedInUserId !== userId) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center space-x-3">
+          {onBack && (
+            <button onClick={onBack} className="text-gray-500 hover:text-gray-700 transition">
+              <ArrowLeft size={24} />
+            </button>
+          )}
+          <h2 className="text-3xl font-bold text-gray-900">Profile</h2>
+        </div>
+        <div className="bg-white rounded-lg shadow border border-gray-200 p-12 text-center">
+          <Users className="mx-auto mb-3 text-gray-300" size={48} />
+          <p className="text-gray-900 font-medium">You don't have access to this profile</p>
+          <p className="text-gray-600 text-sm mt-1">Athlete profiles are private. You can always view your own profile from the sidebar.</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleDeleteAssessment = async (subId) => {
     if (!window.confirm('Delete this assessment submission? This cannot be undone.')) return;
@@ -1734,7 +1775,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               <span>Email Player</span>
             </button>
           )}
-          {!editing && (
+          {/* Editable only when staff (canEditProfile) or when this is the
+              viewer's own profile (no Back button = "My Profile"). */}
+          {!editing && (canEditProfile || !onBack) && (
             <button
               onClick={() => setEditing(true)}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
@@ -1751,9 +1794,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         <div className="p-6">
           {/* Avatar and Name */}
           <div className="flex items-center space-x-6 mb-6 pb-6 border-b border-gray-200">
+            {/* Avatar upload follows the same rule as Edit Profile: staff, or
+                the viewer's own profile. Otherwise it is a plain image. */}
             <div
-              className="relative w-24 h-24 rounded-full cursor-pointer group"
-              onClick={() => avatarInputRef.current?.click()}
+              className={`relative w-24 h-24 rounded-full group ${canUploadAvatar ? 'cursor-pointer' : ''}`}
+              onClick={canUploadAvatar ? () => avatarInputRef.current?.click() : undefined}
             >
               {userData.avatar_url ? (
                 <img src={userData.avatar_url} alt="Avatar" className="w-24 h-24 rounded-full object-cover" />
@@ -1762,20 +1807,24 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   {userData.full_name?.charAt(0) || '?'}
                 </div>
               )}
-              <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                {uploadingAvatar ? (
-                  <span className="text-white text-xs">Uploading...</span>
-                ) : (
-                  <Camera className="text-white" size={24} />
-                )}
-              </div>
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleAvatarUpload}
-              />
+              {canUploadAvatar && (
+                <>
+                  <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                    {uploadingAvatar ? (
+                      <span className="text-white text-xs">Uploading...</span>
+                    ) : (
+                      <Camera className="text-white" size={24} />
+                    )}
+                  </div>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleAvatarUpload}
+                  />
+                </>
+              )}
             </div>
             <div>
               {editing ? (
@@ -1994,6 +2043,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           <div className="border-b border-gray-200 mb-6 -mx-2 px-2">
             <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
               {PROFILE_TABS.filter(tab => {
+                // Athlete privacy, belt-and-braces: a player looking at anyone
+                // other than themselves gets no tabs at all. The early return at
+                // the top of this component means we should never get here, but
+                // if a future edit removes it this filter still fails closed.
+                if (userRole === 'player' && loggedInUserId !== userId) return false;
                 // #226: age-gate sensitive tabs, fail-closed — hidden when the viewed
                 // athlete's DOB is missing or under the threshold, for everyone
                 // (including the athlete's own view): Marek bloodwork 18+, Recruitment 15+.
