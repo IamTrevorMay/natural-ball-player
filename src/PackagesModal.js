@@ -57,12 +57,19 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
       if (error) throw error;
-      // Cosmetic (#298 follow-up): a plain one-off kind='lesson' purchase has
-      // no bundle_qty and isn't a package — it was rendering here as if it
-      // were an unlimited package. Every kind='package' row still counts
-      // (monthly subscriptions are never counted, so no bundle_qty either);
-      // bundle/lesson rows only count when their product actually has one.
-      const list = (rows || []).filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null);
+      // #340: this used to be
+      //   .filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null)
+      // which threw away every lesson purchase whose product had no session
+      // count — and bundle_qty is NULL on 77 of the 92 active products. So an
+      // athlete could have three assigned packages and this modal showed an
+      // empty list. That is exactly what Cordell reported on Colton Kennedy:
+      // "he should show one extra assigned payment on his profile".
+      //
+      // Cordell's actual ask on #340 is to see EVERYTHING assigned to an
+      // athlete, so nothing is filtered out here any more. The uncounted ones
+      // render with "—" sessions rather than being hidden, which tells staff
+      // the truth: the pack is assigned, we just don't know its size yet.
+      const list = rows || [];
       setPurchases(list);
 
       if (list.length > 0) {

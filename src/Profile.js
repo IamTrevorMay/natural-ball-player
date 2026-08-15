@@ -108,6 +108,50 @@ function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
   );
 }
 
+/**
+ * #340: the "package" pill at the top of an athlete's profile.
+ *
+ * It used to query `.eq('product_kind', 'package')` and take the single newest
+ * row. That filter only matches monthly SUBSCRIPTION products, so every
+ * one-time lesson pack was invisible to it — 38 athletes with a real assigned
+ * pack read as "No Subscription Set Up". Cordell reported it on Colton Kennedy,
+ * who has three assignments and saw none of them.
+ *
+ * Now: look at every kind that represents an assigned package, and summarise
+ * them rather than trusting whichever happens to be newest. A player who holds
+ * a live pack AND an old unpaid one should read as active, not pending.
+ *
+ * Kept in one function precisely because there are three call sites (mount,
+ * after Assign Payment, after Apply Discount) and they silently drifted before.
+ */
+export const PACKAGE_KINDS = ['package', 'bundle', 'lesson'];
+
+export async function fetchPackageStatus(userId) {
+  try {
+    const { data, error } = await supabase
+      .from('store_purchases')
+      .select('status, paid_at, created_at, product_kind, product_name_snapshot')
+      .eq('user_id', userId)
+      .in('product_kind', PACKAGE_KINDS)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    const rows = data || [];
+    if (rows.length === 0) return null;
+    // Best status wins, so one stale unpaid row can't mask a live package.
+    const rank = { active: 4, paid: 4, past_due: 3, pending: 2 };
+    const best = rows.reduce((a, b) => ((rank[b.status] || 1) > (rank[a.status] || 1) ? b : a));
+    return {
+      ...best,
+      total: rows.length,
+      pendingCount: rows.filter((r) => r.status === 'pending').length,
+    };
+  } catch (e) {
+    console.error('package status fetch failed:', e);
+    return null;
+  }
+}
+
 const PROGRAM_HEADER_COLOR = {
   hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
   pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
@@ -364,18 +408,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     }
     setSportInput(userData?._profile?.sport || '');
     if (userData?.id) {
-      supabase
-        .from('store_purchases')
-        .select('status, paid_at, created_at')
-        .eq('user_id', userData.id)
-        .eq('product_kind', 'package')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (!cancelled) setSubscriptionRow(data || null);
-        })
-        .catch((e) => console.error('subscription fetch failed:', e));
+      fetchPackageStatus(userData.id).then((row) => {
+        if (!cancelled) setSubscriptionRow(row);
+      });
     }
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1911,24 +1946,43 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   <span>Pay</span>
                 </button>
               )}
-              {(!onBack || userRole === 'admin') && userData.role === 'player' && (() => {
+              {/* #340: coaches can now SEE this (they could already assign a
+                  package, then had no way to look at what they'd assigned —
+                  the pill was admin-only). Deleting stays admin-only; that is
+                  enforced by canDelete on PackagesModal, not here. */}
+              {(!onBack || userRole === 'admin' || userRole === 'coach') && userData.role === 'player' && (() => {
+                // #340: the label now reflects EVERY assigned package, not just
+                // the newest monthly subscription. "Awaiting Payment (2)" is a
+                // far more useful thing to see than "No Subscription Set Up"
+                // when the athlete has two assignments nobody has paid for.
                 const s = subscriptionRow?.status;
-                let label = 'No Subscription Set Up';
+                const pending = subscriptionRow?.pendingCount || 0;
+                const total = subscriptionRow?.total || 0;
+                let label = 'No Package Set Up';
                 let cls = 'bg-gray-100 text-gray-600 border-gray-200';
-                if (s === 'active') {
-                  label = 'Next Payment Scheduled';
+                if (s === 'active' || s === 'paid') {
+                  label = total > 1 ? `Package Active (${total})` : 'Package Active';
                   cls = 'bg-green-50 text-green-700 border-green-200';
                 } else if (s === 'past_due') {
                   label = 'Payment Needs Updated';
                   cls = 'bg-orange-50 text-orange-700 border-orange-200';
                 } else if (s === 'pending') {
-                  label = 'Subscription Pending';
+                  label = pending > 1 ? `Awaiting Payment (${pending})` : 'Awaiting Payment';
                   cls = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                } else if (total > 0) {
+                  // Every row is cancelled / refunded / failed. Saying "No
+                  // Package Set Up" here contradicted the tooltip, which said
+                  // "2 packages assigned" — confusing for exactly the staff
+                  // audience #340 is aimed at.
+                  label = total > 1 ? `No Active Package (${total} past)` : 'No Active Package (1 past)';
+                  cls = 'bg-gray-100 text-gray-600 border-gray-200';
                 }
                 return (
                   <button
                     onClick={() => setShowPackages(true)}
-                    title="View all packages & sessions"
+                    title={total > 0
+                      ? `${total} package${total === 1 ? '' : 's'} assigned — click to see all of them`
+                      : 'View all packages & sessions'}
                     className={`px-3 py-1 rounded-full text-xs font-medium border transition hover:opacity-80 ${cls}`}
                   >
                     {label} ▾
@@ -4409,17 +4463,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           playerId={userData.id}
           playerName={userData.full_name}
           onClose={() => setShowAssignPackage(false)}
-          onAssigned={() => {
-            supabase
-              .from('store_purchases')
-              .select('status, paid_at, created_at')
-              .eq('user_id', userData.id)
-              .eq('product_kind', 'package')
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle()
-              .then(({ data }) => setSubscriptionRow(data || null));
-          }}
+          onAssigned={() => { fetchPackageStatus(userData.id).then(setSubscriptionRow); }}
         />
       )}
 
@@ -4428,17 +4472,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           playerId={userData.id}
           playerName={userData.full_name}
           onClose={() => setShowDiscount(false)}
-          onApplied={() => {
-            supabase
-              .from('store_purchases')
-              .select('status, paid_at, created_at')
-              .eq('user_id', userData.id)
-              .eq('product_kind', 'package')
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle()
-              .then(({ data }) => setSubscriptionRow(data || null));
-          }}
+          onApplied={() => { fetchPackageStatus(userData.id).then(setSubscriptionRow); }}
         />
       )}
 
