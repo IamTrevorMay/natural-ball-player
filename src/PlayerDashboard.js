@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTriangle } from 'lucide-react';
 import WhoopCommunityCodeCard from './WhoopCommunityCode';
+// #277: "My RSVPs" — upcoming team events with this player's current answer,
+// so they can answer several at once without opening each event.
+import { MyRsvpsCard } from './EventRsvp';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -456,6 +459,11 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView, 
           </div>
         </div>
       </div>
+
+      {/* #277: My RSVPs — every upcoming practice / game / lifting session for
+          this player's team(s), with their current answer. Default is "no
+          response" until they click. */}
+      <MyRsvpsCard userId={userId} />
 
       {/* Stats Placeholder */}
       <div className="bg-white rounded-lg shadow">
