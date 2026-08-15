@@ -16,6 +16,7 @@ import WorkMyHours from './WorkMyHours';
 import WorkAdminHours from './WorkAdminHours';
 import WorkTimeOff from './WorkTimeOff';
 import WorkAdminTimeOff from './WorkAdminTimeOff';
+import WorkAdminHoursAnalytics from './WorkAdminHoursAnalytics';
 import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
 import WorkInvoices from './WorkInvoices';
@@ -93,6 +94,7 @@ function WorkAdminFinanceHub({ userId }) {
     { id: 'payroll',   label: 'Payroll' },
     { id: 'hours',     label: 'Hours Review' },
     { id: 'time-off',  label: 'Time Off Review' },
+    { id: 'analytics', label: 'Hours & Time Off Chart' },
   ];
   if (!pinVerified) {
     return <PayrollPinGate onUnlock={() => setPinVerified(true)} />;
@@ -117,6 +119,7 @@ function WorkAdminFinanceHub({ userId }) {
       {tab === 'payroll'  && <WorkAdminPayroll userId={userId} defaultUnlocked={true} />}
       {tab === 'hours'    && <WorkAdminHours userId={userId} />}
       {tab === 'time-off' && <WorkAdminTimeOff userId={userId} />}
+      {tab === 'analytics' && <WorkAdminHoursAnalytics />}
     </div>
   );
 }
