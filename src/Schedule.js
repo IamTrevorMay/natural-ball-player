@@ -299,6 +299,20 @@ export default function Schedule({ userId, userRole }) {
   const [myScheduleEvents, setMyScheduleEvents] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState(userRole === 'player' ? 'month' : 'lanes');
+  // QA 2026-08-15: `userRole` arrives as null on the first render (App.js reads
+  // it from the users table after mount), so both useState initialisers above
+  // silently took the staff branch and never corrected themselves — every
+  // athlete landed on the facility lane grid instead of My Schedule. Correct
+  // once, the first time the role resolves. It runs before a human could
+  // realistically click anything (measured at under 80ms), so it does not fight
+  // the user — but note it is a one-shot on role, not a "has the user navigated
+  // yet" check, and it re-applies if the component remounts.
+  const roleAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!userRole || roleAppliedRef.current) return;
+    roleAppliedRef.current = true;
+    if (userRole === 'player') { setView('my-schedule'); setViewMode('month'); }
+  }, [userRole]);
   const [teams, setTeams] = useState([]);
   const [players, setPlayers] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
@@ -400,11 +414,18 @@ export default function Schedule({ userId, userRole }) {
   }, [view, selectedDate]);
 
   useEffect(() => {
+    // QA 2026-08-15: `userRole` must be resolved before this runs. fetchFacilityEvents
+    // scopes its query with `const restrictToPlayer = userRole === 'player'`, and on the
+    // very first render userRole is still null — so the athlete's own browser was firing
+    // three UNSCOPED facility_events queries and pulling the entire facility calendar,
+    // other athletes' names included. userRole was not in the dep array, so it never
+    // re-ran to correct itself. Waiting one tick costs nothing and closes that.
+    if (!userRole) return;
     if (view === 'facility') {
       fetchFacilityEvents();
       fetchCoaches();
     }
-  }, [view, selectedDate]);
+  }, [view, selectedDate, userRole]);
 
   // Fetch staff schedule for lane view
   useEffect(() => {
