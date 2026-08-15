@@ -139,6 +139,12 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
       const team = availableTeams.find(t => t.id === teamId);
       if (team) setTeamData(team);
 
+      // Athlete privacy: PlayerCard renders neither email nor phone, so athletes
+      // must not receive their teammates' contact details at all — don't select
+      // the columns for them. Staff still get the full roster row.
+      const isAthleteViewer = userRole === 'player';
+      const contactCols = isAthleteViewer ? '' : '\n            email,\n            phone,';
+
       // Get all team members in one query, then split by users.role
       const { data: allMembers } = await supabase
         .from('team_members')
@@ -147,9 +153,7 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
           role,
           users(
             id,
-            full_name,
-            email,
-            phone,
+            full_name,${contactCols}
             role,
             player_profiles!player_profiles_user_id_fkey(
               jersey_number,
@@ -167,8 +171,8 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
         const coachRows = [];
         const playerRows = [];
         for (const m of allMembers) {
-          const userRole = m.users?.role;
-          if (userRole === 'admin' || userRole === 'coach') {
+          const memberUserRole = m.users?.role;
+          if (memberUserRole === 'admin' || memberUserRole === 'coach') {
             coachRows.push({ ...m.users, role: m.role });
           } else {
             playerRows.push({
@@ -178,6 +182,26 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
             });
           }
         }
+
+        // CoachCard still shows staff work email/phone to everyone (intentional),
+        // so athletes fetch those separately — for coaches only, never teammates.
+        if (isAthleteViewer && coachRows.length > 0) {
+          const { data: coachContacts, error: coachContactsError } = await supabase
+            .from('users')
+            .select('id, email, phone')
+            .in('id', coachRows.map(c => c.id));
+          if (coachContactsError) {
+            console.error('Error fetching coach contact info:', coachContactsError);
+          } else {
+            const contactMap = {};
+            for (const c of (coachContacts || [])) contactMap[c.id] = c;
+            for (const c of coachRows) {
+              c.email = contactMap[c.id]?.email || null;
+              c.phone = contactMap[c.id]?.phone || null;
+            }
+          }
+        }
+
         setCoaches(coachRows);
         setRoster(playerRows);
       }
