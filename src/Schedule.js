@@ -2810,8 +2810,9 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // Module-level (not just inside LaneView) so the drag-and-drop handler in
 // the parent Schedule component can also use it to compute a lane offset
 // (#280) — order matters here, it's the same left-to-right order the grid
-// renders in.
-const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+// renders in. Exported for #300 (AthleteOutreach) so open-cage-time
+// availability reads the same lane list this grid renders, not a second copy.
+export const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
 // Shifts every lane an event occupies by the same offset as the bar the
 // user grabbed (sourceLane) relative to where they're hovering/dropping

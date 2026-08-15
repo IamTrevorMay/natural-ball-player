@@ -3,7 +3,7 @@ import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
-  ShoppingBag, UserPlus, BarChart3, Tag
+  ShoppingBag, UserPlus, BarChart3, Tag, Send
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -23,6 +23,7 @@ import WorkStore from './WorkStore';
 import BulkTagSessions from './BulkTagSessions';
 import Leads from './Leads';
 import UsageDashboard from './UsageDashboard';
+import AthleteOutreach from './AthleteOutreach';
 import NotificationBell, { deletePendingPayment } from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
@@ -51,6 +52,7 @@ const PAGE_META = {
   'work-bulk-tag':              { title: 'Bulk Tag Sessions',       description: 'Attach a package or plan to many training sessions at once.' },
   'work-admin-leads':           { title: 'Leads',                  description: 'Outside customers who signed up to book & pay for sessions.' },
   'work-admin-usage':           { title: 'Usage (V2 research)',    description: 'Anonymous product-usage analytics.' },
+  'work-admin-outreach':        { title: 'Athlete Outreach',       description: 'Remind athletes to buy packages and fill open cage time.' },
 };
 
 function WorkMyFinancesHub({ userId, userRole }) {
@@ -199,6 +201,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <Leads /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-usage':
         return userRole === 'admin' ? <UsageDashboard /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-outreach':
+        return userRole === 'admin' ? <AthleteOutreach userId={userId} /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
@@ -351,6 +355,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
                 <SubNavItem id="work-admin-leads"          icon={UserPlus}    label="Leads" />
+                <SubNavItem id="work-admin-outreach"       icon={Send}        label="Athlete Outreach" />
                 <SubNavItem id="work-admin-usage"          icon={BarChart3}   label="Usage (V2 research)" />
                 <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>
