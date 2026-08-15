@@ -11,6 +11,7 @@ import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
 import { CreateUserModal } from './AdminSettings';
+import { familyKey, familyLabel, sameFamily } from './productFamily';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -8016,7 +8017,9 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
+  // #276/#305: keep every eligible purchase, not just the first — the one worth
+  // showing depends on which package this session is tagged with (see activePkg).
+  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkgs: [] });
   // #244/#249: names of the subscription plan(s) this session accepts (if any).
   const [subNames, setSubNames] = useState([]);
 
@@ -8036,12 +8039,12 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
         // recurring monthly package. For a one-time bundle/lesson purchase,
         // null means no session count was ever set on it (a plain single-lesson
         // purchase, not a pack), so it must NOT be treated as an active package.
-        const active = (data || []).find(p =>
+        const eligible = (data || []).filter(p =>
           p.product_kind === 'package' ? p.remaining_qty === null || p.remaining_qty > 0 : p.remaining_qty > 0
         );
-        setPkgCheck({ checking: false, pkg: active || null });
+        setPkgCheck({ checking: false, pkgs: eligible });
       } catch {
-        setPkgCheck({ checking: false, pkg: null });
+        setPkgCheck({ checking: false, pkgs: [] });
       }
     })();
   }, []);
@@ -8051,9 +8054,36 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     if (!slot?.is_subscription_session || ids.length === 0) { setSubNames([]); return; }
     (async () => {
       const { data } = await supabase.from('store_products').select('name').in('id', ids);
-      setSubNames((data || []).map(d => d.name).filter(Boolean));
+      // #276/#305: same package, different Square billing frequency. A slot can
+      // be tagged with two rows that are the same real package ("X" and
+      // "X (MONTHLY price)"); show the base name once instead of listing both.
+      const seen = new Set();
+      const labels = [];
+      (data || []).forEach(d => {
+        const label = familyLabel(d.name);
+        const key = familyKey(d.name);
+        if (!label || seen.has(key)) return;
+        seen.add(key);
+        labels.push(label);
+      });
+      setSubNames(labels);
     })();
   }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
+
+  // #276/#305: same package, different Square billing frequency. The session may
+  // be tagged with the bare "NBP 2x A Week Training" while the player actually
+  // bought "NBP 2x A Week Training (MONTHLY price)" — match on the package
+  // family rather than the exact product. Falls back to any eligible package,
+  // which is the pre-existing behaviour, so this can only ever find MORE
+  // matches than before, never fewer.
+  const activePkg = useMemo(() => {
+    const pkgs = pkgCheck.pkgs || [];
+    if (subNames.length > 0) {
+      const match = pkgs.find(p => subNames.some(n => sameFamily(n, p.product_name_snapshot)));
+      if (match) return match;
+    }
+    return pkgs[0] || null;
+  }, [pkgCheck.pkgs, subNames]);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -8114,11 +8144,11 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             </div>
           )}
           {!pkgCheck.checking && (
-            pkgCheck.pkg ? (
+            activePkg ? (
               <div className="flex items-start space-x-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-800">
                 <Check size={16} className="mt-0.5 shrink-0 text-green-600" />
                 <span>
-                  <span className="font-medium">Payment confirmed</span> — {pkgCheck.pkg.remaining_qty === null ? 'Monthly package' : `${pkgCheck.pkg.remaining_qty} session${pkgCheck.pkg.remaining_qty !== 1 ? 's' : ''} remaining`} on <span className="font-medium">{pkgCheck.pkg.product_name_snapshot}</span>.
+                  <span className="font-medium">Payment confirmed</span> — {activePkg.remaining_qty === null ? 'Monthly package' : `${activePkg.remaining_qty} session${activePkg.remaining_qty !== 1 ? 's' : ''} remaining`} on <span className="font-medium">{activePkg.product_name_snapshot}</span>.
                 </span>
               </div>
             ) : (
