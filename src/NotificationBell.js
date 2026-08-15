@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2 } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
 
@@ -52,6 +52,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     (mainCounts?.unreadMessages || 0)
     + (mainCounts?.pendingSlots?.length || 0)
     + (mainCounts?.pendingPayments?.length || 0)
+    + (mainCounts?.packageFlags?.length || 0)
     + (workCounts?.unreadMessages || 0)
     + (workCounts?.pendingHours?.length || 0)
     + (workCounts?.pendingTimeOff?.length || 0);
@@ -103,6 +104,29 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                     <p className="text-xs text-gray-500 mt-0.5">
                       {(req.slot_date || req.slot?.slot_date) && fmtDate(req.slot_date || req.slot.slot_date)}
                       {req.slot?.start_time && ` at ${fmtSlotTime(req.slot.start_time)}`}
+                    </p>
+                  </div>
+                  {currentPortal !== 'main' && <PortalTag kind="main" />}
+                </div>
+              </button>
+            ))}
+
+            {/* #305 (Q8): a player was blocked from booking for lack of a
+                matching package — flagged so a coach can follow up. */}
+            {(mainCounts?.packageFlags || []).map(flag => (
+              <button
+                key={`main-pkg-flag-${flag.id}`}
+                onClick={() => jump('main', 'coach-tools')}
+                className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <div className="flex items-start space-x-3">
+                  <div className="mt-0.5"><AlertTriangle size={16} className="text-red-500" /></div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-900">
+                      <span className="font-medium">{flag.users?.full_name || 'A player'}</span> tried to book without a package
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {flag.slot_date && fmtDate(flag.slot_date)}
                     </p>
                   </div>
                   {currentPortal !== 'main' && <PortalTag kind="main" />}
