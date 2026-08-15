@@ -11,6 +11,8 @@ import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
 import { CreateUserModal } from './AdminSettings';
+// #277: per-occurrence RSVP (Going / Not going / Maybe) + coach roster & nudge.
+import { EventRsvpSection } from './EventRsvp';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -5951,6 +5953,20 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                 );
               })()}
 
+              {/* #277: RSVP. Renders itself as null unless this is a shared
+                  team practice / game / lifting event (team_ids set,
+                  player_id null). Players see Going / Not going / Maybe plus
+                  the headcount; staff see the full roster split and the
+                  Nudge non-responders button. */}
+              {!event._isMealPlan && (
+                <EventRsvpSection
+                  event={event}
+                  source="schedule_events"
+                  userId={userId}
+                  userRole={userRole}
+                />
+              )}
+
               <div className="flex space-x-3 pt-4 border-t border-gray-200">
                 <button
                   onClick={onClose}
@@ -7214,6 +7230,17 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                   </div>
                 </div>
               )}
+
+              {/* #277: RSVP for team-tagged facility events — this is where a
+                  team lifting session booked into a weight room lands. Renders
+                  as null when the event has no team assigned (a lane rental,
+                  a lesson), so ordinary facility bookings are unaffected. */}
+              <EventRsvpSection
+                event={event}
+                source="facility_events"
+                userId={userId}
+                userRole={userRole}
+              />
 
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">
