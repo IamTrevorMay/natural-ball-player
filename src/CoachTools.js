@@ -984,6 +984,77 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
    TRAINING PROGRAMS TAB
    ============================================ */
 
+/* #321 — the expanded workout-template exercise list, readable at 375px.
+ *
+ * 9cd7b47 wrapped this 7-column table in `overflow-x-auto`, which only means
+ * the columns are still crushed and Rest/Load now sit off-screen to the right
+ * where nobody discovers them. Below sm we render the same rows as stacked
+ * cards with a label on every number instead; the table is untouched at sm+.
+ * Presentation only — same `exercises` array, same fields.
+ */
+function WorkoutExerciseList({ exercises }) {
+  const metric = (label, value) => (
+    <span key={label} className="inline-flex items-baseline gap-1">
+      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+      <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>{value || '—'}</span>
+    </span>
+  );
+  return (
+    <>
+      {/* Portrait phone: stacked cards */}
+      <div className="sm:hidden space-y-2">
+        {exercises.map((ex, i) => (
+          <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white">
+            <div className="flex items-start justify-between gap-2">
+              <div className="font-semibold text-gray-900 break-words min-w-0 flex-1">{ex.name}</div>
+              {ex.link && (
+                <a href={ex.link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0">
+                  <Link size={12} />Link
+                </a>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              {metric('Sets', ex.sets)}
+              {metric('Reps', ex.reps)}
+              {metric('Rest', ex.rest)}
+              {metric('Load', ex.load)}
+            </div>
+            {(ex.superSet || ex.super_set) && (
+              <div className="mt-1.5 text-xs text-gray-500">
+                Super set <span className="font-semibold text-gray-900">{ex.superSet || ex.super_set}</span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Tablet/desktop: original table, unchanged */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="w-full text-sm min-w-max">
+          <thead>
+            <tr className="text-left text-xs text-gray-500">
+              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
+            </tr>
+          </thead>
+          <tbody>
+            {exercises.map((ex, i) => (
+              <tr key={i} className="border-t border-gray-100">
+                <td className="py-2 text-gray-900">{ex.name}</td>
+                <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
+                <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
+                <td className="py-2 text-gray-600">{ex.rest || '—'}</td>
+                <td className="py-2 text-gray-600">{ex.load || '—'}</td>
+                <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
+                <td className="py-2 text-gray-600">{ex.superSet || ex.super_set || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 export function TrainingTab({ teams, players }) {
   const [trainingSubTab, setTrainingSubTab] = useState('programs');
   const [programs, setPrograms] = useState([]);
@@ -1110,27 +1181,8 @@ export function TrainingTab({ teams, players }) {
                       </div>
                     </div>
                     {expandedWorkout === wt.id && exercises.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-gray-200 overflow-x-auto">
-                        <table className="w-full text-sm min-w-max">
-                          <thead>
-                            <tr className="text-left text-xs text-gray-500">
-                              <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {exercises.map((ex, i) => (
-                              <tr key={i} className="border-t border-gray-100">
-                                <td className="py-2 text-gray-900">{ex.name}</td>
-                                <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
-                                <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
-                                <td className="py-2 text-gray-600">{ex.rest || '—'}</td>
-                                <td className="py-2 text-gray-600">{ex.load || '—'}</td>
-                                <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
-                                <td className="py-2 text-gray-600">{ex.superSet || ex.super_set || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <WorkoutExerciseList exercises={exercises} />
                       </div>
                     )}
                   </div>
@@ -1191,27 +1243,8 @@ export function TrainingTab({ teams, players }) {
                                   </div>
                                 </div>
                                 {expandedWorkout === wt.id && exercises.length > 0 && (
-                                  <div className="mt-3 pt-3 border-t border-gray-200 overflow-x-auto">
-                                    <table className="w-full text-sm min-w-max">
-                                      <thead>
-                                        <tr className="text-left text-xs text-gray-500">
-                                          <th className="pb-2">Exercise</th><th className="pb-2">Sets</th><th className="pb-2">Reps</th><th className="pb-2">Rest</th><th className="pb-2">Load</th><th className="pb-2">Link</th><th className="pb-2">Super Set</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {exercises.map((ex, i) => (
-                                          <tr key={i} className="border-t border-gray-100">
-                                            <td className="py-2 text-gray-900">{ex.name}</td>
-                                            <td className="py-2 text-gray-600">{ex.sets || '—'}</td>
-                                            <td className="py-2 text-gray-600">{ex.reps || '—'}</td>
-                                            <td className="py-2 text-gray-600">{ex.rest || '—'}</td>
-                                            <td className="py-2 text-gray-600">{ex.load || '—'}</td>
-                                            <td className="py-2">{ex.link ? <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700"><Link size={14} /></a> : '—'}</td>
-                                            <td className="py-2 text-gray-600">{ex.superSet || ex.super_set || '—'}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
+                                  <div className="mt-3 pt-3 border-t border-gray-200">
+                                    <WorkoutExerciseList exercises={exercises} />
                                   </div>
                                 )}
                               </div>
@@ -1310,6 +1343,20 @@ const categoryColors = {
   other: 'bg-gray-500 text-white',
 };
 
+/* QA 2026-08-15: the expanded card rendered exercises by looping over this list
+ * of categories and skipping anything else, so an exercise whose category was
+ * NULL, differently cased, or any value outside the list vanished from the card
+ * while still being counted in the "N exercises" header — the coach saw
+ * "4 exercises" and three rows. Categories are now normalised (blank or missing
+ * reads as "other", the bucket that already exists for exactly this), and a
+ * category this list doesn't know about is rendered after the known ones rather
+ * than dropped. */
+const KNOWN_EXERCISE_CATEGORIES = ['hitting', 'pitching', 'fielding', 'conditioning', 'recovery', 'other'];
+
+function exerciseCategory(exercise) {
+  return String(exercise?.category || '').trim().toLowerCase() || 'other';
+}
+
 function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
   const [showAddDay, setShowAddDay] = useState(false);
@@ -1319,8 +1366,9 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
   const assignments = program.training_program_assignments || [];
   const totalExercises = days.reduce((sum, day) => sum + (day.training_exercises?.length || 0), 0);
 
-  // Get unique categories across all exercises
-  const allCategories = [...new Set(days.flatMap(d => (d.training_exercises || []).map(e => e.category)))];
+  // Get unique categories across all exercises (normalised, so a NULL category
+  // shows as "other" instead of an unstyled empty chip).
+  const allCategories = [...new Set(days.flatMap(d => (d.training_exercises || []).map(exerciseCategory)))];
 
   return (
     <div className="bg-gray-50 rounded-lg p-4">
@@ -1331,11 +1379,14 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
             {program.duration_weeks && <span className="text-xs text-gray-500">{program.duration_weeks} weeks</span>}
           </div>
           {program.description && <p className="text-sm text-gray-600 mt-1">{program.description}</p>}
-          <div className="flex items-center space-x-4 mt-2 text-sm">
+          {/* QA 2026-08-15: both rows now wrap. The category pills ran off the
+              right edge on a phone, and adding the "other" bucket made it one
+              pill worse. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm">
             <span className="text-gray-500">{days.length} days &bull; {totalExercises} exercises</span>
-            <div className="flex space-x-1">
+            <div className="flex flex-wrap gap-1">
               {allCategories.map(cat => (
-                <span key={cat} className={`px-2 py-0.5 rounded-full text-xs font-medium ${categoryColors[cat]}`}>{cat}</span>
+                <span key={cat} className={`px-2 py-0.5 rounded-full text-xs font-medium ${categoryColors[cat] || categoryColors.other}`}>{cat}</span>
               ))}
             </div>
           </div>
@@ -1361,12 +1412,19 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
         <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
           {days.map(day => {
             const exercises = (day.training_exercises || []).sort((a, b) => a.sort_order - b.sort_order);
-            // Group exercises by category
+            // Group exercises by (normalised) category. Known categories keep
+            // their usual order; anything unexpected renders after them so it
+            // can never be dropped — see KNOWN_EXERCISE_CATEGORIES above.
             const grouped = {};
             exercises.forEach(ex => {
-              if (!grouped[ex.category]) grouped[ex.category] = [];
-              grouped[ex.category].push(ex);
+              const cat = exerciseCategory(ex);
+              if (!grouped[cat]) grouped[cat] = [];
+              grouped[cat].push(ex);
             });
+            const dayCategories = [
+              ...KNOWN_EXERCISE_CATEGORIES.filter(cat => grouped[cat]),
+              ...Object.keys(grouped).filter(cat => !KNOWN_EXERCISE_CATEGORIES.includes(cat)).sort(),
+            ];
 
             return (
               <div key={day.id} className="bg-white rounded-lg p-4 border border-gray-200">
@@ -1384,12 +1442,11 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
                   <p className="text-sm text-gray-400 italic">No exercises yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {['hitting', 'pitching', 'fielding', 'conditioning', 'recovery', 'other'].map(cat => {
-                      if (!grouped[cat]) return null;
+                    {dayCategories.map(cat => {
                       return (
                         <div key={cat}>
                           <h6 className="text-xs font-semibold uppercase tracking-wide mb-1.5">
-                            <span className={`px-2 py-0.5 rounded-full ${categoryColors[cat]}`}>{cat}</span>
+                            <span className={`px-2 py-0.5 rounded-full ${categoryColors[cat] || categoryColors.other}`}>{cat}</span>
                           </h6>
                           <div className="space-y-2">
                             {grouped[cat].map(ex => (
@@ -1434,6 +1491,32 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
 
 /* ---- EXERCISE ROW ---- */
 
+/* #321 — Sets / Reps / Rest / Load, readable on a 375px phone.
+ *
+ * Same helper as the ones in Profile.js and Schedule.js (kept local, this repo
+ * has no shared component module). Labelled chips that WRAP instead of
+ * truncating, and always an em-dash for a value that was never programmed, so
+ * a blank is never mistaken for a layout bug. Presentation only.
+ *
+ * QA 2026-08-15: added here because the #321 pass missed this screen — see the
+ * comment in ExerciseRow below.
+ */
+function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
+  const items = [['Sets', sets], ['Reps', reps], ['Load', load], ['Rest', rest]];
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1 text-sm ${className}`}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || '—'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ExerciseRow({ exercise, onRefresh }) {
   const handleDelete = async () => {
     if (!window.confirm(`Delete "${exercise.name}"?`)) return;
@@ -1458,13 +1541,21 @@ function ExerciseRow({ exercise, onRefresh }) {
           )}
         </div>
         {exercise.description && <p className="text-xs text-gray-500 mt-0.5">{exercise.description}</p>}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-600">
-          {exercise.sets && <span><strong>{exercise.sets}</strong> sets</span>}
-          {exercise.reps && <span><strong>{exercise.reps}</strong> reps</span>}
-          {exercise.weight && <span><strong>{exercise.weight}</strong></span>}
-          {exercise.rest && <span>Rest: <strong>{exercise.rest}</strong></span>}
-          {exercise.load && <span>Load: <strong>{exercise.load}</strong></span>}
-        </div>
+        {/* QA 2026-08-15: the #321 pass never reached this screen. The "not set"
+            placeholder was guarded on EVERY field being empty, so an exercise
+            with sets 3 / reps 10 and no rest or load rendered byte-for-byte as
+            it did before the fix, with nothing to say those two were never
+            programmed. The labelling disagreed with the rest of the app too
+            ("4 sets" but "Rest: 2:00"). Now the same ExerciseMetrics chips used
+            on every other surface, which print an em-dash per unset field.
+            `weight` is the legacy column for `load` — same field to a coach. */}
+        <ExerciseMetrics
+          className="mt-1"
+          sets={exercise.sets}
+          reps={exercise.reps}
+          load={exercise.load || exercise.weight}
+          rest={exercise.rest}
+        />
       </div>
       <button onClick={handleDelete} className="text-gray-400 hover:text-red-600 transition ml-2"><Trash2 size={14} /></button>
     </div>
@@ -1689,10 +1780,72 @@ function CreateTrainingProgramModal({ onClose, onSuccess, editingProgram }) {
               <input type="text" placeholder="Workout Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
             </div>
 
-            {/* Exercises Table */}
+            {/* Exercises — #321: 4c36043f fixed the byte-identical table in the
+                sibling CreateWorkoutTemplateModal and flagged this one as having the
+                same bug. It does: a bare 9-column table with no breakpoint handling,
+                so on a 375px phone every Sets/Reps/Rest/Load input is compressed to a
+                sliver showing one character. Same fix — labelled stacked cards below
+                sm, the original table untouched at sm+. */}
             <div>
               <label className="block text-sm font-bold text-gray-900 mb-2">Exercises</label>
-              <table className="w-full text-sm">
+
+              {/* Portrait phone: stacked cards */}
+              <div className="sm:hidden space-y-3">
+                {activeTab.exercises.map((ex, i) => (
+                  <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-500 pt-2">#{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <ExerciseNameInput
+                          value={ex.name}
+                          onChange={(name) => updateExercise(i, 'name', name)}
+                          onPick={({ name, video_url }) => updateExerciseFields(i, ex.link ? { name } : { name, link: video_url })}
+                          hasLink={!!ex.link}
+                          videos={exerciseVideos}
+                          loading={exerciseVideosLoading}
+                        />
+                      </div>
+                      <button type="button" onClick={() => removeExercise(i)} className="text-gray-400 hover:text-red-600 transition flex-shrink-0 pt-2"><Trash2 size={14} /></button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[['Sets', 'sets', '1'], ['Reps', 'reps', 'Reps'], ['Rest', 'rest', 'Rest'], ['Load', 'load', 'Load']].map(([label, field, ph]) => (
+                        <div key={field}>
+                          <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">{label}</label>
+                          <input type="text" placeholder={ph} value={ex[field] || ''} onChange={(e) => updateExercise(i, field, e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-center" />
+                        </div>
+                      ))}
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">Link</label>
+                      <div className="flex space-x-1">
+                        <input type="text" placeholder="Link" value={ex.link} onChange={(e) => updateExercise(i, 'link', e.target.value)} className="flex-1 min-w-0 px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white" />
+                        <select value={ex.category || 'hitting'} onChange={(e) => updateExercise(i, 'category', e.target.value)} className="px-1 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white flex-shrink-0">
+                          <option value="hitting">Hitting</option>
+                          <option value="pitching">Pitching</option>
+                          <option value="fielding">Fielding</option>
+                          <option value="conditioning">Conditioning</option>
+                          <option value="recovery">Recovery</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">Super Set</label>
+                      <select value={ex.superSet || ''} onChange={(e) => updateExercise(i, 'superSet', e.target.value)} className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white">
+                        {SUPER_SET_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt || '—'}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+                <button type="button" onClick={addExercise} className="w-full flex items-center justify-center gap-1.5 py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:text-green-600 hover:border-green-400 transition">
+                  <Plus size={16} /> Add exercise
+                </button>
+              </div>
+
+              {/* Tablet/desktop: original table, unchanged */}
+              <table className="hidden sm:table w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs font-semibold text-gray-700 border-b border-gray-300">
                     <th className="pb-2 w-8"></th>

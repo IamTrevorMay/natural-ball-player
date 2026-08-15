@@ -80,6 +80,34 @@ const PT_STATUS_COLORS = {
 const PT_VISIT_TYPES = ['Evaluation', 'Treatment', 'Follow-up', 'Re-evaluation', 'Discharge'];
 const PT_BODY_AREAS = ['Shoulder', 'Elbow', 'Forearm/Wrist', 'Lower back', 'Hip', 'Knee', 'Ankle/Foot', 'Core', 'Other'];
 
+/* #321 — Sets / Reps / Rest / Load, readable on a 375px phone.
+ *
+ * The reporter said the numbers he trains off still weren't legible on his
+ * phone after the first fix. The failure mode is the same everywhere: these
+ * four values get packed onto one un-wrapping line (or into squeezed table
+ * columns) with no label, so "3 × 8 · 135 · 60" is both unreadable and
+ * ambiguous — which number is the rest and which is the load?
+ *
+ * This renders them as labelled chips that WRAP instead of truncating, and
+ * always prints an em-dash for a value that was never programmed, so a blank
+ * is never mistaken for a layout bug. Presentation only.
+ */
+function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
+  const items = [['Sets', sets], ['Reps', reps], ['Load', load], ['Rest', rest]];
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1 text-sm ${className}`}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || '—'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const PROGRAM_HEADER_COLOR = {
   hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
   pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
@@ -188,7 +216,7 @@ function TeamsList({ teams, onNavigateToTeam }) {
   );
 }
 
-export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile, onNavigateToTeam }) {
+export default function Profile({ userId, userRole, onBack, loggedInUserId, onNavigateToProfile, onNavigateToTeam, initialTab, onInitialTabHandled }) {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -198,6 +226,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeProfileTab, setActiveProfileTab] = useState('general');
+
+  // Lets a caller (e.g. the player dashboard's post-practice reminder, #278)
+  // open this profile directly on a specific tab. Watches the prop rather
+  // than only reading it at mount, then reports back so the parent can
+  // clear it — otherwise the next ordinary visit to Profile would land on
+  // this tab again instead of 'general'.
+  useEffect(() => {
+    if (initialTab) {
+      setActiveProfileTab(initialTab);
+      onInitialTabHandled?.();
+    }
+  }, [initialTab]);
   const [viewProgram, setViewProgram] = useState(null); // { id, name } — read-only program viewer
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
@@ -228,6 +268,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [savingNote, setSavingNote] = useState(false);
   const [noteFilter, setNoteFilter] = useState('all');
   const [attendanceStats, setAttendanceStats] = useState(null);
+  // #306: null = not loaded yet (or cancel_reason doesn't exist until its
+  // migration runs) — kept distinct from 0 so the stat can stay hidden
+  // rather than show a misleading "Sick cancels: 0" before it's meaningful.
+  const [sickCancelCount, setSickCancelCount] = useState(null);
   const [attendanceEvents, setAttendanceEvents] = useState([]);
   const [attendanceMap, setAttendanceMap] = useState({});
   const [attendanceFilter, setAttendanceFilter] = useState('all');
@@ -306,6 +350,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   useEffect(() => {
     let cancelled = false;
     if (userData && userData.role === 'player') fetchAttendanceData();
+    if (userData && userData.role === 'player' && (userRole === 'admin' || userRole === 'coach')) fetchSickCancelCount();
     if (userData && (userData.role === 'coach' || userData.role === 'admin')) fetchCoachAthletes();
     // Fetch trainer name if player has one assigned. Guard with cancelled so a
     // rapid userData change doesn't write a stale trainer name into state.
@@ -1355,6 +1400,30 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     }
   };
 
+  // #306: "Sick cancels: N" — staff-only, no automatic blocking, just a
+  // count so a human can notice a pattern. Separate from fetchAttendanceData
+  // above on purpose: that query explicitly excludes cancelled reservations
+  // (.neq('status', 'cancelled')) and other things already depend on it
+  // staying that way (see its own comment) — this is its own small query,
+  // not a change to that one.
+  const fetchSickCancelCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('slot_reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('player_id', userId)
+        .eq('status', 'cancelled')
+        .eq('cancel_reason', 'sick');
+      if (error) throw error;
+      setSickCancelCount(count || 0);
+    } catch (error) {
+      // #306: cancel_reason doesn't exist until its migration
+      // (20260812_slot_reservations_cancel_reason.sql) runs — leave the
+      // count unset (hidden) rather than show a wrong number.
+      console.error('Sick cancel count error (migration pending?):', error);
+    }
+  };
+
   const handleMarkAttendance = async (eventId, status) => {
     setSavingAttendance(prev => ({ ...prev, [eventId]: true }));
     try {
@@ -1547,6 +1616,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
     setAgeGroupLoading(prev => ({ ...prev, [templateId]: true }));
     try {
+      // Athlete privacy: players can no longer read the whole cohort's raw
+      // submissions (RLS now scopes assessment_submissions to self-or-staff),
+      // so the aggregation happens server-side and returns averages only.
+      // Staff keep the client-side path below, which is unchanged.
+      if (userRole === 'player') {
+        const { data: agg, error: aggError } = await supabase
+          .rpc('assessment_age_group_averages', { p_template_id: templateId });
+        if (aggError) console.error('Error fetching age group averages:', aggError);
+        setAgeGroupAverages(prev => ({ ...prev, [templateId]: agg || null }));
+        return;
+      }
+
       const { data: allSubs } = await supabase
         .from('assessment_submissions')
         .select('player_id, responses, created_at')
@@ -1659,6 +1740,35 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   const profile = userData._profile;
   const canEditProfile = userRole === 'coach' || userRole === 'admin';
+  // `onBack` is only passed when viewing SOMEONE ELSE's profile, so
+  // "staff, or my own profile" is the rule for every mutating control here.
+  const canUploadAvatar = canEditProfile || !onBack;
+
+  // Athlete privacy: a player may only ever see their OWN full profile. This
+  // single gate covers everything below it — the tab bar (assessments,
+  // trackman, arm care, PT, documents, codes, goals, the coach "Athletes"
+  // roster), the Edit Profile button, the avatar upload and the goal
+  // add/edit/delete controls. Staff (coach/admin) are unaffected, and a player
+  // viewing themselves (loggedInUserId === userId) falls straight through.
+  if (userRole === 'player' && loggedInUserId !== userId) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center space-x-3">
+          {onBack && (
+            <button onClick={onBack} className="text-gray-500 hover:text-gray-700 transition">
+              <ArrowLeft size={24} />
+            </button>
+          )}
+          <h2 className="text-3xl font-bold text-gray-900">Profile</h2>
+        </div>
+        <div className="bg-white rounded-lg shadow border border-gray-200 p-12 text-center">
+          <Users className="mx-auto mb-3 text-gray-300" size={48} />
+          <p className="text-gray-900 font-medium">You don't have access to this profile</p>
+          <p className="text-gray-600 text-sm mt-1">Athlete profiles are private. You can always view your own profile from the sidebar.</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleDeleteAssessment = async (subId) => {
     if (!window.confirm('Delete this assessment submission? This cannot be undone.')) return;
@@ -1683,7 +1793,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <p className="text-gray-600 mt-1">{onBack ? 'Viewing player profile' : 'Manage your personal information'}</p>
           </div>
         </div>
-        <div className="flex items-center space-x-2">
+        {/* QA 2026-08-15: wrap, so Email Player / Edit Profile stack on a phone
+            instead of pushing the page sideways. */}
+        <div className="flex flex-wrap items-center gap-2">
           {onBack && userData.email && (userRole === 'admin' || userRole === 'coach') && (
             <button
               onClick={() => setShowEmailCompose(true)}
@@ -1693,7 +1805,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               <span>Email Player</span>
             </button>
           )}
-          {!editing && (
+          {/* Editable only when staff (canEditProfile) or when this is the
+              viewer's own profile (no Back button = "My Profile"). */}
+          {!editing && (canEditProfile || !onBack) && (
             <button
               onClick={() => setEditing(true)}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
@@ -1709,10 +1823,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       <div className="bg-white rounded-lg shadow">
         <div className="p-6">
           {/* Avatar and Name */}
-          <div className="flex items-center space-x-6 mb-6 pb-6 border-b border-gray-200">
+          {/* QA 2026-08-15: the whole header row wraps on a phone. Previously it
+              was a single non-wrapping row (avatar + name block + the Pay pill /
+              attendance-rings strip), which made the entire Profile page pan
+              sideways at 390px — the page #321 is about. Wrapping here rather
+              than shrinking the strip: `min-w-0` on the strip made it collapse
+              and its children spilled leftwards over the name. */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-4 mb-6 pb-6 border-b border-gray-200">
+            {/* Avatar upload follows the same rule as Edit Profile: staff, or
+                the viewer's own profile. Otherwise it is a plain image. */}
             <div
-              className="relative w-24 h-24 rounded-full cursor-pointer group"
-              onClick={() => avatarInputRef.current?.click()}
+              className={`relative w-24 h-24 rounded-full group ${canUploadAvatar ? 'cursor-pointer' : ''}`}
+              onClick={canUploadAvatar ? () => avatarInputRef.current?.click() : undefined}
             >
               {userData.avatar_url ? (
                 <img src={userData.avatar_url} alt="Avatar" className="w-24 h-24 rounded-full object-cover" />
@@ -1721,20 +1843,24 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   {userData.full_name?.charAt(0) || '?'}
                 </div>
               )}
-              <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
-                {uploadingAvatar ? (
-                  <span className="text-white text-xs">Uploading...</span>
-                ) : (
-                  <Camera className="text-white" size={24} />
-                )}
-              </div>
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleAvatarUpload}
-              />
+              {canUploadAvatar && (
+                <>
+                  <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                    {uploadingAvatar ? (
+                      <span className="text-white text-xs">Uploading...</span>
+                    ) : (
+                      <Camera className="text-white" size={24} />
+                    )}
+                  </div>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleAvatarUpload}
+                  />
+                </>
+              )}
             </div>
             <div>
               {editing ? (
@@ -1772,7 +1898,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 {userData.created_at && <span>Member since: <span className="text-gray-700 font-medium">{new Date(userData.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span></span>}
               </div>
             </div>
-            <div className="ml-auto flex items-center gap-3">
+            {/* QA 2026-08-15: this strip (Pay pill + attendance rings) is 455px
+                and did not wrap, so the whole Profile page panned sideways on a
+                phone — the page #321 is about. Pre-existing, fixed here. */}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
               {!onBack && (
                 <button
                   onClick={() => setShowStore(true)}
@@ -1833,6 +1962,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   onToggleLog={() => setActiveProfileTab('attendance')}
                   canEdit={canEditProfile}
                 />
+              )}
+              {/* #306: staff-only, no automatic blocking — just visible so a
+                  human can notice a pattern. Hidden (not "0") until the
+                  cancel_reason migration has actually run. */}
+              {userData.role === 'player' && (userRole === 'admin' || userRole === 'coach') && sickCancelCount !== null && (
+                <span
+                  title="Cancelled sessions marked sick/injured — released back to the player's package"
+                  className="px-3 py-1 rounded-full text-xs font-medium border bg-gray-50 text-gray-600 border-gray-200"
+                >
+                  Sick cancels: {sickCancelCount}
+                </span>
               )}
             </div>
           </div>
@@ -1942,6 +2082,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           <div className="border-b border-gray-200 mb-6 -mx-2 px-2">
             <nav className="flex flex-wrap gap-1 pb-2 min-w-0">
               {PROFILE_TABS.filter(tab => {
+                // Athlete privacy, belt-and-braces: a player looking at anyone
+                // other than themselves gets no tabs at all. The early return at
+                // the top of this component means we should never get here, but
+                // if a future edit removes it this filter still fails closed.
+                if (userRole === 'player' && loggedInUserId !== userId) return false;
                 // #226: age-gate sensitive tabs, fail-closed — hidden when the viewed
                 // athlete's DOB is missing or under the threshold, for everyone
                 // (including the athlete's own view): Marek bloodwork 18+, Recruitment 15+.
@@ -1956,6 +2101,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 if (tab.key === 'whoop' && userRole === 'player') return loggedInUserId === userId;
                 // Players can view their OWN recruitment entries (#216) — subject to the 15+ gate above.
                 if (tab.key === 'recruitment' && userRole === 'player') return loggedInUserId === userId;
+                // Players can log their OWN practice stats (#278) — the tab was
+                // built for #192 but only ever wired up for coach/admin, so
+                // practice-stats stayed permanently empty: not because athletes
+                // forgot, but because they had no way to open it.
+                if (tab.key === 'practice_stats' && userRole === 'player') return loggedInUserId === userId;
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
                 return true;
@@ -2656,28 +2806,50 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                           </div>
                           {v.content && <p className="text-sm text-gray-800 whitespace-pre-wrap">{v.content}</p>}
                           {Array.isArray(v.exercises) && v.exercises.length > 0 && (
-                            <div className="mt-2 overflow-x-auto">
-                              <table className="w-full text-xs border-collapse">
-                                <thead className="bg-gray-50">
-                                  <tr>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Exercise</th>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Sets</th>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Reps</th>
-                                    <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {v.exercises.map((ex, i) => (
-                                    <tr key={i} className="border-t border-gray-100">
-                                      <td className="px-2 py-1 text-gray-900">{ex.name || '—'}</td>
-                                      <td className="px-2 py-1 text-gray-700">{ex.sets || '—'}</td>
-                                      <td className="px-2 py-1 text-gray-700">{ex.reps || '—'}</td>
-                                      <td className="px-2 py-1 text-gray-600">{ex.notes || ''}</td>
+                            <>
+                              {/* #321: below sm this 4-column table squeezed Exercise and
+                                  Notes into ~85px each (Sets/Reps hold fixed w-20), so the
+                                  athlete's home-plan numbers wrapped one character per line.
+                                  Stack as labelled cards on a phone; table unchanged at sm+. */}
+                              <div className="sm:hidden mt-2 space-y-2">
+                                {v.exercises.map((ex, i) => (
+                                  <div key={i} className="border border-gray-200 rounded-lg p-2.5 bg-white">
+                                    <div className="text-sm font-medium text-gray-900 break-words">{ex.name || '—'}</div>
+                                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                                      {[['Sets', ex.sets], ['Reps', ex.reps]].map(([label, value]) => (
+                                        <span key={label} className="inline-flex items-baseline gap-1">
+                                          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+                                          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>{value || '—'}</span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {ex.notes && <div className="mt-1 text-xs text-gray-600 break-words">{ex.notes}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="hidden sm:block mt-2 overflow-x-auto">
+                                <table className="w-full text-xs border-collapse">
+                                  <thead className="bg-gray-50">
+                                    <tr>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Exercise</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Sets</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide w-20">Reps</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-600 uppercase tracking-wide">Notes</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                  </thead>
+                                  <tbody>
+                                    {v.exercises.map((ex, i) => (
+                                      <tr key={i} className="border-t border-gray-100">
+                                        <td className="px-2 py-1 text-gray-900">{ex.name || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-700">{ex.sets || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-700">{ex.reps || '—'}</td>
+                                        <td className="px-2 py-1 text-gray-600">{ex.notes || ''}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
                           )}
                           {v.follow_up_at && (
                             <p className="text-xs text-blue-700 mt-2">
@@ -3520,19 +3692,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               <div className="p-2 bg-blue-50 rounded border border-blue-100 space-y-1.5">
                                 <div className="text-xs font-semibold text-blue-700">Exercises</div>
                                 {exercises.map((ex, j) => (
-                                  <div key={j} className="bg-white rounded p-2 border border-blue-100 flex items-center justify-between text-xs">
-                                    <div>
-                                      <span className="font-medium text-gray-900">{ex.name}</span>
-                                      <div className="flex items-center gap-2 text-gray-500 mt-0.5">
-                                        {(ex.sets || ex.reps) && (
-                                          <span>{ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}</span>
-                                        )}
-                                        {ex.rest && <span>Rest: {ex.rest}</span>}
-                                        {ex.load && <span>Load: {ex.load}</span>}
-                                      </div>
+                                  <div key={j} className="bg-white rounded p-2 border border-blue-100 flex items-start justify-between gap-2 text-xs">
+                                    <div className="min-w-0 flex-1">
+                                      <span className="font-medium text-gray-900 break-words">{ex.name}</span>
+                                      {/* #321: was a non-wrapping `flex items-center gap-2` with no
+                                          label on sets/reps — at 375px the rest/load values ran off
+                                          the card, and a reps-only exercise rendered nothing at all
+                                          (`ex.sets && ex.reps ? … : ex.sets`). */}
+                                      <ExerciseMetrics
+                                        className="mt-1"
+                                        sets={ex.sets}
+                                        reps={ex.reps}
+                                        load={ex.load}
+                                        rest={ex.rest}
+                                      />
                                     </div>
                                     {ex.link && (
-                                      <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2">
+                                      <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2 flex-shrink-0">
                                         <ExternalLink size={12} />
                                       </a>
                                     )}
@@ -3810,7 +3986,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'practice_stats' && (
-            <PracticeStatsTab playerId={userId} canEdit={canEditProfile} />
+            // Players can only ever reach this tab on their own profile (the
+            // filter above enforces loggedInUserId === userId), so it's safe
+            // to also let them log their own stats here specifically — this
+            // does NOT touch canEditProfile itself, which still gates every
+            // other admin/coach-only field on the page (#278).
+            <PracticeStatsTab playerId={userId} canEdit={canEditProfile || (userRole === 'player' && loggedInUserId === userId)} />
           )}
 
           {activeProfileTab === 'marek' && (
@@ -4355,32 +4536,32 @@ function ProgramViewerModal({ programId, programName, onClose }) {
                 ) : (
                   <>
                     <div className="sm:hidden space-y-2">
-                      {day.exercises.map(ex => {
-                        const sr = ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : (ex.sets || ex.reps || '');
-                        const loadVal = ex.load || ex.weight;
-                        const meta = [sr, loadVal, ex.rest].filter(Boolean);
-                        return (
-                          <div key={ex.id} className="border border-gray-200 rounded-lg p-3 bg-white">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="font-semibold text-gray-900 break-words min-w-0 flex-1">{ex.name}</div>
-                              {ex.video_url && (
-                                <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0">
-                                  <ExternalLink size={12} />
-                                  Video
-                                </a>
-                              )}
-                            </div>
-                            {meta.length > 0 && (
-                              <div className="mt-2 text-sm text-gray-700 tabular-nums">
-                                {meta.join(' · ')}
-                              </div>
+                      {day.exercises.map(ex => (
+                        <div key={ex.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-semibold text-gray-900 break-words min-w-0 flex-1">{ex.name}</div>
+                            {ex.video_url && (
+                              <a href={ex.video_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 flex-shrink-0">
+                                <ExternalLink size={12} />
+                                Video
+                              </a>
                             )}
                           </div>
-                        );
-                      })}
+                          {/* #321: was `[sets × reps, load, rest].join(' · ')` — unlabelled,
+                              so the athlete couldn't tell rest from load, and any value that
+                              wasn't set just vanished. */}
+                          <ExerciseMetrics
+                            className="mt-2"
+                            sets={ex.sets}
+                            reps={ex.reps}
+                            load={ex.load || ex.weight}
+                            rest={ex.rest}
+                          />
+                        </div>
+                      ))}
                     </div>
-                    <div className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
+                    <div className="hidden sm:block border border-gray-200 rounded-lg overflow-x-auto">
+                      <table className="w-full text-sm min-w-max">
                         <thead className="bg-gray-50">
                           <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                             <th className="px-3 py-2">Exercise</th>
@@ -4876,39 +5057,42 @@ function PtVisitEditor({ draft, setDraft, addExercise, updateExercise, removeExe
         ) : (
           <div className="space-y-2">
             {exercises.map((ex, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+              /* #321: at 375px a 12-column grid gave the Sets and Reps inputs ~45px
+                 each — too narrow to read what you just typed. Below sm the fields
+                 stack onto their own rows; sm+ keeps the original 12-col layout. */
+              <div key={i} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center">
                 <input
                   type="text"
                   placeholder="Exercise name"
                   value={ex.name || ''}
                   onChange={(e) => updateExercise(i, 'name', e.target.value)}
-                  className="col-span-4 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-2 sm:col-span-4 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   placeholder="Sets"
                   value={ex.sets || ''}
                   onChange={(e) => updateExercise(i, 'sets', e.target.value)}
-                  className="col-span-2 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-1 sm:col-span-2 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   placeholder="Reps"
                   value={ex.reps || ''}
                   onChange={(e) => updateExercise(i, 'reps', e.target.value)}
-                  className="col-span-2 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-1 sm:col-span-2 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <input
                   type="text"
                   placeholder="Notes (optional)"
                   value={ex.notes || ''}
                   onChange={(e) => updateExercise(i, 'notes', e.target.value)}
-                  className="col-span-3 px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="col-span-1 sm:col-span-3 px-2 py-1.5 border border-gray-200 rounded text-sm sm:text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <button
                   type="button"
                   onClick={() => removeExercise(i)}
-                  className="col-span-1 text-gray-400 hover:text-red-600"
+                  className="col-span-1 justify-self-end sm:justify-self-auto text-gray-400 hover:text-red-600"
                   title="Remove exercise"
                 >
                   <Trash2 size={14} />

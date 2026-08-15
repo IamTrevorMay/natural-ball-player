@@ -10,7 +10,11 @@ import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
+import { capsForPurchases, isLiftingCoach, weekRangeForDate, capWarningMessage } from './bookingCaps';
 import { CreateUserModal } from './AdminSettings';
+import { familyKey, familyLabel, sameFamily } from './productFamily';
+// #277: per-occurrence RSVP (Going / Not going / Maybe) + coach roster & nudge.
+import { EventRsvpSection } from './EventRsvp';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -40,6 +44,104 @@ function getWeekRangeLabel(date) {
     return `${start.toLocaleDateString('en-US', optsY)} – ${end.toLocaleDateString('en-US', optsY)}`;
   }
   return `${start.toLocaleDateString('en-US', opts)} – ${end.toLocaleDateString('en-US', opts)}, ${end.getFullYear()}`;
+}
+
+// #276 — weekly booking caps. Returns a warning string when booking one more
+// session for `playerId` on `slotDate` would exceed the allowance their package
+// name implies, or null when it would not (or when we cannot tell, in which
+// case we stay silent). This NEVER blocks: callers show the message and offer
+// "Book anyway".
+//
+// Facility-wide by design: every reservation the player holds that week counts,
+// whichever coach or lane it belongs to.
+async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slotCoach, slotCoachId, excludeReservationId, purchases }) {
+  try {
+    if (!playerId || !slotDate) return null;
+
+    // What the player owns. Same filter the reserve modal already uses for its
+    // "payment confirmed" badge: currently-held, unexpired purchases.
+    let owned = purchases;
+    if (!owned) {
+      const nowIso = new Date().toISOString();
+      const { data } = await supabase
+        .from('store_purchases')
+        .select('product_name_snapshot, product_kind, status')
+        .eq('user_id', playerId)
+        .in('product_kind', ['package', 'bundle', 'lesson'])
+        .in('status', ['active', 'paid'])
+        .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
+      owned = data || [];
+    }
+    const caps = capsForPurchases(owned);
+
+    // Is the session being booked a lifting session? (Its coach carries the
+    // Strength & Conditioning skill tag.)
+    let coach = slotCoach;
+    if ((!coach || !Array.isArray(coach.skills)) && slotCoachId) {
+      const { data } = await supabase.from('users').select('id, skills').eq('id', slotCoachId).maybeSingle();
+      coach = data || coach;
+    }
+    const bookingIsLifting = isLiftingCoach(coach);
+
+    // Nothing to say if the relevant cap is unknown — bail before querying.
+    if (bookingIsLifting ? caps.liftingCap === null : caps.nonLiftingCap === null) return null;
+
+    // Everything already on the player's schedule that Sun–Sat week. Only
+    // live bookings count: 'cancelled' is excluded because the athlete gave the
+    // spot back, and 'declined' because the coach never gave it to them — a
+    // declined request is not a session they hold.
+    const { startStr, endStr } = weekRangeForDate(slotDate);
+    const { data: existing, error } = await supabase
+      .from('slot_reservations')
+      .select('id, slot_date, status, training_slots(coach_id)')
+      .eq('player_id', playerId)
+      .gte('slot_date', startStr)
+      .lte('slot_date', endStr)
+      .in('status', ['pending', 'confirmed']);
+    if (error) return null; // a failed count must not stand in the way of a booking
+
+    const rows = (existing || []).filter(r => r.id !== excludeReservationId);
+    const coachIds = [...new Set(rows.map(r => r.training_slots?.coach_id).filter(Boolean))];
+    let skillsByCoach = {};
+    if (coachIds.length > 0) {
+      const { data: coachRows } = await supabase.from('users').select('id, skills').in('id', coachIds);
+      (coachRows || []).forEach(c => { skillsByCoach[c.id] = c.skills; });
+    }
+    let liftingCount = 0;
+    let nonLiftingCount = 0;
+    rows.forEach(r => {
+      if (isLiftingCoach({ skills: skillsByCoach[r.training_slots?.coach_id] })) liftingCount++;
+      else nonLiftingCount++;
+    });
+
+    return capWarningMessage({ playerName, self, caps, liftingCount, nonLiftingCount, bookingIsLifting });
+  } catch (_) {
+    return null; // never let the cap check break a booking
+  }
+}
+
+// #276 — the warning itself. Warn, never block: Cancel backs out, the primary
+// button goes ahead with the booking anyway.
+function BookingCapWarningModal({ message, onCancel, onProceed, proceedLabel = 'Book anyway' }) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-sm w-full">
+        <div className="p-6 space-y-3">
+          <div className="flex items-start space-x-2">
+            <AlertTriangle size={20} className="mt-0.5 shrink-0 text-amber-500" />
+            <div>
+              <h4 className="font-semibold text-gray-900">Weekly session limit reached</h4>
+              <p className="text-sm text-gray-600 mt-1">{message}</p>
+            </div>
+          </div>
+          <div className="flex space-x-3 pt-1">
+            <button onClick={onCancel} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+            <button onClick={onProceed} className="flex-1 bg-amber-600 text-white py-2 rounded-lg hover:bg-amber-700 transition">{proceedLabel}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Categorize workout events by title for color-coding
@@ -234,6 +336,8 @@ export default function Schedule({ userId, userRole }) {
   const [publicSlotBookings, setPublicSlotBookings] = useState([]);
   const [showCreateSlot, setShowCreateSlot] = useState(null);
   const [showReserveSlot, setShowReserveSlot] = useState(null);
+  // #276: pending over-the-weekly-cap warning on the coach-side confirm.
+  const [capConfirm, setCapConfirm] = useState(null); // { message, reservationId }
   const [showEditSlot, setShowEditSlot] = useState(null);
   const [showFacilityEventDetail, setShowFacilityEventDetail] = useState(false);
   const [selectedFacilityEvent, setSelectedFacilityEvent] = useState(null);
@@ -259,6 +363,12 @@ export default function Schedule({ userId, userRole }) {
   // #292: a repeating training slot's master bar dropped on a new day suspends
   // the move until the user picks this-occurrence vs whole-series.
   const [pendingSlotMove, setPendingSlotMove] = useState(null); // { slot, newDate }
+  // #309: dragging a slot horizontally within its own row on the Lanes
+  // Staff Schedule band changes its TIME (same day) — a different axis than
+  // pendingSlotMove above (which changes the DAY via CoachSlotsWeekView's
+  // week grid), so this is its own state/prompt rather than overloading
+  // that one with a message that would need to talk about both.
+  const [pendingSlotTimeMove, setPendingSlotTimeMove] = useState(null); // { slot, newStartTime }
   const [copyToPicker, setCopyToPicker] = useState(null); // { event, source, options, onPick, title }
   const selectedIds = useMemo(() => new Set(selectedEvents.map((e) => String(e.id))), [selectedEvents]);
   const toggleSelect = (ev) => setSelectedEvents((arr) => {
@@ -799,7 +909,25 @@ export default function Schedule({ userId, userRole }) {
   // (coachModalOpen below) — one implementation, two render call sites,
   // both driven by the same selectedCoach the rest of this file already
   // uses. No behaviour change from what these bodies did inline.
-  const handleConfirmReservation = async (reservationId) => {
+  const handleConfirmReservation = async (reservationId, force = false) => {
+    // #276: this is the coach-side booking decision — confirming is what puts
+    // the athlete on the schedule — so the weekly-allowance check runs here
+    // too. It warns; the coach can still confirm ("Confirm anyway").
+    if (!force) {
+      const res = slotReservations.find(r => r.id === reservationId);
+      if (res) {
+        const warning = await checkWeeklyBookingCap({
+          playerId: res.player_id,
+          playerName: res.users?.full_name,
+          slotDate: res.slot_date,
+          slotCoach: selectedCoach,
+          // Don't count the request being confirmed as one of the sessions
+          // already booked — it is the one being added.
+          excludeReservationId: reservationId,
+        });
+        if (warning) { setCapConfirm({ message: warning, reservationId }); return; }
+      }
+    }
     const { error } = await supabase.from('slot_reservations').update({ status: 'confirmed', confirmed_at: new Date().toISOString() }).eq('id', reservationId);
     if (error) { alert('Failed to confirm reservation: ' + formatUserError(error)); return; }
     fetchCoachSlots(selectedCoach.id);
@@ -859,6 +987,101 @@ export default function Schedule({ userId, userRole }) {
     // taught. allowFuture stays false: splitting a series strands
     // slot_reservations (same call as #287).
     setPendingSlotMove({ slot, newDate });
+  };
+
+  // #309: applies a TIME change (same day) to one training_slots occurrence,
+  // dragged within its own row on the Lanes Staff Schedule band. Choice
+  // 'one' finds-or-creates a per-occurrence exception row — the same shape
+  // applyTeamAssignment/applyCoachAssignment already use for facility_events
+  // (#287), applied to training_slots here rather than a new mechanism.
+  // Choice 'all' updates the master directly. Deliberately does NOT touch
+  // slot_reservations or public_bookings the way moveSlotOccurrence's DATE
+  // change does — the occurrence's identity (id, date) isn't changing here,
+  // only its start_time, so there's nothing that needs to follow it.
+  const applySlotTimeChange = async (choice, slot, newStartTime) => {
+    try {
+      if (choice === 'one') {
+        if (slot.recurrence_parent_id) {
+          // Already its own per-occurrence row (a previous move or time
+          // change) — update in place.
+          const { error } = await supabase.from('training_slots').update({ start_time: newStartTime }).eq('id', slot.slot_id);
+          if (error) throw error;
+        } else {
+          const { data: existingChild, error: findErr } = await supabase
+            .from('training_slots')
+            .select('id')
+            .eq('recurrence_parent_id', slot.slot_id)
+            .eq('original_date', slot.slot_date)
+            .maybeSingle();
+          if (findErr) throw findErr;
+          if (existingChild) {
+            const { error } = await supabase.from('training_slots').update({ start_time: newStartTime }).eq('id', existingChild.id);
+            if (error) throw error;
+          } else {
+            const { data: master, error: masterErr } = await supabase.from('training_slots').select('*').eq('id', slot.slot_id).single();
+            if (masterErr) throw masterErr;
+            const { error } = await supabase.from('training_slots').insert({
+              recurrence_parent_id: slot.slot_id,
+              original_date: slot.slot_date,
+              slot_date: slot.slot_date,
+              is_exception: false,
+              repeat_weekly: false,
+              coach_id: master.coach_id,
+              start_time: newStartTime,
+              duration_minutes: master.duration_minutes,
+              is_public: master.is_public,
+              public_price_cents: master.public_price_cents ?? null,
+              is_subscription_session: master.is_subscription_session,
+              store_product_id: master.store_product_id ?? null,
+              store_product_ids: master.store_product_ids,
+              max_players: master.max_players,
+              auto_confirm: master.auto_confirm,
+              notes: master.notes ?? null,
+            });
+            if (error) throw error;
+          }
+        }
+      } else {
+        // 'all' — the whole series moves to the new time. An existing
+        // per-occurrence exception child keeps whatever start_time it
+        // already has (it was independently customized already) — the same
+        // "children don't auto-inherit a later master edit" limitation
+        // #310's merge already accepted for facility_events, not new here.
+        const masterId = slot.recurrence_parent_id || slot.slot_id;
+        const { error } = await supabase.from('training_slots').update({ start_time: newStartTime }).eq('id', masterId);
+        if (error) throw error;
+      }
+      fetchStaffSchedule(laneDate);
+    } catch (err) {
+      alert('Failed to move session: ' + formatUserError(err));
+    }
+  };
+
+  // #309: reuses the application/x-slot-id drag payload CoachSlotsWeekView's
+  // day-to-day drag already uses (same MIME keys, not a second mechanism) —
+  // here the drop target is a TIME cell within the SAME coach's row rather
+  // than a different day column, so it changes start_time instead of
+  // slot_date. Dropping on a different coach's row is not supported (that
+  // would be reassigning the session to a different coach — a separate
+  // feature; see the #309 report).
+  const handleSlotTimeDrop = async (slotId, newStartTime) => {
+    const slot = coachDaySlots.find((s) => String(s.slot_id) === String(slotId));
+    if (!slot || slot.start_time === newStartTime) return;
+    if (slot.recurrence_parent_id) {
+      await applySlotTimeChange('one', slot, newStartTime);
+      return;
+    }
+    if (!slot.repeat_weekly) {
+      await applySlotTimeChange('all', slot, newStartTime);
+      return;
+    }
+    // Recurring, and this is the master/virtual occurrence — ambiguous
+    // (just today's time, or the whole series'?), so ask, same #279/#292
+    // pattern. Unlike handleSlotDrop's _occurrence_index shortcut (which
+    // can tell "a later week's copy" from "the master's own anchor date"),
+    // this band shows one day at a time and coachDaySlots carries no such
+    // signal — always ask here rather than risk guessing wrong.
+    setPendingSlotTimeMove({ slot, newStartTime });
   };
 
   const fetchCoaches = async () => {
@@ -936,6 +1159,15 @@ export default function Schedule({ userId, userRole }) {
       capacity: s.max_players || 1,
       reserved: resCount[s.id] || 0,
       publicBookings: pubBySlot[s.id] || [],
+      // #309: needed to drag-move this occurrence's TIME (not just click it)
+      // — recurrence_parent_id/repeat_weekly decide whether moving it needs
+      // the one-vs-series prompt; slot_date is THIS OCCURRENCE's own date
+      // (dateStr, the function's own day) — s.slot_date is the wrong thing
+      // to use here for a repeating master, since that's the SERIES anchor
+      // date, not necessarily today's.
+      recurrence_parent_id: s.recurrence_parent_id,
+      repeat_weekly: s.repeat_weekly,
+      slot_date: dateStr,
     })));
     setEventPublicBookings(pubByEvent);
   };
@@ -1462,7 +1694,9 @@ export default function Schedule({ userId, userRole }) {
         </div>
         
         {/* View Toggle */}
-        <div className="flex items-center space-x-2">
+        {/* QA 2026-08-15: added flex-wrap — this row is 253px+ and did not wrap,
+            so the Schedule page panned sideways on a phone. Pre-existing. */}
+        <div className="flex flex-wrap items-center gap-2">
           {userRole === 'player' ? (
             <>
               <button
@@ -1526,8 +1760,11 @@ export default function Schedule({ userId, userRole }) {
           )}
           <div className="bg-white rounded-lg shadow flex-1 min-w-0">
           <div className="border-b border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
+            {/* QA 2026-08-15: added flex-wrap + gap so the title/Add Game group
+                and the Week/Month/Lanes toggle stack on a phone instead of
+                pushing the whole Schedule page sideways. Pre-existing. */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <h3 className="text-lg font-semibold text-gray-900">My Schedule</h3>
                 <button
                   onClick={() => setShowPlayerAddGame(true)}
@@ -1678,8 +1915,9 @@ export default function Schedule({ userId, userRole }) {
             {/* Main Calendar Area */}
             <div className="flex-1 min-w-0">
               <div className="border-b border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-4">
+                {/* QA 2026-08-15: flex-wrap, same reason as the My Schedule bar. */}
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                  <div className="flex flex-wrap items-center gap-4">
                     <button
                       onClick={() => setCoachesDrawerOpen(true)}
                       className="flex items-center space-x-1 bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium transition"
@@ -1824,6 +2062,7 @@ export default function Schedule({ userId, userRole }) {
                       setCoachModalOpen(true);
                     }}
                     onShiftEntryClick={(ev) => setShiftDetailEvent(ev)}
+                    onSlotTimeDrop={handleSlotTimeDrop}
                   />
                 ) : viewMode === 'month' ? (
                   <MonthView selectedDate={selectedDate} events={facilityEvents} onDateClick={(date) => canManageCalendar() && setShowEventTypeChooser(date)} hoveredDate={hoveredDate} setHoveredDate={setHoveredDate} canManage={canManageCalendar()} allowEventClick={true} setSelectedEvent={setSelectedFacilityEvent} setShowEventDetail={setShowFacilityEventDetail} eventColorFn={(ev) => getFacilityColorClasses(ev?.color, 'month')} selecting={selecting} selectedIds={selectedIds} onToggleSelect={toggleSelect} onEventContextMenu={onEventContextMenu('facility')} onEventDrop={async (eventId, newDate) => {
@@ -1852,9 +2091,10 @@ export default function Schedule({ userId, userRole }) {
       {view !== 'facility' && view !== 'my-schedule' && <><div className="flex space-x-4">{(userRole === 'admin' || userRole === 'coach') && <ProgramLibrarySidebar collapsed={libraryCollapsed} onToggle={() => setLibraryCollapsed(!libraryCollapsed)} />}<div className="bg-white rounded-lg shadow flex-1 min-w-0">
         {/* Calendar Header */}
         <div className="border-b border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
+          {/* QA 2026-08-15: flex-wrap, same reason as the My Schedule bar. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             {/* Team/Player Selector */}
-            <div className="flex items-center space-x-4">
+            <div className="flex flex-wrap items-center gap-4">
               {view === 'team' ? (
                 <select
                   value={selectedTeam || ''}
@@ -1939,7 +2179,9 @@ export default function Schedule({ userId, userRole }) {
             </div>
 
             {/* View Mode Toggle */}
-            <div className="flex items-center space-x-2">
+            {/* QA 2026-08-15: wrap this inner group too — the 240px player picker
+                beside it meant the outer row had no break point on a phone. */}
+            <div className="flex flex-wrap items-center gap-2">
               {canManageCalendar() && (
                 <button
                   onClick={() => { if (selecting) exitSelectMode(); else setSelecting(true); }}
@@ -2270,6 +2512,24 @@ export default function Schedule({ userId, userRole }) {
           onClose={() => setPendingSlotMove(null)}
         />
       )}
+      {/* #309: dragging a repeating slot's time on the Lanes Staff Schedule
+          band is the same one-vs-series ambiguity #292 already solved for a
+          DAY change — same modal, applied here to a TIME change instead. */}
+      {pendingSlotTimeMove && (
+        <RecurrenceDecisionModal
+          title="Change the time of a repeating slot"
+          message={`Change just today's session to ${formatTimeDisplay(pendingSlotTimeMove.newStartTime)}, or change the whole series' time?`}
+          actionLabel="Change"
+          allowOne={true}
+          allowFuture={false}
+          onPick={async (choice) => {
+            const move = pendingSlotTimeMove;
+            setPendingSlotTimeMove(null);
+            await applySlotTimeChange(choice === 'one' ? 'one' : 'all', move.slot, move.newStartTime);
+          }}
+          onClose={() => setPendingSlotTimeMove(null)}
+        />
+      )}
       {/* #309/#314: CoachSlotsWeekView reused as a modal over the Lanes view
           when a slot entry is clicked in the Staff Schedule band — same
           component, same selectedCoach-driven state and handlers as the main
@@ -2388,6 +2648,16 @@ export default function Schedule({ userId, userRole }) {
           coach={selectedCoach}
           onClose={() => setShowReserveSlot(null)}
           onSuccess={() => { setShowReserveSlot(null); if (selectedCoach) fetchCoachSlots(selectedCoach.id); }}
+        />
+      )}
+      {/* #276: coach confirming a booking that puts the athlete over their
+          weekly allowance — warn, but let the coach go ahead. */}
+      {capConfirm && (
+        <BookingCapWarningModal
+          message={capConfirm.message}
+          proceedLabel="Confirm anyway"
+          onCancel={() => setCapConfirm(null)}
+          onProceed={() => { const id = capConfirm.reservationId; setCapConfirm(null); handleConfirmReservation(id, true); }}
         />
       )}
       {ctxMenu && (
@@ -2810,8 +3080,9 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
 // Module-level (not just inside LaneView) so the drag-and-drop handler in
 // the parent Schedule component can also use it to compute a lane offset
 // (#280) — order matters here, it's the same left-to-right order the grid
-// renders in.
-const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+// renders in. Exported for #300 (AthleteOutreach) so open-cage-time
+// availability reads the same lane list this grid renders, not a second copy.
+export const LANES = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
 
 // Shifts every lane an event occupies by the same offset as the bar the
 // user grabbed (sourceLane) relative to where they're hovering/dropping
@@ -2889,7 +3160,7 @@ function shiftStartIdx(pointerSlotIdx, grabOffset, span, slotsLength) {
   return startIdx;
 }
 
-function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule, onSlotEntryClick, onShiftEntryClick }) {
+function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCellClick, onEventClick, onEventMove, staffEvents = [], staffAssignments = [], coachDaySlots = [], eventPublicBookings = {}, coaches = [], onToggleCoachSchedule, onSlotEntryClick, onShiftEntryClick, onSlotTimeDrop }) {
   // #260: coaches can be hidden from the Staff Schedule rows without touching
   // their role. The manage modal lists all coaches; the rows show only visible.
   const [showManageCoaches, setShowManageCoaches] = useState(false);
@@ -3437,6 +3708,12 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   // this exact session in CoachSlotsWeekView. Opens that
                   // same component as a modal (see coachModalOpen).
                   onClick: onSlotEntryClick ? () => onSlotEntryClick(coach) : null,
+                  // #309: drag-to-retime — see the onDragStart/onDrop wiring
+                  // below. Only slot entries are draggable in this band;
+                  // shifts and facility events keep their existing
+                  // click-only behaviour (out of scope here).
+                  slotId: s.slot_id,
+                  draggableSlot: canManage && !!onSlotTimeDrop,
                 };
               });
 
@@ -3486,7 +3763,19 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                           className={`border-y border-r border-indigo-100 ${entryIsHourStart ? 'border-l border-l-indigo-300' : 'border-l border-l-indigo-100'} p-0 overflow-hidden`}
                         >
                           {entry.onClick ? (
-                            <button type="button" onClick={entry.onClick} title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}>{inner}</button>
+                            <button
+                              type="button"
+                              onClick={entry.onClick}
+                              title={entryTitleAttr}
+                              draggable={entry.draggableSlot || undefined}
+                              onDragStart={entry.draggableSlot ? (e) => {
+                                e.stopPropagation();
+                                e.dataTransfer.setData('application/x-slot-id', String(entry.slotId));
+                                e.dataTransfer.setData('application/x-slot-date', String(dateStr));
+                                e.dataTransfer.effectAllowed = 'move';
+                              } : undefined}
+                              className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden ${entry.draggableSlot ? 'cursor-grab' : ''}`}
+                            >{inner}</button>
                           ) : (
                             <div title={entryTitleAttr} className={`${entry.colorClass || KIND_STYLES[entry.kind]} border rounded px-1 h-[26px] w-full text-left leading-none flex items-center overflow-hidden`}>{inner}</div>
                           )}
@@ -3501,6 +3790,22 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         key={slot}
                         className={`border-y border-r border-indigo-100 ${isHour ? 'border-l border-l-indigo-300 bg-indigo-50/30' : 'border-l border-l-indigo-100'}`}
                         style={{ height: 26 }}
+                        onDragOver={canManage && onSlotTimeDrop ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } : undefined}
+                        onDrop={canManage && onSlotTimeDrop ? (e) => {
+                          e.preventDefault();
+                          const slotId = e.dataTransfer.getData('application/x-slot-id');
+                          if (!slotId) return;
+                          // #309: same-coach-row only — dropping on a different
+                          // coach's row would mean reassigning the session to
+                          // that coach, a separate feature this doesn't build.
+                          // Checked here (not left to the handler) so a
+                          // cross-row drop is a clean no-op, not an accidental
+                          // time-only move that silently ignores which row it
+                          // landed on.
+                          const draggedSlot = coachDaySlots.find(s => String(s.slot_id) === String(slotId));
+                          if (!draggedSlot || draggedSlot.coach_id !== coach.id) return;
+                          onSlotTimeDrop(slotId, slot);
+                        } : undefined}
                       />
                     );
                   })}
@@ -4346,10 +4651,59 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
                     />
                   </div>
 
-                  {/* Exercises Table */}
+                  {/* Exercises — #321: this 7-column editor had no responsive handling
+                      at all, so on a 375px phone the four numeric inputs were squeezed to
+                      roughly 30px each: you could not read the reps you had just typed.
+                      Below sm each exercise stacks as a labelled card; sm+ is unchanged. */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Exercises</label>
-                    <table className="w-full text-sm">
+
+                    {/* Portrait phone: stacked cards */}
+                    <div className="sm:hidden space-y-3">
+                      {newWorkoutData.exercises.map((ex, i) => {
+                        const setField = (field, value) => {
+                          const updated = [...newWorkoutData.exercises];
+                          updated[i] = { ...updated[i], [field]: value };
+                          setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                        };
+                        return (
+                          <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white space-y-2">
+                            <div className="flex items-start gap-2">
+                              <span className="text-xs font-semibold text-gray-500 pt-2">#{i + 1}</span>
+                              <input type="text" placeholder="Exercise name" value={ex.name}
+                                onChange={(e) => setField('name', e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                              <button type="button" onClick={() => {
+                                const updated = newWorkoutData.exercises.filter((_, idx) => idx !== i);
+                                setNewWorkoutData({ ...newWorkoutData, exercises: updated.length ? updated : [{ name: '', sets: '', reps: '', rest: '', load: '', link: '' }] });
+                              }} className="text-gray-400 hover:text-red-600 flex-shrink-0 pt-2"><Trash2 size={14} /></button>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2">
+                              {[['Sets', 'sets', '3'], ['Reps', 'reps', '10'], ['Rest', 'rest', 'Rest'], ['Load', 'load', 'Load']].map(([label, field, ph]) => (
+                                <div key={field}>
+                                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">{label}</label>
+                                  <input type="text" placeholder={ph} value={ex[field] || ''}
+                                    onChange={(e) => setField(field, e.target.value)}
+                                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">Link</label>
+                              <input type="url" placeholder="https://..." value={ex.link}
+                                onChange={(e) => setField('link', e.target.value)}
+                                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Tablet/desktop: original table, unchanged */}
+                    <table className="hidden sm:table w-full text-sm">
                       <thead>
                         <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
                           <th className="pb-2 pr-2">Name</th>
@@ -4940,6 +5294,31 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
 // EXERCISE NOTES PARSER
 // ============================================
 
+/* #321 — Sets / Reps / Rest / Load, readable on a 375px phone.
+ *
+ * Same helper as the one in Profile.js (kept local, this repo has no shared
+ * component module). These four numbers were being packed onto one
+ * un-wrapping line with no labels — "3 × 8 · 135 · 60" tells an athlete
+ * nothing about which value is the rest and which is the load, and anything
+ * that wasn't programmed simply disappeared. Labelled chips that wrap, with
+ * an em-dash placeholder so a missing value can't read as a layout bug.
+ */
+function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
+  const items = [['Sets', sets], ['Reps', reps], ['Load', load], ['Rest', rest]];
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1 text-sm ${className}`}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || '—'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function parseExerciseNotes(notes) {
   if (!notes) return { general: '', exercises: [] };
   const delimiter = '--- Exercises ---';
@@ -5139,9 +5518,6 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                       </div>
                       <div className="sm:hidden space-y-2">
                         {exs.map((ex, i) => {
-                          const sr = ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : (ex.sets || ex.reps || '');
-                          const loadVal = ex.load || ex.weight;
-                          const meta = [sr, loadVal, ex.rest].filter(Boolean);
                           return (
                             <div key={ex.id || i} className="border border-gray-200 rounded-lg p-3 bg-white">
                               <div className="flex items-start justify-between gap-2">
@@ -5163,15 +5539,21 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                                   </a>
                                 )}
                               </div>
-                              <div className="mt-2 text-sm text-gray-700 tabular-nums">
-                                {meta.length > 0 ? meta.join(' · ') : <span className="text-gray-400 italic">Sets/reps not set</span>}
-                              </div>
+                              {/* #321: was `[sets × reps, load, rest].join(' · ')` — no labels,
+                                  and a value that wasn't programmed was dropped silently. */}
+                              <ExerciseMetrics
+                                className="mt-2"
+                                sets={ex.sets}
+                                reps={ex.reps}
+                                load={ex.load || ex.weight}
+                                rest={ex.rest}
+                              />
                             </div>
                           );
                         })}
                       </div>
-                      <div className="hidden sm:block border border-gray-200 rounded-lg overflow-hidden">
-                        <table className="w-full text-sm">
+                      <div className="hidden sm:block border border-gray-200 rounded-lg overflow-x-auto">
+                        <table className="w-full text-sm min-w-max">
                           <thead className="bg-gray-50">
                             <tr className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                               <th className="px-3 py-2">Exercise</th>
@@ -5275,6 +5657,9 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   const [planMeals, setPlanMeals] = useState(null); // fuel-plan assignment: full meal breakdown
   const [slotReservations, setSlotReservations] = useState([]);
   const [slotResLoading, setSlotResLoading] = useState(false);
+  // #306: "why are you cancelling" — shown after the player commits to
+  // cancelling, before it's actually written.
+  const [showCancelReason, setShowCancelReason] = useState(false);
   const [formData, setFormData] = useState({
     title: event.title || event.opponent || '',
     event_date: event.event_date,
@@ -5513,7 +5898,14 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     const isPlayer = userRole === 'player';
     const withinCancelWindow = Date.now() <= startAt.getTime() - CUTOFF_MS;
 
-    const handleCancelReservation = async () => {
+    // #306: sick cancel gives the session back; anything else counts against
+    // the package, same as if the player had simply not shown up. One write
+    // (status + cancel_reason together), and the actual give-back/consume is
+    // syncReservationSessionUsage — the exact function attendance-marking
+    // already uses — reused, not duplicated, just with attended flipped:
+    // sick (attended=false) releases anything already consumed; anything
+    // else (attended=true) consumes a session, same as marking Present.
+    const handleCancelReservation = async (reason) => {
       setLoading(true);
       try {
         const { data: resRow, error: findErr } = await supabase
@@ -5528,10 +5920,27 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
         if (!resRow) throw new Error('Could not find your reservation for this session.');
         const { error: updErr } = await supabase
           .from('slot_reservations')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+            cancel_reason: reason,
+            cancel_reason_by: userId,
+            cancel_reason_at: new Date().toISOString(),
+          })
           .eq('id', resRow.id);
         if (updErr) throw updErr;
-        alert('Session cancelled. The spot has been reopened.');
+        try {
+          await syncReservationSessionUsage(
+            { id: resRow.id, player_id: userId, slot_date: event.event_date },
+            reason !== 'sick',
+            userId
+          );
+        } catch (e) {
+          // #306: same swallow-on-package-error posture syncReservationSessionUsage
+          // already documents for itself — the cancellation stands either way.
+          console.error('Session-usage sync on cancel failed:', e);
+        }
+        alert(reason === 'sick' ? 'Session cancelled. The spot has been reopened.' : 'Session cancelled. This will count against your package.');
         onDelete();
       } catch (err) {
         alert('Error cancelling session: ' + formatUserError(err));
@@ -5560,16 +5969,37 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
 
             {isPlayer ? (
               withinCancelWindow ? (
-                <div className="space-y-2 pt-2">
-                  <button
-                    onClick={handleCancelReservation}
-                    disabled={loading}
-                    className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50"
-                  >
-                    {loading ? 'Cancelling...' : 'Cancel this session'}
-                  </button>
-                  <p className="text-xs text-gray-400 text-center">Cancellations are allowed up to 12 hours before the session.</p>
-                </div>
+                showCancelReason ? (
+                  <div className="space-y-2 pt-2">
+                    <p className="text-sm font-medium text-gray-700">Why are you cancelling?</p>
+                    <button
+                      onClick={() => handleCancelReservation('sick')}
+                      disabled={loading}
+                      className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50"
+                    >
+                      {loading ? 'Cancelling...' : "I'm sick / injured"}
+                    </button>
+                    <button
+                      onClick={() => handleCancelReservation('other')}
+                      disabled={loading}
+                      className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg font-medium hover:bg-gray-50 transition disabled:opacity-50"
+                    >
+                      {loading ? 'Cancelling...' : 'Something else came up'}
+                    </button>
+                    <p className="text-xs text-gray-400 text-center">A sick/injured cancel reopens your spot. Anything else counts against your package.</p>
+                    <button onClick={() => setShowCancelReason(false)} disabled={loading} className="w-full text-xs text-gray-400 hover:text-gray-600 transition">Never mind</button>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-2">
+                    <button
+                      onClick={() => setShowCancelReason(true)}
+                      className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition"
+                    >
+                      Cancel this session
+                    </button>
+                    <p className="text-xs text-gray-400 text-center">Cancellations are allowed up to 12 hours before the session.</p>
+                  </div>
+                )
               ) : (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                   Cancellations close 12 hours before the session. Please contact your coach if you can't make it.
@@ -5920,16 +6350,19 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                         <div className="text-xs font-semibold text-blue-700 mb-2">Exercises</div>
                         <div className="space-y-2">
                           {exercises.map((ex, i) => (
-                            <div key={i} className="bg-white rounded-md p-2.5 border border-blue-100 flex items-center justify-between">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">{ex.name}</div>
-                                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                                  {(ex.sets || ex.reps) && (
-                                    <span>{ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}</span>
-                                  )}
-                                  {ex.rest && <span>Rest: {ex.rest}</span>}
-                                  {ex.load && <span>Load: {ex.load}</span>}
-                                </div>
+                            <div key={i} className="bg-white rounded-md p-2.5 border border-blue-100 flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium text-gray-900 break-words">{ex.name}</div>
+                                {/* #321: was a non-wrapping `flex items-center gap-2` with no label
+                                    on sets/reps — rest and load ran off the card at 375px, and a
+                                    reps-only exercise rendered nothing (`sets && reps ? … : sets`). */}
+                                <ExerciseMetrics
+                                  className="mt-1"
+                                  sets={ex.sets}
+                                  reps={ex.reps}
+                                  load={ex.load}
+                                  rest={ex.rest}
+                                />
                               </div>
                               {ex.link && (
                                 <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2 flex-shrink-0">
@@ -5950,6 +6383,20 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                   </div>
                 );
               })()}
+
+              {/* #277: RSVP. Renders itself as null unless this is a shared
+                  team practice / game / lifting event (team_ids set,
+                  player_id null). Players see Going / Not going / Maybe plus
+                  the headcount; staff see the full roster split and the
+                  Nudge non-responders button. */}
+              {!event._isMealPlan && (
+                <EventRsvpSection
+                  event={event}
+                  source="schedule_events"
+                  userId={userId}
+                  userRole={userRole}
+                />
+              )}
 
               <div className="flex space-x-3 pt-4 border-t border-gray-200">
                 <button
@@ -7215,6 +7662,17 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                 </div>
               )}
 
+              {/* #277: RSVP for team-tagged facility events — this is where a
+                  team lifting session booked into a weight room lands. Renders
+                  as null when the event has no team assigned (a lane rental,
+                  a lesson), so ordinary facility bookings are unaffected. */}
+              <EventRsvpSection
+                event={event}
+                source="facility_events"
+                userId={userId}
+                userRole={userRole}
+              />
+
               {isPlayer && (
                 <div className="pt-4 border-t border-gray-200">
                   {signupsLoading ? (
@@ -8016,44 +8474,163 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
-  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null });
+  // #305: reason is only set when gated and blocked — 'none' | 'expired' |
+  // 'no_sessions'. Used to pick the specific refusal message below.
+  const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null, reason: null });
   // #244/#249: names of the subscription plan(s) this session accepts (if any).
   const [subNames, setSubNames] = useState([]);
+  // #276: the player's held purchases (reused for the weekly-cap check) and the
+  // pending over-cap warning, if any.
+  const [ownedPurchases, setOwnedPurchases] = useState([]);
+  const [capWarning, setCapWarning] = useState(null);
+
+  // #305: the product(s) this specific session was tagged with (CreateSlotPanel
+  // / BulkTagSessions). Matching is by id against THIS list, never by name or
+  // product kind — a session with nothing attached (is_subscription_session
+  // false, the pre-#311-tagging default) is NOT gated, so this stays exactly
+  // as permissive as it always was for the rare untagged slot.
+  const requiredProductIds = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
+  // 🔴 #305 KILL SWITCH — LEAVE THIS `false` UNTIL CORDELL FIXES THE DATA.
+  //
+  // Flip to `true` and the "no package, no booking" rule turns on. Measured
+  // against the LIVE database on 2026-08-15, with the package-family matching
+  // in place: 655 of 699 gated sessions are bookable by somebody, but **82 of
+  // the last 147 real bookings would have been refused**. The cause is not this
+  // code — 130 lesson-pack purchases held by 99 athletes are all sitting at
+  // status 'pending' with no session count, so the gate cannot see that those
+  // athletes own anything. Turning this on today locks out paying customers.
+  //
+  // Everything else in #305 still runs with this off: the package-family match,
+  // the "Included with:" line, and the "Payment confirmed — N sessions
+  // remaining" badge. Only the refusal and the staff flag are suppressed.
+  const BOOKING_GATE_ENABLED = false;
+  const gated = BOOKING_GATE_ENABLED && !!slot?.is_subscription_session && requiredProductIds.length > 0;
+  // Stable, primitive form of requiredProductIds for effect dependency arrays
+  // below — the array itself is a new reference every render.
+  const requiredProductIdsKey = requiredProductIds.join(',');
 
   useEffect(() => {
     (async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         const today = new Date().toISOString();
+        // Fetch unfiltered by validity (unlike the old query) so a matching-
+        // but-expired or matching-but-empty package can be told apart from
+        // holding no matching package at all, for the refusal message.
         const { data } = await supabase
           .from('store_purchases')
-          .select('id, product_name_snapshot, remaining_qty, product_kind')
+          .select('id, product_id, product_name_snapshot, remaining_qty, product_kind, expires_at')
           .eq('user_id', user.id)
           .in('product_kind', ['package', 'bundle', 'lesson'])
-          .in('status', ['active', 'paid'])
-          .or(`expires_at.is.null,expires_at.gt.${today}`);
+          .in('status', ['active', 'paid']);
+        const purchases = data || [];
+        // #276: the weekly-cap check needs the player's live (unexpired)
+        // packages. #305's query above deliberately does NOT filter on expiry
+        // so it can tell "expired" apart from "never had one", so filter here.
+        setOwnedPurchases(purchases.filter(p => !p.expires_at || p.expires_at > today));
         // remaining_qty === null means "uncounted" — only true unlimited for a
         // recurring monthly package. For a one-time bundle/lesson purchase,
         // null means no session count was ever set on it (a plain single-lesson
         // purchase, not a pack), so it must NOT be treated as an active package.
-        const active = (data || []).find(p =>
-          p.product_kind === 'package' ? p.remaining_qty === null || p.remaining_qty > 0 : p.remaining_qty > 0
-        );
-        setPkgCheck({ checking: false, pkg: active || null });
+        const hasSessionsLeft = (p) => p.product_kind === 'package' ? (p.remaining_qty === null || p.remaining_qty > 0) : p.remaining_qty > 0;
+        const notExpired = (p) => !p.expires_at || p.expires_at > today;
+
+        if (requiredProductIds.length > 0) {
+          // #305 (Q7 — "the package has to match the session size"): matched
+          // against the specific products attached to THIS slot, not a
+          // name-guess or a kind-guess. A cage-rental purchase's product_id
+          // is never in requiredProductIds (SLOT_PRODUCT_KINDS only allows
+          // attaching 'package'/'lesson' products to a slot in the first
+          // place), so it simply never matches here — no special-case needed.
+          //
+          // #276/#310 (Trevor, 2026-08-13): "if the title of the two packages
+          // says the same name before the (frequency of charge) is listed then
+          // it is the same package in reality." Square exported the same real
+          // package more than once — sessions are tagged with the bare
+          // "NBP 2x A Week Training" while every player actually bought
+          // "NBP 2x A Week Training (MONTHLY price)". So the id test is widened
+          // to a package-FAMILY test. This can only ever match MORE purchases
+          // than the id test alone, never fewer, so it cannot lock anybody out.
+          let requiredNames = [];
+          try {
+            const { data: prodRows } = await supabase
+              .from('store_products').select('id, name').in('id', requiredProductIds);
+            requiredNames = (prodRows || []).map(r => r.name).filter(Boolean);
+          } catch { /* fall back to id-only matching below */ }
+
+          const matching = purchases.filter(p =>
+            (p.product_id && requiredProductIds.includes(p.product_id)) ||
+            requiredNames.some(n => sameFamily(n, p.product_name_snapshot))
+          );
+          const valid = matching.find(p => hasSessionsLeft(p) && notExpired(p));
+          let reason = null;
+          if (!valid) {
+            if (matching.length === 0) reason = 'none';
+            else if (matching.some(p => !notExpired(p))) reason = 'expired';
+            else reason = 'no_sessions';
+          }
+          setPkgCheck({ checking: false, pkg: valid || null, reason });
+        } else {
+          // Not gated — this slot has no product attached. Preserve the
+          // original, pre-#305 behaviour exactly: informational only, never
+          // blocks the reservation.
+          const valid = purchases.find(p => hasSessionsLeft(p) && notExpired(p));
+          setPkgCheck({ checking: false, pkg: valid || null, reason: null });
+        }
       } catch {
-        setPkgCheck({ checking: false, pkg: null });
+        setPkgCheck({ checking: false, pkg: null, reason: null });
       }
     })();
-  }, []);
+  }, [requiredProductIdsKey, slot?.is_subscription_session]);
 
   useEffect(() => {
-    const ids = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
+    const ids = requiredProductIds;
     if (!slot?.is_subscription_session || ids.length === 0) { setSubNames([]); return; }
     (async () => {
       const { data } = await supabase.from('store_products').select('name').in('id', ids);
-      setSubNames((data || []).map(d => d.name).filter(Boolean));
+      // #276/#305: same package, different Square billing frequency. A slot can
+      // be tagged with two rows that are the same real package ("X" and
+      // "X (MONTHLY price)"); show the base name once instead of listing both.
+      const seen = new Set();
+      const labels = [];
+      (data || []).forEach(d => {
+        const label = familyLabel(d.name);
+        const key = familyKey(d.name);
+        if (!label || seen.has(key)) return;
+        seen.add(key);
+        labels.push(label);
+      });
+      setSubNames(labels);
     })();
   }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
+
+  // #305: log a blocked attempt once per open modal so staff can see it
+  // (Cordell's Q8 — "an athlete without a package should be flagged").
+  // In-app only — never touches #281's parked email send path. Best-effort:
+  // failures (including the table not existing until its migration runs)
+  // are swallowed, same as syncReservationSessionUsage already does for
+  // package errors — this is a side note for staff, never something that
+  // should interrupt or alarm the player trying to book.
+  const flaggedRef = useRef(false);
+  useEffect(() => {
+    if (pkgCheck.checking || flaggedRef.current) return;
+    if (gated && !pkgCheck.pkg) {
+      flaggedRef.current = true;
+      (async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          await supabase.from('booking_package_flags').insert({
+            player_id: user.id,
+            slot_id: slot.id,
+            slot_date: slot.slot_date,
+            coach_id: slot.coach_id || coach?.id || null,
+          });
+        } catch (e) {
+          console.error('booking_package_flags insert failed (migration pending?):', e);
+        }
+      })();
+    }
+  }, [pkgCheck.checking, pkgCheck.pkg, gated, slot.id, slot.slot_date, slot.coach_id, coach?.id]);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -8067,11 +8644,29 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const slotStartAt = new Date(`${slot.slot_date}T${(slot.start_time || '00:00').slice(0, 5)}:00`);
   const bookingClosed = Date.now() > slotStartAt.getTime() - RESERVE_CUTOFF_MS;
 
-  const handleReserve = async () => {
+  // #276: before writing the reservation, check the athlete's weekly allowance.
+  // A warning is a confirmation step, not a block — `force` is the second pass
+  // after they choose "Book anyway".
+  const handleReserve = async (force = false) => {
     if (bookingClosed) { alert('Booking is closed — reservations close 12 hours before the session starts.'); return; }
+    // #305: server-side belt for the button's own disabled state below —
+    // this is a client-side gate, same tier as the cutoff check just above
+    // it (no RLS/DB-level enforcement exists for either one today).
+    if (gated && !pkgCheck.pkg) { alert('You need an active package for this session before you can reserve it.'); return; }
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!force) {
+        const warning = await checkWeeklyBookingCap({
+          playerId: user.id,
+          self: true,
+          slotDate: slot.slot_date,
+          slotCoach: coach,
+          slotCoachId: slot.coach_id,
+          purchases: ownedPurchases,
+        });
+        if (warning) { setCapWarning(warning); setLoading(false); return; }
+      }
       const status = slot.auto_confirm ? 'confirmed' : 'pending';
       const { error } = await supabase.from('slot_reservations').insert({
         slot_id: slot.id, player_id: user.id, slot_date: slot.slot_date, status,
@@ -8121,6 +8716,20 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
                   <span className="font-medium">Payment confirmed</span> — {pkgCheck.pkg.remaining_qty === null ? 'Monthly package' : `${pkgCheck.pkg.remaining_qty} session${pkgCheck.pkg.remaining_qty !== 1 ? 's' : ''} remaining`} on <span className="font-medium">{pkgCheck.pkg.product_name_snapshot}</span>.
                 </span>
               </div>
+            ) : gated ? (
+              // #305: this session has a specific package attached — no
+              // match means no booking, not a warning. Explains what's
+              // needed rather than just disabling the button.
+              <div className="flex items-start space-x-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-800">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" />
+                <span>
+                  {pkgCheck.reason === 'expired'
+                    ? <>Your {subNames.length ? <span className="font-medium">{subNames.join(', ')}</span> : 'package'} has expired. Renew it before reserving this session.</>
+                    : pkgCheck.reason === 'no_sessions'
+                    ? <>Your {subNames.length ? <span className="font-medium">{subNames.join(', ')}</span> : 'package'} has no sessions left. Purchase more before reserving this session.</>
+                    : <>This session requires {subNames.length ? <span className="font-medium">{subNames.join(' or ')}</span> : 'a specific package'}. You don't currently have one — reach out to arrange payment before reserving.</>}
+                </span>
+              </div>
             ) : (
               <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
@@ -8138,10 +8747,18 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           )}
           <div className="flex space-x-3 pt-2">
             <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleReserve} disabled={loading || bookingClosed} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
+            <button onClick={() => handleReserve(false)} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
           </div>
         </div>
       </div>
+      {/* #276: over the weekly allowance — a warning, not a block. */}
+      {capWarning && (
+        <BookingCapWarningModal
+          message={capWarning}
+          onCancel={() => setCapWarning(null)}
+          onProceed={() => { setCapWarning(null); handleReserve(true); }}
+        />
+      )}
     </div>
   );
 }

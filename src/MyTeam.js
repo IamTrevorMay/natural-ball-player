@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio } from 'lucide-react';
+import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio, CheckCircle } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 import { formatUserError } from './errorMessage';
 import { expandRecurringEvents } from './scheduleUtils';
+// #277: RSVP for this team's upcoming practices / games / lifting sessions.
+import { RsvpBoard } from './EventRsvp';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
@@ -139,6 +141,12 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
       const team = availableTeams.find(t => t.id === teamId);
       if (team) setTeamData(team);
 
+      // Athlete privacy: PlayerCard renders neither email nor phone, so athletes
+      // must not receive their teammates' contact details at all — don't select
+      // the columns for them. Staff still get the full roster row.
+      const isAthleteViewer = userRole === 'player';
+      const contactCols = isAthleteViewer ? '' : '\n            email,\n            phone,';
+
       // Get all team members in one query, then split by users.role
       const { data: allMembers } = await supabase
         .from('team_members')
@@ -147,9 +155,7 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
           role,
           users(
             id,
-            full_name,
-            email,
-            phone,
+            full_name,${contactCols}
             role,
             player_profiles!player_profiles_user_id_fkey(
               jersey_number,
@@ -167,8 +173,8 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
         const coachRows = [];
         const playerRows = [];
         for (const m of allMembers) {
-          const userRole = m.users?.role;
-          if (userRole === 'admin' || userRole === 'coach') {
+          const memberUserRole = m.users?.role;
+          if (memberUserRole === 'admin' || memberUserRole === 'coach') {
             coachRows.push({ ...m.users, role: m.role });
           } else {
             playerRows.push({
@@ -178,6 +184,26 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
             });
           }
         }
+
+        // CoachCard still shows staff work email/phone to everyone (intentional),
+        // so athletes fetch those separately — for coaches only, never teammates.
+        if (isAthleteViewer && coachRows.length > 0) {
+          const { data: coachContacts, error: coachContactsError } = await supabase
+            .from('users')
+            .select('id, email, phone')
+            .in('id', coachRows.map(c => c.id));
+          if (coachContactsError) {
+            console.error('Error fetching coach contact info:', coachContactsError);
+          } else {
+            const contactMap = {};
+            for (const c of (coachContacts || [])) contactMap[c.id] = c;
+            for (const c of coachRows) {
+              c.email = contactMap[c.id]?.email || null;
+              c.phone = contactMap[c.id]?.phone || null;
+            }
+          }
+        }
+
         setCoaches(coachRows);
         setRoster(playerRows);
       }
@@ -412,6 +438,7 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
               { key: 'roster', label: 'Roster', icon: Users },
               { key: 'coaches', label: 'Coaches', icon: User },
               { key: 'schedule', label: 'Schedule', icon: Calendar },
+              { key: 'rsvp', label: 'RSVP', icon: CheckCircle },
               { key: 'announcements', label: 'Announcements', icon: MessageSquare },
               { key: 'prospects', label: 'Prospects', icon: Star },
               { key: 'game_changer', label: 'Game Changer', icon: Radio },
@@ -436,6 +463,13 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
           {activeTab === 'roster' && <RosterTab roster={roster} coaches={coaches} prospectPlayerIds={prospectPlayerIds} userRole={userRole} onProspectToggle={handleProspectToggle} teamId={selectedTeamId} onRosterChange={() => fetchTeamDetails(selectedTeamId)} onNavigateToProfile={onNavigateToProfile} />}
           {activeTab === 'coaches' && <CoachesTab coaches={coaches} onNavigateToProfile={onNavigateToProfile} />}
           {activeTab === 'schedule' && <ScheduleTab events={upcomingEvents} />}
+          {/* #277: one place to answer several upcoming team events at once
+              ("any / all of the practices, games and lifting sessions").
+              Players get Going / Not going / Maybe + the headcount; staff get
+              the roster split and the Nudge non-responders button. */}
+          {activeTab === 'rsvp' && (
+            <RsvpBoard teamIds={[selectedTeamId]} userId={userId} userRole={userRole} />
+          )}
           {activeTab === 'announcements' && <AnnouncementsTab announcements={recentAnnouncements} />}
           {activeTab === 'prospects' && (
             <ProspectsTab teamId={teamData.id} userId={userId} userRole={userRole} roster={roster} prospects={prospects} onProspectsChange={() => fetchProspects(selectedTeamId)} />

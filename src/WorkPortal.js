@@ -3,7 +3,7 @@ import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
-  ShoppingBag, UserPlus, BarChart3, Tag
+  ShoppingBag, UserPlus, BarChart3, Tag, Send
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -16,6 +16,7 @@ import WorkMyHours from './WorkMyHours';
 import WorkAdminHours from './WorkAdminHours';
 import WorkTimeOff from './WorkTimeOff';
 import WorkAdminTimeOff from './WorkAdminTimeOff';
+import WorkAdminHoursAnalytics from './WorkAdminHoursAnalytics';
 import WorkSchedule from './WorkSchedule';
 import WorkMessages from './WorkMessages';
 import WorkInvoices from './WorkInvoices';
@@ -23,6 +24,7 @@ import WorkStore from './WorkStore';
 import BulkTagSessions from './BulkTagSessions';
 import Leads from './Leads';
 import UsageDashboard from './UsageDashboard';
+import AthleteOutreach from './AthleteOutreach';
 import NotificationBell, { deletePendingPayment } from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
@@ -51,6 +53,7 @@ const PAGE_META = {
   'work-bulk-tag':              { title: 'Bulk Tag Sessions',       description: 'Attach a package or plan to many training sessions at once.' },
   'work-admin-leads':           { title: 'Leads',                  description: 'Outside customers who signed up to book & pay for sessions.' },
   'work-admin-usage':           { title: 'Usage (V2 research)',    description: 'Anonymous product-usage analytics.' },
+  'work-admin-outreach':        { title: 'Athlete Outreach',       description: 'Remind athletes to buy packages and fill open cage time.' },
 };
 
 function WorkMyFinancesHub({ userId, userRole }) {
@@ -93,6 +96,7 @@ function WorkAdminFinanceHub({ userId }) {
     { id: 'payroll',   label: 'Payroll' },
     { id: 'hours',     label: 'Hours Review' },
     { id: 'time-off',  label: 'Time Off Review' },
+    { id: 'analytics', label: 'Hours & Time Off Chart' },
   ];
   if (!pinVerified) {
     return <PayrollPinGate onUnlock={() => setPinVerified(true)} />;
@@ -117,6 +121,7 @@ function WorkAdminFinanceHub({ userId }) {
       {tab === 'payroll'  && <WorkAdminPayroll userId={userId} defaultUnlocked={true} />}
       {tab === 'hours'    && <WorkAdminHours userId={userId} />}
       {tab === 'time-off' && <WorkAdminTimeOff userId={userId} />}
+      {tab === 'analytics' && <WorkAdminHoursAnalytics />}
     </div>
   );
 }
@@ -199,6 +204,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return userRole === 'admin' ? <Leads /> : <ComingSoon viewKey={currentView} />;
       case 'work-admin-usage':
         return userRole === 'admin' ? <UsageDashboard /> : <ComingSoon viewKey={currentView} />;
+      case 'work-admin-outreach':
+        return userRole === 'admin' ? <AthleteOutreach userId={userId} /> : <ComingSoon viewKey={currentView} />;
       default:
         return <ComingSoon viewKey={currentView} />;
     }
@@ -225,7 +232,13 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         setMobileOpen={setMobileOpen}
       />
 
-      <div className="flex-1 md:ml-64">
+      {/* QA 2026-08-15: `min-w-0` is load-bearing. Without it this flex item keeps
+          its automatic min-content width, so every wide child (tab rows, tables,
+          the hours chart) pushes the whole page sideways on a phone and the
+          `overflow-x-auto` wrappers inside those children never get a constrained
+          width to scroll inside. App.js:1053 has had this on the main portal all
+          along; the work portal never got it. */}
+      <div className="flex-1 min-w-0 md:ml-64">
         <div className="sticky top-0 z-30 bg-white border-b px-4 md:px-8 py-3 flex items-center justify-between">
           <div className="flex items-center min-w-0">
             <button
@@ -351,6 +364,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-invoices"       icon={DollarSign}  label="Coach Invoices" />
                 <SubNavItem id="work-admin-store"          icon={ShoppingBag} label="Store" />
                 <SubNavItem id="work-admin-leads"          icon={UserPlus}    label="Leads" />
+                <SubNavItem id="work-admin-outreach"       icon={Send}        label="Athlete Outreach" />
                 <SubNavItem id="work-admin-usage"          icon={BarChart3}   label="Usage (V2 research)" />
                 <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>

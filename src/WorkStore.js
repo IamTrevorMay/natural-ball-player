@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag, Layers } from 'lucide-react';
 import BackfillHistory from './BackfillHistory';
 import BulkTagSessions from './BulkTagSessions';
+import DuplicateProducts from './DuplicateProducts';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -306,7 +307,9 @@ function CatalogTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-sm text-gray-600">Active products show to players in the Store on their profile.</p>
-        <div className="flex items-center space-x-2">
+        {/* QA 2026-08-15: this 415px button row did not wrap, so "Add Product"
+            was sliced off at 390px. Its parent already wraps; this one didn't. */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={syncFromSquare}
             disabled={syncing}
@@ -383,7 +386,9 @@ function CatalogTab() {
       ) : products.length === 0 ? (
         <div className="text-center py-12 text-gray-500">No products yet.</div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+        // QA 2026-08-15: was `overflow-hidden`, which clipped the catalog table
+        // on a phone instead of letting it scroll.
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -646,57 +651,77 @@ export default function WorkStore() {
   const [tab, setTab] = useState('catalog');
   return (
     <div className="space-y-4">
-      <div className="flex space-x-2 border-b border-gray-200">
-        <button
-          onClick={() => setTab('catalog')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
-            tab === 'catalog' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <ShoppingBag size={16} />
-          <span>Catalog</span>
-        </button>
-        <button
-          onClick={() => setTab('purchases')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
-            tab === 'purchases' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <ListChecks size={16} />
-          <span>Purchases</span>
-        </button>
-        <button
-          onClick={() => setTab('packages')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
-            tab === 'packages' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Package size={16} />
-          <span>Packages</span>
-        </button>
-        <button
-          onClick={() => setTab('backfill')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
-            tab === 'backfill' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <History size={16} />
-          <span>Backfill History</span>
-        </button>
-        <button
-          onClick={() => setTab('bulk-tag')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
-            tab === 'bulk-tag' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Tag size={16} />
-          <span>Bulk Tag Sessions</span>
-        </button>
+      {/* QA 2026-08-15: the six tabs were a 787px un-wrapping, un-scrolling row,
+          so at 390px documentElement.scrollWidth hit 819px — the whole Store
+          page panned sideways and the sticky header decoupled from the content.
+          The row now scrolls inside its own container; `min-w-max` keeps the
+          bottom border spanning the full width (so desktop is pixel-identical)
+          and `whitespace-nowrap` stops the labels breaking mid-word. */}
+      <div className="overflow-x-auto">
+        <div className="flex space-x-2 min-w-max border-b border-gray-200">
+          <button
+            onClick={() => setTab('catalog')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+              tab === 'catalog' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <ShoppingBag size={16} />
+            <span>Catalog</span>
+          </button>
+          <button
+            onClick={() => setTab('purchases')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+              tab === 'purchases' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <ListChecks size={16} />
+            <span>Purchases</span>
+          </button>
+          <button
+            onClick={() => setTab('packages')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+              tab === 'packages' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Package size={16} />
+            <span>Packages</span>
+          </button>
+          <button
+            onClick={() => setTab('backfill')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+              tab === 'backfill' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <History size={16} />
+            <span>Backfill History</span>
+          </button>
+          <button
+            onClick={() => setTab('bulk-tag')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+              tab === 'bulk-tag' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Tag size={16} />
+            <span>Bulk Tag Sessions</span>
+          </button>
+          {/* #276/#305: WorkStore is only mounted for admins (WorkPortal gates it),
+              and DuplicateProducts re-checks the role itself before showing data. */}
+          <button
+            onClick={() => setTab('duplicates')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+              tab === 'duplicates' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Layers size={16} />
+            <span>Duplicate Products</span>
+          </button>
+        </div>
       </div>
       {tab === 'catalog' ? <CatalogTab />
         : tab === 'purchases' ? <PurchasesTab />
         : tab === 'packages' ? <PackagesTab />
         : tab === 'bulk-tag' ? <BulkTagSessions />
+        : tab === 'duplicates' ? <DuplicateProducts />
         : <BackfillHistory />}
     </div>
   );

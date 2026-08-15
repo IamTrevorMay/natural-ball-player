@@ -15,6 +15,7 @@ export function useMainPortalCounts(userId, userRole) {
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [pendingSlots, setPendingSlots] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
+  const [packageFlags, setPackageFlags] = useState([]);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
@@ -61,8 +62,30 @@ export function useMainPortalCounts(userId, userRole) {
           setPendingSlots(detailed);
         } else setPendingSlots([]);
       } catch (e) { console.error('Pending slots error:', e); }
+
+      // #305 (Q8): players blocked from booking for lack of a matching
+      // package, flagged from ReserveSlotModal. Scoped to coach_id = userId
+      // same as pendingSlots above — a coach sees flags for their own
+      // slots; an admin sees flags for slots where THEY are the coach on
+      // record, not a facility-wide list (matches the existing pattern
+      // here rather than inventing a separate admin-only view).
+      try {
+        const { data: flags } = await supabase
+          .from('booking_package_flags')
+          .select('id, player_id, slot_id, slot_date, created_at, users:player_id(full_name)')
+          .eq('coach_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        setPackageFlags(flags || []);
+      } catch (e) {
+        // #305: booking_package_flags doesn't exist until its migration
+        // (20260812_booking_package_flags.sql) runs.
+        console.error('Package flags error (migration pending?):', e);
+        setPackageFlags([]);
+      }
     } else {
       setPendingSlots([]);
+      setPackageFlags([]);
     }
   }, [userId, userRole]);
 
@@ -75,10 +98,11 @@ export function useMainPortalCounts(userId, userRole) {
     const ch2 = supabase.channel(`main-notif-slots-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'slot_reservations' }, refresh).subscribe();
     const ch3 = supabase.channel(`main-notif-reads-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'message_reads' }, refresh).subscribe();
     const ch4 = supabase.channel(`main-notif-payments-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'store_purchases' }, refresh).subscribe();
-    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); };
+    const ch5 = supabase.channel(`main-notif-pkg-flags-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'booking_package_flags' }, refresh).subscribe();
+    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); };
   }, [refresh, userId]);
 
-  return { unreadMessages, pendingSlots, pendingPayments, refresh };
+  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, refresh };
 }
 
 // Counts and details for the Work Portal: unread work messages + (admin) pending hours + pending time off.
