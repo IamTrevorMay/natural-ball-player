@@ -1343,6 +1343,20 @@ const categoryColors = {
   other: 'bg-gray-500 text-white',
 };
 
+/* QA 2026-08-15: the expanded card rendered exercises by looping over this list
+ * of categories and skipping anything else, so an exercise whose category was
+ * NULL, differently cased, or any value outside the list vanished from the card
+ * while still being counted in the "N exercises" header — the coach saw
+ * "4 exercises" and three rows. Categories are now normalised (blank or missing
+ * reads as "other", the bucket that already exists for exactly this), and a
+ * category this list doesn't know about is rendered after the known ones rather
+ * than dropped. */
+const KNOWN_EXERCISE_CATEGORIES = ['hitting', 'pitching', 'fielding', 'conditioning', 'recovery', 'other'];
+
+function exerciseCategory(exercise) {
+  return String(exercise?.category || '').trim().toLowerCase() || 'other';
+}
+
 function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
   const [showAddDay, setShowAddDay] = useState(false);
@@ -1352,8 +1366,9 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
   const assignments = program.training_program_assignments || [];
   const totalExercises = days.reduce((sum, day) => sum + (day.training_exercises?.length || 0), 0);
 
-  // Get unique categories across all exercises
-  const allCategories = [...new Set(days.flatMap(d => (d.training_exercises || []).map(e => e.category)))];
+  // Get unique categories across all exercises (normalised, so a NULL category
+  // shows as "other" instead of an unstyled empty chip).
+  const allCategories = [...new Set(days.flatMap(d => (d.training_exercises || []).map(exerciseCategory)))];
 
   return (
     <div className="bg-gray-50 rounded-lg p-4">
@@ -1368,7 +1383,7 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
             <span className="text-gray-500">{days.length} days &bull; {totalExercises} exercises</span>
             <div className="flex space-x-1">
               {allCategories.map(cat => (
-                <span key={cat} className={`px-2 py-0.5 rounded-full text-xs font-medium ${categoryColors[cat]}`}>{cat}</span>
+                <span key={cat} className={`px-2 py-0.5 rounded-full text-xs font-medium ${categoryColors[cat] || categoryColors.other}`}>{cat}</span>
               ))}
             </div>
           </div>
@@ -1394,12 +1409,19 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
         <div className="mt-4 pt-4 border-t border-gray-200 space-y-4">
           {days.map(day => {
             const exercises = (day.training_exercises || []).sort((a, b) => a.sort_order - b.sort_order);
-            // Group exercises by category
+            // Group exercises by (normalised) category. Known categories keep
+            // their usual order; anything unexpected renders after them so it
+            // can never be dropped — see KNOWN_EXERCISE_CATEGORIES above.
             const grouped = {};
             exercises.forEach(ex => {
-              if (!grouped[ex.category]) grouped[ex.category] = [];
-              grouped[ex.category].push(ex);
+              const cat = exerciseCategory(ex);
+              if (!grouped[cat]) grouped[cat] = [];
+              grouped[cat].push(ex);
             });
+            const dayCategories = [
+              ...KNOWN_EXERCISE_CATEGORIES.filter(cat => grouped[cat]),
+              ...Object.keys(grouped).filter(cat => !KNOWN_EXERCISE_CATEGORIES.includes(cat)).sort(),
+            ];
 
             return (
               <div key={day.id} className="bg-white rounded-lg p-4 border border-gray-200">
@@ -1417,12 +1439,11 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
                   <p className="text-sm text-gray-400 italic">No exercises yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {['hitting', 'pitching', 'fielding', 'conditioning', 'recovery', 'other'].map(cat => {
-                      if (!grouped[cat]) return null;
+                    {dayCategories.map(cat => {
                       return (
                         <div key={cat}>
                           <h6 className="text-xs font-semibold uppercase tracking-wide mb-1.5">
-                            <span className={`px-2 py-0.5 rounded-full ${categoryColors[cat]}`}>{cat}</span>
+                            <span className={`px-2 py-0.5 rounded-full ${categoryColors[cat] || categoryColors.other}`}>{cat}</span>
                           </h6>
                           <div className="space-y-2">
                             {grouped[cat].map(ex => (
@@ -1467,6 +1488,32 @@ function TrainingProgramCard({ program, onDelete, onAssign, onEdit, onRefresh })
 
 /* ---- EXERCISE ROW ---- */
 
+/* #321 — Sets / Reps / Rest / Load, readable on a 375px phone.
+ *
+ * Same helper as the ones in Profile.js and Schedule.js (kept local, this repo
+ * has no shared component module). Labelled chips that WRAP instead of
+ * truncating, and always an em-dash for a value that was never programmed, so
+ * a blank is never mistaken for a layout bug. Presentation only.
+ *
+ * QA 2026-08-15: added here because the #321 pass missed this screen — see the
+ * comment in ExerciseRow below.
+ */
+function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
+  const items = [['Sets', sets], ['Reps', reps], ['Load', load], ['Rest', rest]];
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1 text-sm ${className}`}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || '—'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ExerciseRow({ exercise, onRefresh }) {
   const handleDelete = async () => {
     if (!window.confirm(`Delete "${exercise.name}"?`)) return;
@@ -1491,20 +1538,21 @@ function ExerciseRow({ exercise, onRefresh }) {
           )}
         </div>
         {exercise.description && <p className="text-xs text-gray-500 mt-0.5">{exercise.description}</p>}
-        {/* #321: already wraps and labels, but an exercise with nothing programmed
-            rendered a silently empty strip — indistinguishable from a layout bug.
-            Also bumped a step on phones only (text-sm below sm, text-xs at sm+ as
-            before); these are the numbers you read mid-set. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm sm:text-xs text-gray-600">
-          {exercise.sets && <span><strong>{exercise.sets}</strong> sets</span>}
-          {exercise.reps && <span><strong>{exercise.reps}</strong> reps</span>}
-          {exercise.weight && <span><strong>{exercise.weight}</strong></span>}
-          {exercise.rest && <span>Rest: <strong>{exercise.rest}</strong></span>}
-          {exercise.load && <span>Load: <strong>{exercise.load}</strong></span>}
-          {!exercise.sets && !exercise.reps && !exercise.weight && !exercise.rest && !exercise.load && (
-            <span className="text-gray-400 italic">Sets / reps / rest / load not set</span>
-          )}
-        </div>
+        {/* QA 2026-08-15: the #321 pass never reached this screen. The "not set"
+            placeholder was guarded on EVERY field being empty, so an exercise
+            with sets 3 / reps 10 and no rest or load rendered byte-for-byte as
+            it did before the fix, with nothing to say those two were never
+            programmed. The labelling disagreed with the rest of the app too
+            ("4 sets" but "Rest: 2:00"). Now the same ExerciseMetrics chips used
+            on every other surface, which print an em-dash per unset field.
+            `weight` is the legacy column for `load` — same field to a coach. */}
+        <ExerciseMetrics
+          className="mt-1"
+          sets={exercise.sets}
+          reps={exercise.reps}
+          load={exercise.load || exercise.weight}
+          rest={exercise.rest}
+        />
       </div>
       <button onClick={handleDelete} className="text-gray-400 hover:text-red-600 transition ml-2"><Trash2 size={14} /></button>
     </div>

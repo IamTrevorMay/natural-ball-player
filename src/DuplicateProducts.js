@@ -49,6 +49,45 @@ function money(cents) {
   return `$${((cents || 0) / 100).toFixed(2)}`;
 }
 
+// QA 2026-08-15: every recurring row used to print "/ mo" no matter what it
+// actually billed at, so "NBP 2x A Week Training (EVERY_TWO_WEEKS price)" read
+// as $150.00 / mo — a monthly label on a fortnightly price, on the one screen
+// whose entire job is telling billing frequencies apart. The suffix now comes
+// from the frequency in the product's own name.
+const FREQUENCY_LABELS = {
+  MONTHLY: '/mo',
+  EVERY_TWO_WEEKS: '/2wk',
+  EVERY_SIX_MONTHS: '/6mo',
+  QUARTERLY: '/qtr',
+  ANNUAL: '/yr',
+};
+
+// '' for a one-off product. For a recurring one: the short label for its
+// frequency; a frequency Square invents later still renders honestly
+// (lowercased token); and when the name carries no frequency at all we say
+// "recurring" rather than guessing "monthly".
+function priceSuffix(product) {
+  if (!product?.recurring) return '';
+  const freq = frequencyOf(product.name);
+  if (!freq) return ' (recurring)';
+  return ` ${FREQUENCY_LABELS[freq] || `/${freq.replace(/_/g, ' ').toLowerCase()}`}`;
+}
+
+// One sentence explaining why updates failed. The migration ships unapplied on
+// purpose, so that case names the file to run instead of leaking a PostgREST
+// schema-cache error; anything else falls back to the shared formatter.
+function describeSaveFailure(errors) {
+  const missingColumn = (errors || []).some((e) => {
+    const raw = String(e?.message || '');
+    return /canonical_product_id/i.test(raw) && /(column|schema cache|does not exist)/i.test(raw);
+  });
+  if (missingColumn) {
+    return 'the store_products.canonical_product_id column does not exist yet — apply supabase/migrations/20260815_product_families.sql first.';
+  }
+  const message = formatUserError((errors || [])[0]);
+  return /[.!?]$/.test(message) ? message : `${message}.`;
+}
+
 function csvCell(value) {
   const s = value == null ? '' : String(value);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -220,27 +259,43 @@ export default function DuplicateProducts() {
         setSaveResult({ ok: true, message: 'Nothing to change — the saved merges already match these picks.' });
         return;
       }
+      // QA 2026-08-15: this loop used to throw on the first failed update, so a
+      // failure halfway through left the earlier rows merged while the banner
+      // said only "Could not save" — the user had no way to know a partial
+      // merge had landed. PostgREST gives the client no transaction, so instead
+      // we finish the run, tally it, and say exactly what stuck.
+      const failures = [];
+      let saved = 0;
       for (const u of updates) {
         const { error: updErr } = await supabase
           .from('store_products')
           .update({ canonical_product_id: u.canonical_product_id })
           .eq('id', u.id);
-        if (updErr) throw updErr;
+        if (updErr) {
+          console.error('Saving product merge failed for product', u.id, updErr);
+          failures.push(updErr);
+        } else {
+          saved += 1;
+        }
       }
-      setSaveResult({ ok: true, message: `Saved. ${updates.length} product row(s) updated.` });
-      await load();
-    } catch (e) {
-      console.error('Saving product merges failed:', e);
-      const raw = String(e?.message || '');
-      // The migration ships unapplied on purpose — say so instead of leaking
-      // a PostgREST schema-cache error.
-      const missingColumn = /canonical_product_id/i.test(raw) && /(column|schema cache|does not exist)/i.test(raw);
+
+      // Reload first: load() clears saveResult, so the banner is set after it.
+      if (saved > 0) await load();
+
+      if (failures.length === 0) {
+        setSaveResult({ ok: true, message: `Saved. ${saved} product row${saved === 1 ? '' : 's'} updated.` });
+        return;
+      }
+      const reason = describeSaveFailure(failures);
       setSaveResult({
         ok: false,
-        message: missingColumn
-          ? 'Could not save: the store_products.canonical_product_id column does not exist yet. Apply supabase/migrations/20260815_product_families.sql first.'
-          : formatUserError(e),
+        message: saved === 0
+          ? `Could not save. All ${updates.length} update${updates.length === 1 ? '' : 's'} failed: ${reason} Nothing was changed.`
+          : `Saved ${saved} of ${updates.length}. ${failures.length} failed: ${reason} Nothing was rolled back; re-open this screen to see the current state.`,
       });
+    } catch (e) {
+      console.error('Saving product merges failed:', e);
+      setSaveResult({ ok: false, message: describeSaveFailure([e]) });
     } finally {
       setSaving(false);
     }
@@ -297,7 +352,11 @@ export default function DuplicateProducts() {
           in reality. Pick the one version each package should count as; sessions tagged with the other
           versions will be treated as that package.
         </p>
-        <div className="flex items-center gap-2">
+        {/* QA 2026-08-15: three fixed-width buttons measured ~400px, just over a
+            390px phone viewport; wrapping them keeps this screen (hosted in the
+            Store page's tab set) from panning sideways. No effect on desktop,
+            where they fit on one line. */}
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setShowPreview((v) => !v)}
             className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 flex items-center space-x-2"
@@ -338,7 +397,9 @@ export default function DuplicateProducts() {
           <p className="text-sm text-gray-600">
             {preview.versionsMerged === 0
               ? 'Nothing — every package already points at itself.'
-              : `${preview.versionsMerged} duplicate version(s) across ${preview.lines.length} package(s) will be
+              // QA 2026-08-15: "version(s)"/"package(s)" replaced with real agreement.
+              : `${preview.versionsMerged} duplicate version${preview.versionsMerged === 1 ? '' : 's'} across
+                 ${preview.lines.length} package${preview.lines.length === 1 ? '' : 's'} will be
                  marked as the same package as the version you picked. That covers
                  ${preview.slotsAffected} tagged session${preview.slotsAffected === 1 ? '' : 's'} and
                  ${preview.purchasesAffected} purchase${preview.purchasesAffected === 1 ? '' : 's'}.`}
@@ -351,8 +412,9 @@ export default function DuplicateProducts() {
             <ul className="text-sm text-gray-700 space-y-1 pt-1">
               {preview.lines.map((line) => (
                 <li key={line.key} className="border-t border-gray-100 pt-1">
+                  {/* QA 2026-08-15: "version(s)" replaced with real agreement. */}
                   <span className="font-medium text-gray-900">{line.label}</span> — {line.otherCount} other
-                  version(s) become “{line.canonicalName}”: {line.slots} session
+                  version{line.otherCount === 1 ? ' becomes' : 's become'} “{line.canonicalName}”: {line.slots} session
                   {line.slots === 1 ? '' : 's'} and {line.purchases} purchase
                   {line.purchases === 1 ? '' : 's'} follow.
                 </li>
@@ -363,7 +425,9 @@ export default function DuplicateProducts() {
       )}
 
       <p className="text-xs text-gray-500">
-        {families.length} package{families.length === 1 ? '' : 's'} has more than one version in Square.
+        {/* QA 2026-08-15: verb now agrees with the count ("1 package has" /
+            "2 packages have"). */}
+        {families.length} package{families.length === 1 ? ' has' : 's have'} more than one version in Square.
       </p>
 
       {families.map((family) => {
@@ -416,7 +480,7 @@ export default function DuplicateProducts() {
                             : <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded-full text-xs">No</span>}
                         </td>
                         <td className="px-4 py-2 text-sm text-gray-700">{p.bundle_qty == null ? '—' : p.bundle_qty}</td>
-                        <td className="px-4 py-2 text-sm text-gray-700">{money(p.price_cents)}{p.recurring ? ' / mo' : ''}</td>
+                        <td className="px-4 py-2 text-sm text-gray-700 whitespace-nowrap">{money(p.price_cents)}{priceSuffix(p)}</td>
                         <td className="px-4 py-2 text-sm text-gray-900 font-medium">{purchaseCounts[p.id] || 0}</td>
                         <td className="px-4 py-2 text-sm text-gray-900 font-medium">{slotCounts[p.id] || 0}</td>
                       </tr>

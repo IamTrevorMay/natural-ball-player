@@ -568,7 +568,14 @@ function RsvpEventRow({ event, myRow, buckets, isStaff, canAnswer, userId, onSav
     setError('');
     const err = await saveMyRsvp(occurrence, userId, response, myRow?.note || null);
     setSaving(false);
-    if (err) { setError(isRsvpNotSetUp(err) ? RSVP_NOT_SET_UP_MESSAGE : formatUserError(err)); return; }
+    if (err) {
+      // QA 2026-08-15: if the table disappears mid-session, reload so the board
+      // collapses to the notice instead of leaving live buttons behind — the
+      // same thing EventRsvpSection does with its own notSetUp state.
+      if (isRsvpNotSetUp(err)) { setError(RSVP_NOT_SET_UP_MESSAGE); onSaved?.(); return; }
+      setError(formatUserError(err));
+      return;
+    }
     onSaved?.();
   };
 
@@ -663,9 +670,22 @@ export function RsvpBoard({ teamIds, userId, userRole, days = 60, emptyHint }) {
 
   if (loading) return <p className="text-sm text-gray-600">Loading RSVPs…</p>;
 
+  // QA 2026-08-15: this used to render the notice AND the whole live board
+  // underneath it — clicking Going/Not going/Maybe fired a real POST at the
+  // missing event_rsvps table, the headcount read "0 going / N no response" as
+  // if that were data, and a coach got an enabled "Nudge non-responders (N)"
+  // button for RSVPs the system cannot store. Show the notice INSTEAD of the
+  // board, exactly as EventRsvpSection already does above.
+  if (notSetUp) {
+    return (
+      <div className="space-y-4">
+        <RsvpNotSetUpNotice />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {notSetUp && <RsvpNotSetUpNotice />}
       {events.length === 0 ? (
         <div className="text-center py-10">
           <CalendarIcon size={40} className="mx-auto text-gray-300 mb-3" />

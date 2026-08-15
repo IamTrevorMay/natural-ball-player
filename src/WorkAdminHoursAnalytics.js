@@ -67,12 +67,29 @@ function periodRange(granularity, anchor, customStart, customEnd) {
   };
 }
 
+// QA 2026-08-15 (BUG 2): month/year paging used to reset the anchor to the 1st
+// (and year paging to Jan 1), so paging ▶ then ◀ on Year and switching back to
+// Month landed you on January instead of the month you came from — and the CSV
+// then exported a period the user was never looking at. Now we move the anchor
+// by exactly one period and keep the rest of the date, clamping the day into
+// the target month (Jan 31 ▶ Feb 28, Feb 29 ▶ Feb 28 in a non-leap year).
+const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+
 function shiftAnchor(granularity, anchor, dir) {
   const d = new Date(anchor);
   if (granularity === 'day') d.setDate(d.getDate() + dir);
   else if (granularity === 'week') d.setDate(d.getDate() + 7 * dir);
-  else if (granularity === 'month') d.setMonth(d.getMonth() + dir, 1);
-  else d.setFullYear(d.getFullYear() + dir, 0, 1);
+  else if (granularity === 'month') {
+    const day = d.getDate();
+    d.setDate(1); // park on a day every month has before rolling the month over
+    d.setMonth(d.getMonth() + dir);
+    d.setDate(Math.min(day, daysInMonth(d.getFullYear(), d.getMonth())));
+  } else {
+    const month = d.getMonth(), day = d.getDate();
+    d.setDate(1);
+    d.setFullYear(d.getFullYear() + dir, month);
+    d.setDate(Math.min(day, daysInMonth(d.getFullYear(), month)));
+  }
   return d;
 }
 
@@ -289,8 +306,20 @@ export default function WorkAdminHoursAnalytics() {
     for (const c of coaches.values()) {
       const hours = approvedOnly ? c.approved : c.approved + c.pending;
       const daysWorked = c.workDates.size;
-      const hasAnyActivity = c.approved > 0 || c.pending > 0 || c.daysOff > 0 || c.monthOff > 0 || c.yearOff > 0;
-      if (!hasAnyActivity) continue;
+      // QA 2026-08-15 (BUG 1): this used to also accept c.monthOff / c.yearOff,
+      // which are roll-ups over the whole calendar month/year and say nothing
+      // about the SELECTED range — so a coach whose only time off was in
+      // February was listed as an all-zero row in an August day view, and the
+      // "No hours submitted in this period" empty state never appeared. Row
+      // inclusion is now purely in-range activity. c.approved / c.pending are
+      // only ever added to for entries where inPeriod(work_date), and c.daysOff
+      // is already clipped to the range by daysInRange(), so all three terms are
+      // range-scoped. Note `c.pending > 0` is deliberate and must stay: under
+      // "Approved only" a coach with nothing but unreviewed hours still gets a
+      // row (0.00 counted, hours visible in the Pending column) so they read as
+      // "awaiting review" rather than "didn't work".
+      const hasActivityInRange = c.approved > 0 || c.pending > 0 || c.daysOff > 0;
+      if (!hasActivityInRange) continue;
       rows.push({
         ...c,
         hours,
@@ -328,6 +357,24 @@ export default function WorkAdminHoursAnalytics() {
     });
   }, [agg.rows, sortKey, sortDir]);
 
+  // QA 2026-08-15 (BUG 3): the TOTAL row's share used to be the literal string
+  // "100.0%" (and "100.0" in the CSV), which printed even on an all-zero table.
+  // Derive it from the per-coach shares so it can only ever say 100.0% when the
+  // rows actually add up to that, and show nothing meaningful when there are no
+  // hours to take a share of.
+  const totalShare = useMemo(
+    () => (agg.totals.hours > 0 ? sortedRows.reduce((s, r) => s + r.share, 0) : 0),
+    [agg.totals.hours, sortedRows]
+  );
+
+  // QA 2026-08-15 (BUG 2): on a Year view `refDate` is 1 January by definition,
+  // so the "<month> <year> total" time-off column was permanently labelled
+  // "Jan" and read 0 next to a non-zero year total. A single calendar month is
+  // meaningless next to a full-year period, so the column is hidden entirely on
+  // the Year view (in the table and in the CSV); every other granularity keeps
+  // the month containing the start of the period, which is what it always meant.
+  const showMonthOff = granularity !== 'year';
+
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc'); }
@@ -338,7 +385,7 @@ export default function WorkAdminHoursAnalytics() {
     const header = [
       'Coach', 'Approved hours', 'Pending hours', 'Counted hours', 'Days worked',
       'Avg hours/day', 'Days off (period)', ...agg.typesPresent.map((t) => `Days off – ${TYPE_LABEL[t] || t}`),
-      `Days off (${MONTH_SHORT[refDate.getMonth()]} ${refDate.getFullYear()})`,
+      ...(showMonthOff ? [`Days off (${MONTH_SHORT[refDate.getMonth()]} ${refDate.getFullYear()})`] : []),
       `Days off (${refDate.getFullYear()})`, 'Share of hours %',
     ];
     const lines = [
@@ -349,11 +396,11 @@ export default function WorkAdminHoursAnalytics() {
       ...sortedRows.map((r) => [
         r.name, fmtHours(r.approved), fmtHours(r.pending), fmtHours(r.hours), r.daysWorked,
         fmtHours(r.avgPerDay), r.daysOff, ...agg.typesPresent.map((t) => r.byType[t] || 0),
-        r.monthOff, r.yearOff, r.share.toFixed(1),
+        ...(showMonthOff ? [r.monthOff] : []), r.yearOff, r.share.toFixed(1),
       ]),
       ['TOTAL', fmtHours(agg.totals.approved), fmtHours(agg.totals.pending), fmtHours(agg.totals.hours),
         agg.totals.daysWorked, '', agg.totals.daysOff, ...agg.typesPresent.map((t) => sortedRows.reduce((s, r) => s + (r.byType[t] || 0), 0)),
-        agg.totals.monthOff, agg.totals.yearOff, '100.0'],
+        ...(showMonthOff ? [agg.totals.monthOff] : []), agg.totals.yearOff, totalShare.toFixed(1)],
     ];
     const csv = lines.map((row) => row.map(esc).join(',')).join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -379,7 +426,14 @@ export default function WorkAdminHoursAnalytics() {
   );
 
   return (
-    <div className="space-y-4">
+    // QA 2026-08-15 (BUG 4): `w-full min-w-0` on the root. Without min-w-0 this
+    // screen is a flex item whose automatic minimum size is its content, so the
+    // 640px chart and the wide coach table stretched the whole page (390px
+    // viewport measured 854px of horizontal scroll) instead of being clipped by
+    // the `overflow-x-auto` wrappers below. Constraining the root makes those
+    // wrappers scroll internally again. No effect on desktop, where the root
+    // already fills its container.
+    <div className="space-y-4 w-full min-w-0">
       {/* Controls */}
       <div className="bg-white rounded-lg shadow p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -492,7 +546,14 @@ export default function WorkAdminHoursAnalytics() {
             {[
               { label: approvedOnly ? 'Approved hours' : 'Total hours', value: fmtHours(agg.totals.hours) },
               { label: 'Awaiting review', value: fmtHours(agg.totals.pending) },
-              { label: 'Coaches working', value: sortedRows.filter((r) => r.hours > 0).length },
+              // QA 2026-08-15: this counted `r.hours > 0`, i.e. COUNTED hours,
+              // so under "Approved only" a coach whose hours were all pending
+              // was listed in the table below yet excluded here — the tile read
+              // "0" over a table of coaches. Count anyone who submitted hours in
+              // the period in either status; they worked, the hours just haven't
+              // been reviewed. Coaches with only time off are still not counted
+              // as working, which is why this is not simply sortedRows.length.
+              { label: 'Coaches working', value: sortedRows.filter((r) => r.approved > 0 || r.pending > 0).length },
               { label: 'Days off in period', value: agg.totals.daysOff },
             ].map((t) => (
               <div key={t.label} className="bg-white rounded-lg shadow p-4 border border-gray-200">
@@ -521,8 +582,11 @@ export default function WorkAdminHoursAnalytics() {
               </div>
             </div>
             {/* Horizontal scroll keeps the axis labels at a readable size on a
-                375px phone instead of shrinking them with the viewBox. */}
-            <div className="overflow-x-auto">
+                375px phone instead of shrinking them with the viewBox.
+                QA 2026-08-15 (BUG 4): max-w-full so the 640px inner track can
+                never widen this wrapper — it scrolls inside the card instead of
+                panning the page. */}
+            <div className="overflow-x-auto max-w-full">
               <div className="min-w-[640px]">
                 <HoursBarChart
                   buckets={agg.buckets}
@@ -541,7 +605,10 @@ export default function WorkAdminHoursAnalytics() {
               <h3 className="font-semibold text-gray-900">Hours by coach</h3>
               <span className="text-sm text-gray-500">· {periodLabel(granularity, anchor, range)}</span>
             </div>
-            <div className="overflow-x-auto">
+            {/* QA 2026-08-15 (BUG 4): max-w-full — the 8 nowrap columns are
+                wider than a phone and were widening the page rather than
+                scrolling here. */}
+            <div className="overflow-x-auto max-w-full">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-gray-700 text-left">
                   <tr>
@@ -585,7 +652,8 @@ export default function WorkAdminHoursAnalytics() {
                     <td className="px-3 py-2 text-right">{agg.totals.daysWorked}</td>
                     <td className="px-3 py-2 text-right">—</td>
                     <td className="px-3 py-2 text-right">{agg.totals.daysOff}</td>
-                    <td className="px-3 py-2 text-right">100.0%</td>
+                    {/* QA 2026-08-15 (BUG 3): derived, not a hardcoded "100.0%" */}
+                    <td className="px-3 py-2 text-right">{agg.totals.hours > 0 ? `${totalShare.toFixed(1)}%` : '—'}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -604,7 +672,8 @@ export default function WorkAdminHoursAnalytics() {
             {agg.totals.daysOff === 0 && agg.totals.yearOff === 0 ? (
               <p className="p-8 text-center text-gray-500">No time off recorded in this period.</p>
             ) : (
-              <div className="overflow-x-auto">
+              // QA 2026-08-15 (BUG 4): max-w-full, same reason as the table above.
+              <div className="overflow-x-auto max-w-full">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-gray-700 text-left">
                     <tr>
@@ -613,9 +682,11 @@ export default function WorkAdminHoursAnalytics() {
                       {agg.typesPresent.map((t) => (
                         <th key={t} className="px-3 py-2 font-medium text-right whitespace-nowrap">{TYPE_LABEL[t] || t}</th>
                       ))}
-                      <th className="px-3 py-2 font-medium text-right whitespace-nowrap">
-                        {MONTH_SHORT[refDate.getMonth()]} {refDate.getFullYear()} total
-                      </th>
+                      {showMonthOff && (
+                        <th className="px-3 py-2 font-medium text-right whitespace-nowrap">
+                          {MONTH_SHORT[refDate.getMonth()]} {refDate.getFullYear()} total
+                        </th>
+                      )}
                       <th className="px-3 py-2 font-medium text-right whitespace-nowrap">{refDate.getFullYear()} total</th>
                     </tr>
                   </thead>
@@ -627,7 +698,7 @@ export default function WorkAdminHoursAnalytics() {
                         {agg.typesPresent.map((t) => (
                           <td key={t} className={`px-3 py-2 text-right ${r.byType[t] ? 'text-gray-900' : 'text-gray-300'}`}>{r.byType[t] || 0}</td>
                         ))}
-                        <td className="px-3 py-2 text-right text-gray-700">{r.monthOff}</td>
+                        {showMonthOff && <td className="px-3 py-2 text-right text-gray-700">{r.monthOff}</td>}
                         <td className="px-3 py-2 text-right text-gray-700">{r.yearOff}</td>
                       </tr>
                     ))}
@@ -639,7 +710,7 @@ export default function WorkAdminHoursAnalytics() {
                       {agg.typesPresent.map((t) => (
                         <td key={t} className="px-3 py-2 text-right">{sortedRows.reduce((s, r) => s + (r.byType[t] || 0), 0)}</td>
                       ))}
-                      <td className="px-3 py-2 text-right">{agg.totals.monthOff}</td>
+                      {showMonthOff && <td className="px-3 py-2 text-right">{agg.totals.monthOff}</td>}
                       <td className="px-3 py-2 text-right">{agg.totals.yearOff}</td>
                     </tr>
                   </tfoot>

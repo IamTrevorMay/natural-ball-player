@@ -620,23 +620,36 @@ export default function AthleteOutreach({ userId }) {
       if (!playerById.has(p.user_id)) return;
       const counts = OWNING_STATUSES.includes(p.status) || (lenientOwnership && p.status === 'pending');
       if (!counts) return;
-      if (isMonthlyMembership(p)) { monthlyHolders.add(p.user_id); return; }
+      // QA 2026-08-15: this used to `return` on a monthly membership before the
+      // buyer could ever reach `qualifying`, which made the "exclude monthly
+      // members" toggle a no-op — the audience was byte-identical either way and
+      // `excluded` was permanently 0. Monthly buyers now enter the list and the
+      // toggle is the only thing that removes them: ticked (the default) is #300
+      // + the owner's "monthly members are excluded" rule, unticked is the
+      // escape hatch the help text below promises.
+      const monthly = isMonthlyMembership(p);
+      if (monthly) monthlyHolders.add(p.user_id);
       // "a cage rental package, or any package that is not a monthly
       // membership" — a retail purchase (hat, shirt) is neither, so kinds
       // outside package/bundle/lesson only qualify via the cage-rental test.
       const cage = isCageRental(p);
       if (!cage && !PACKAGE_KINDS.includes(p.product_kind)) return;
-      if (!qualifying.has(p.user_id)) {
+      const existing = qualifying.get(p.user_id);
+      // Prefer a non-monthly purchase for the "why they're on this list" line,
+      // so a buyer who qualifies on a cage rental isn't described by their
+      // membership just because it was the more recent row.
+      if (!existing || (existing.viaMonthly && !monthly)) {
         qualifying.set(p.user_id, {
           user: playerById.get(p.user_id),
           detail: `bought ${p.product_name_snapshot || p.store_products?.name || 'a package'}${cage ? ' (cage rental)' : ''}`,
+          viaMonthly: monthly,
         });
       }
     });
     const all = Array.from(qualifying.values());
     const excluded = all.filter(r => monthlyHolders.has(r.user.id)).length;
     const rows = excludeMonthlyHolders ? all.filter(r => !monthlyHolders.has(r.user.id)) : all;
-    return { rows, excluded, monthlyHolderCount: monthlyHolders.size };
+    return { rows, excluded, monthlyHolderCount: monthlyHolders.size, excludingMonthly: excludeMonthlyHolders };
   }, [players, purchases, lenientOwnership, excludeMonthlyHolders]);
 
   const settingsBar = (
@@ -725,28 +738,36 @@ export default function AthleteOutreach({ userId }) {
         </span>
       </div>
 
-      <div className="flex border-b border-gray-200">
-        {TABS.map(t => {
-          const Icon = t.icon;
-          const n = t.id === 'packages'
-            ? noPackage.rows.length + lowOrExpiring.rows.length
-            : cageAudience.rows.length;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition flex items-center gap-2 ${
-                tab === t.id
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-              }`}
-            >
-              <Icon size={16} />
-              {t.label}
-              {!loading && !loadError && <CountBadge n={n} tone={tab === t.id ? 'indigo' : 'gray'} />}
-            </button>
-          );
-        })}
+      {/* QA 2026-08-15: the tab row could neither wrap nor scroll, so at 390px
+          the two tabs forced documentElement.scrollWidth to 497px and the whole
+          page panned sideways. The tabs now scroll inside their own container;
+          `min-w-max` on the row keeps the bottom border spanning the full row
+          (and the full width, so desktop is pixel-identical) while
+          `whitespace-nowrap` stops the labels breaking mid-word. */}
+      <div className="overflow-x-auto">
+        <div className="flex min-w-max border-b border-gray-200">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            const n = t.id === 'packages'
+              ? noPackage.rows.length + lowOrExpiring.rows.length
+              : cageAudience.rows.length;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition flex items-center gap-2 whitespace-nowrap ${
+                  tab === t.id
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+                }`}
+              >
+                <Icon size={16} />
+                {t.label}
+                {!loading && !loadError && <CountBadge n={n} tone={tab === t.id ? 'indigo' : 'gray'} />}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {settingsBar}
@@ -1051,16 +1072,25 @@ function PackageRemindersTab({
                   : 'bg-amber-50 border border-amber-200 text-amber-800'
               }`}>
                 <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+                {/* QA 2026-08-15: two fixes here. (1) The verbs now agree with
+                    the counts — this read "Another 1 have a paid pack".
+                    (2) The banner told the owner to flip a control called
+                    Count "pending" purchases as owned, which does not exist;
+                    the checkbox in Audience settings above is labelled
+                    "Count half-recorded purchases as owned". */}
                 <span>
                   <span className="font-semibold">
-                    {noPackage.rows.length} of {noPackage.totalPlayers} players ({flaggedShare}%) are flagged.
+                    {noPackage.rows.length} of {noPackage.totalPlayers} players ({flaggedShare}%){' '}
+                    {noPackage.rows.length === 1 ? 'is' : 'are'} flagged.
                   </span>{' '}
-                  Read this before you send: <span className="font-semibold">{noPackage.pendingOnly}</span> of them
-                  DO have a package purchase that is simply stuck at status <code>pending</code> — in this database
-                  every lesson-pack purchase sits at <code>pending</code>, so they probably are paying customers.
-                  Another <span className="font-semibold">{noPackage.nullQtyOnly}</span> have a paid pack whose
-                  session count was never recorded (<code>remaining_qty</code> is NULL). Flip{' '}
-                  <span className="font-semibold">Count &quot;pending&quot; purchases as owned</span> above to see the
+                  Read this before you send: <span className="font-semibold">{noPackage.pendingOnly}</span> of them{' '}
+                  {noPackage.pendingOnly === 1 ? 'DOES' : 'DO'} have a package purchase that is simply stuck at status{' '}
+                  <code>pending</code> — in this database every lesson-pack purchase sits at <code>pending</code>, so
+                  they probably are paying customers.
+                  Another <span className="font-semibold">{noPackage.nullQtyOnly}</span>{' '}
+                  {noPackage.nullQtyOnly === 1 ? 'has' : 'have'} a paid pack whose session count was never recorded
+                  (<code>remaining_qty</code> is NULL). Flip{' '}
+                  <span className="font-semibold">Count half-recorded purchases as owned</span> above to see the
                   list without them, or uncheck people individually below.
                 </span>
               </div>
@@ -1314,7 +1344,13 @@ function OpenCageTab({ adminId, audience, lastSentByUser, onLogged, onLogUnavail
       <OutreachPanel
         adminId={adminId}
         kind="open_cage"
-        listLabel="Cage-rental and non-monthly package buyers"
+        listLabel={
+          // QA 2026-08-15: the toggle really works now, so the label the send
+          // confirmation quotes has to follow it.
+          audience.excludingMonthly
+            ? 'Cage-rental and non-monthly package buyers'
+            : 'Cage-rental and package buyers (monthly members included)'
+        }
         rows={audience.rows}
         template={msg}
         setTemplate={setMsg}
@@ -1335,9 +1371,16 @@ function OpenCageTab({ adminId, audience, lastSentByUser, onLogged, onLogUnavail
             plus any product whose name contains &quot;cage&quot;) or any package that is not a monthly membership.
             A product name ending <code>(MONTHLY price)</code> is a monthly membership.
             {audience.excluded > 0 && (
+              // QA 2026-08-15: `excluded` counts monthly-membership holders who
+              // also qualify, which is now a real number — but they are only
+              // actually removed when the setting is ticked, so say which.
+              // Verb agreement fixed too ("1 buyer also holds", not "hold").
               <> <span className="font-semibold text-amber-700">{audience.excluded}</span> buyer
-                {audience.excluded === 1 ? '' : 's'} also hold a monthly membership and{' '}
-                {audience.excluded === 1 ? 'is' : 'are'} excluded — untick that setting above to include them.</>
+                {audience.excluded === 1 ? ' also holds' : 's also hold'} a monthly membership and{' '}
+                {audience.excluded === 1 ? 'is' : 'are'}{' '}
+                {audience.excludingMonthly
+                  ? 'excluded — untick that setting above to include them.'
+                  : 'included, because that setting is unticked above.'}</>
             )}
             {kept.length === 0 && (
               <> <span className="font-semibold text-red-700">There are no openings selected</span>, so the message
