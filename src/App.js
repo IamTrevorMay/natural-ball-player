@@ -801,6 +801,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   // #281: which Email Campaign sub-screen is open (send/history/templates/images/failed).
   const [emailCampaignSection, setEmailCampaignSection] = useState('send');
   const [navigateTeamId, setNavigateTeamId] = useState(null);
+  // Lets the player dashboard's post-practice stats reminder (#278) open
+  // Profile directly on the Practice Stats tab instead of the default one.
+  const [profileInitialTab, setProfileInitialTab] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // --- Profile "Back" behaviour -------------------------------------------
@@ -1058,12 +1061,12 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && (
               effectiveRole === 'player' ? (
-                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} />
+                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} onOpenPracticeStats={() => { setProfileInitialTab('practice_stats'); setCurrentView('profile'); }} />
               ) : (
                 <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
             )}
-            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} onNavigateToProfile={openProfileFrom('profile')} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} initialTab={profileInitialTab} onInitialTabHandled={() => setProfileInitialTab(null)} onNavigateToProfile={openProfileFrom('profile')} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {currentView === 'profile-view' && viewProfileUserId && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={backFromProfile} onNavigateToProfile={(profileUserId) => { setViewProfileUserId(profileUserId); window.scrollTo(0, 0); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={openProfileFrom('team')} />}
             {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('training-groups')} />}
