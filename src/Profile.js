@@ -228,6 +228,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [savingNote, setSavingNote] = useState(false);
   const [noteFilter, setNoteFilter] = useState('all');
   const [attendanceStats, setAttendanceStats] = useState(null);
+  // #306: null = not loaded yet (or cancel_reason doesn't exist until its
+  // migration runs) — kept distinct from 0 so the stat can stay hidden
+  // rather than show a misleading "Sick cancels: 0" before it's meaningful.
+  const [sickCancelCount, setSickCancelCount] = useState(null);
   const [attendanceEvents, setAttendanceEvents] = useState([]);
   const [attendanceMap, setAttendanceMap] = useState({});
   const [attendanceFilter, setAttendanceFilter] = useState('all');
@@ -306,6 +310,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   useEffect(() => {
     let cancelled = false;
     if (userData && userData.role === 'player') fetchAttendanceData();
+    if (userData && userData.role === 'player' && (userRole === 'admin' || userRole === 'coach')) fetchSickCancelCount();
     if (userData && (userData.role === 'coach' || userData.role === 'admin')) fetchCoachAthletes();
     // Fetch trainer name if player has one assigned. Guard with cancelled so a
     // rapid userData change doesn't write a stale trainer name into state.
@@ -1355,6 +1360,30 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     }
   };
 
+  // #306: "Sick cancels: N" — staff-only, no automatic blocking, just a
+  // count so a human can notice a pattern. Separate from fetchAttendanceData
+  // above on purpose: that query explicitly excludes cancelled reservations
+  // (.neq('status', 'cancelled')) and other things already depend on it
+  // staying that way (see its own comment) — this is its own small query,
+  // not a change to that one.
+  const fetchSickCancelCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('slot_reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('player_id', userId)
+        .eq('status', 'cancelled')
+        .eq('cancel_reason', 'sick');
+      if (error) throw error;
+      setSickCancelCount(count || 0);
+    } catch (error) {
+      // #306: cancel_reason doesn't exist until its migration
+      // (20260812_slot_reservations_cancel_reason.sql) runs — leave the
+      // count unset (hidden) rather than show a wrong number.
+      console.error('Sick cancel count error (migration pending?):', error);
+    }
+  };
+
   const handleMarkAttendance = async (eventId, status) => {
     setSavingAttendance(prev => ({ ...prev, [eventId]: true }));
     try {
@@ -1833,6 +1862,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   onToggleLog={() => setActiveProfileTab('attendance')}
                   canEdit={canEditProfile}
                 />
+              )}
+              {/* #306: staff-only, no automatic blocking — just visible so a
+                  human can notice a pattern. Hidden (not "0") until the
+                  cancel_reason migration has actually run. */}
+              {userData.role === 'player' && (userRole === 'admin' || userRole === 'coach') && sickCancelCount !== null && (
+                <span
+                  title="Cancelled sessions marked sick/injured — released back to the player's package"
+                  className="px-3 py-1 rounded-full text-xs font-medium border bg-gray-50 text-gray-600 border-gray-200"
+                >
+                  Sick cancels: {sickCancelCount}
+                </span>
               )}
             </div>
           </div>
