@@ -8490,7 +8490,21 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   // false, the pre-#311-tagging default) is NOT gated, so this stays exactly
   // as permissive as it always was for the rare untagged slot.
   const requiredProductIds = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
-  const gated = !!slot?.is_subscription_session && requiredProductIds.length > 0;
+  // 🔴 #305 KILL SWITCH — LEAVE THIS `false` UNTIL CORDELL FIXES THE DATA.
+  //
+  // Flip to `true` and the "no package, no booking" rule turns on. Measured
+  // against the LIVE database on 2026-08-15, with the package-family matching
+  // in place: 655 of 699 gated sessions are bookable by somebody, but **82 of
+  // the last 147 real bookings would have been refused**. The cause is not this
+  // code — 130 lesson-pack purchases held by 99 athletes are all sitting at
+  // status 'pending' with no session count, so the gate cannot see that those
+  // athletes own anything. Turning this on today locks out paying customers.
+  //
+  // Everything else in #305 still runs with this off: the package-family match,
+  // the "Included with:" line, and the "Payment confirmed — N sessions
+  // remaining" badge. Only the refusal and the staff flag are suppressed.
+  const BOOKING_GATE_ENABLED = false;
+  const gated = BOOKING_GATE_ENABLED && !!slot?.is_subscription_session && requiredProductIds.length > 0;
   // Stable, primitive form of requiredProductIds for effect dependency arrays
   // below — the array itself is a new reference every render.
   const requiredProductIdsKey = requiredProductIds.join(',');
