@@ -4642,10 +4642,59 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
                     />
                   </div>
 
-                  {/* Exercises Table */}
+                  {/* Exercises — #321: this 7-column editor had no responsive handling
+                      at all, so on a 375px phone the four numeric inputs were squeezed to
+                      roughly 30px each: you could not read the reps you had just typed.
+                      Below sm each exercise stacks as a labelled card; sm+ is unchanged. */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Exercises</label>
-                    <table className="w-full text-sm">
+
+                    {/* Portrait phone: stacked cards */}
+                    <div className="sm:hidden space-y-3">
+                      {newWorkoutData.exercises.map((ex, i) => {
+                        const setField = (field, value) => {
+                          const updated = [...newWorkoutData.exercises];
+                          updated[i] = { ...updated[i], [field]: value };
+                          setNewWorkoutData({ ...newWorkoutData, exercises: updated });
+                        };
+                        return (
+                          <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white space-y-2">
+                            <div className="flex items-start gap-2">
+                              <span className="text-xs font-semibold text-gray-500 pt-2">#{i + 1}</span>
+                              <input type="text" placeholder="Exercise name" value={ex.name}
+                                onChange={(e) => setField('name', e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                              <button type="button" onClick={() => {
+                                const updated = newWorkoutData.exercises.filter((_, idx) => idx !== i);
+                                setNewWorkoutData({ ...newWorkoutData, exercises: updated.length ? updated : [{ name: '', sets: '', reps: '', rest: '', load: '', link: '' }] });
+                              }} className="text-gray-400 hover:text-red-600 flex-shrink-0 pt-2"><Trash2 size={14} /></button>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2">
+                              {[['Sets', 'sets', '3'], ['Reps', 'reps', '10'], ['Rest', 'rest', 'Rest'], ['Load', 'load', 'Load']].map(([label, field, ph]) => (
+                                <div key={field}>
+                                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">{label}</label>
+                                  <input type="text" placeholder={ph} value={ex[field] || ''}
+                                    onChange={(e) => setField(field, e.target.value)}
+                                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-0.5">Link</label>
+                              <input type="url" placeholder="https://..." value={ex.link}
+                                onChange={(e) => setField('link', e.target.value)}
+                                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Tablet/desktop: original table, unchanged */}
+                    <table className="hidden sm:table w-full text-sm">
                       <thead>
                         <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
                           <th className="pb-2 pr-2">Name</th>
@@ -5236,6 +5285,31 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
 // EXERCISE NOTES PARSER
 // ============================================
 
+/* #321 — Sets / Reps / Rest / Load, readable on a 375px phone.
+ *
+ * Same helper as the one in Profile.js (kept local, this repo has no shared
+ * component module). These four numbers were being packed onto one
+ * un-wrapping line with no labels — "3 × 8 · 135 · 60" tells an athlete
+ * nothing about which value is the rest and which is the load, and anything
+ * that wasn't programmed simply disappeared. Labelled chips that wrap, with
+ * an em-dash placeholder so a missing value can't read as a layout bug.
+ */
+function ExerciseMetrics({ sets, reps, load, rest, className = '' }) {
+  const items = [['Sets', sets], ['Reps', reps], ['Load', load], ['Rest', rest]];
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1 text-sm ${className}`}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+          <span className={`font-semibold tabular-nums ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+            {value || '—'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function parseExerciseNotes(notes) {
   if (!notes) return { general: '', exercises: [] };
   const delimiter = '--- Exercises ---';
@@ -5435,9 +5509,6 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                       </div>
                       <div className="sm:hidden space-y-2">
                         {exs.map((ex, i) => {
-                          const sr = ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : (ex.sets || ex.reps || '');
-                          const loadVal = ex.load || ex.weight;
-                          const meta = [sr, loadVal, ex.rest].filter(Boolean);
                           return (
                             <div key={ex.id || i} className="border border-gray-200 rounded-lg p-3 bg-white">
                               <div className="flex items-start justify-between gap-2">
@@ -5459,9 +5530,15 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
                                   </a>
                                 )}
                               </div>
-                              <div className="mt-2 text-sm text-gray-700 tabular-nums">
-                                {meta.length > 0 ? meta.join(' · ') : <span className="text-gray-400 italic">Sets/reps not set</span>}
-                              </div>
+                              {/* #321: was `[sets × reps, load, rest].join(' · ')` — no labels,
+                                  and a value that wasn't programmed was dropped silently. */}
+                              <ExerciseMetrics
+                                className="mt-2"
+                                sets={ex.sets}
+                                reps={ex.reps}
+                                load={ex.load || ex.weight}
+                                rest={ex.rest}
+                              />
                             </div>
                           );
                         })}
@@ -6264,16 +6341,19 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                         <div className="text-xs font-semibold text-blue-700 mb-2">Exercises</div>
                         <div className="space-y-2">
                           {exercises.map((ex, i) => (
-                            <div key={i} className="bg-white rounded-md p-2.5 border border-blue-100 flex items-center justify-between">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">{ex.name}</div>
-                                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                                  {(ex.sets || ex.reps) && (
-                                    <span>{ex.sets && ex.reps ? `${ex.sets} × ${ex.reps}` : ex.sets}</span>
-                                  )}
-                                  {ex.rest && <span>Rest: {ex.rest}</span>}
-                                  {ex.load && <span>Load: {ex.load}</span>}
-                                </div>
+                            <div key={i} className="bg-white rounded-md p-2.5 border border-blue-100 flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium text-gray-900 break-words">{ex.name}</div>
+                                {/* #321: was a non-wrapping `flex items-center gap-2` with no label
+                                    on sets/reps — rest and load ran off the card at 375px, and a
+                                    reps-only exercise rendered nothing (`sets && reps ? … : sets`). */}
+                                <ExerciseMetrics
+                                  className="mt-1"
+                                  sets={ex.sets}
+                                  reps={ex.reps}
+                                  load={ex.load}
+                                  rest={ex.rest}
+                                />
                               </div>
                               {ex.link && (
                                 <a href={ex.link} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 ml-2 flex-shrink-0">
