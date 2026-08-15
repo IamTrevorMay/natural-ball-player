@@ -11,6 +11,7 @@ import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
 import { CreateUserModal } from './AdminSettings';
+import { familyKey, familyLabel, sameFamily } from './productFamily';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -8273,7 +8274,26 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           // is never in requiredProductIds (SLOT_PRODUCT_KINDS only allows
           // attaching 'package'/'lesson' products to a slot in the first
           // place), so it simply never matches here — no special-case needed.
-          const matching = purchases.filter(p => p.product_id && requiredProductIds.includes(p.product_id));
+          //
+          // #276/#310 (Trevor, 2026-08-13): "if the title of the two packages
+          // says the same name before the (frequency of charge) is listed then
+          // it is the same package in reality." Square exported the same real
+          // package more than once — sessions are tagged with the bare
+          // "NBP 2x A Week Training" while every player actually bought
+          // "NBP 2x A Week Training (MONTHLY price)". So the id test is widened
+          // to a package-FAMILY test. This can only ever match MORE purchases
+          // than the id test alone, never fewer, so it cannot lock anybody out.
+          let requiredNames = [];
+          try {
+            const { data: prodRows } = await supabase
+              .from('store_products').select('id, name').in('id', requiredProductIds);
+            requiredNames = (prodRows || []).map(r => r.name).filter(Boolean);
+          } catch { /* fall back to id-only matching below */ }
+
+          const matching = purchases.filter(p =>
+            (p.product_id && requiredProductIds.includes(p.product_id)) ||
+            requiredNames.some(n => sameFamily(n, p.product_name_snapshot))
+          );
           const valid = matching.find(p => hasSessionsLeft(p) && notExpired(p));
           let reason = null;
           if (!valid) {
@@ -8300,7 +8320,19 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     if (!slot?.is_subscription_session || ids.length === 0) { setSubNames([]); return; }
     (async () => {
       const { data } = await supabase.from('store_products').select('name').in('id', ids);
-      setSubNames((data || []).map(d => d.name).filter(Boolean));
+      // #276/#305: same package, different Square billing frequency. A slot can
+      // be tagged with two rows that are the same real package ("X" and
+      // "X (MONTHLY price)"); show the base name once instead of listing both.
+      const seen = new Set();
+      const labels = [];
+      (data || []).forEach(d => {
+        const label = familyLabel(d.name);
+        const key = familyKey(d.name);
+        if (!label || seen.has(key)) return;
+        seen.add(key);
+        labels.push(label);
+      });
+      setSubNames(labels);
     })();
   }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
 

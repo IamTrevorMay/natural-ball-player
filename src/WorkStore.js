@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag, Layers } from 'lucide-react';
 import BackfillHistory from './BackfillHistory';
 import BulkTagSessions from './BulkTagSessions';
+import DuplicateProducts from './DuplicateProducts';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -692,11 +693,23 @@ export default function WorkStore() {
           <Tag size={16} />
           <span>Bulk Tag Sessions</span>
         </button>
+        {/* #276/#305: WorkStore is only mounted for admins (WorkPortal gates it),
+            and DuplicateProducts re-checks the role itself before showing data. */}
+        <button
+          onClick={() => setTab('duplicates')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 ${
+            tab === 'duplicates' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Layers size={16} />
+          <span>Duplicate Products</span>
+        </button>
       </div>
       {tab === 'catalog' ? <CatalogTab />
         : tab === 'purchases' ? <PurchasesTab />
         : tab === 'packages' ? <PackagesTab />
         : tab === 'bulk-tag' ? <BulkTagSessions />
+        : tab === 'duplicates' ? <DuplicateProducts />
         : <BackfillHistory />}
     </div>
   );
