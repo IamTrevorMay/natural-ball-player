@@ -335,6 +335,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         <NavItem id="work-home"      icon={Home}          label="Home" />
         <NavItem id="work-schedule"  icon={Calendar}      label="Schedule" />
         <NavItem id="work-messages"  icon={MessageSquare} label="Messages" />
+        {isAdmin && <SubNavItem id="work-admin-announcements" icon={Megaphone} label="Manage Announcements" />}
         <NavItem id="work-pay-hub" icon={DollarSign} label="Pay & Hours"
           matchIds={['work-pay', 'work-invoices', 'work-hours', 'work-time-off']} />
         <NavItem id="work-docs"      icon={FileText}      label="Documents" />
@@ -366,7 +367,6 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
                 <SubNavItem id="work-admin-leads"          icon={UserPlus}    label="Leads" />
                 <SubNavItem id="work-admin-outreach"       icon={Send}        label="Athlete Outreach" />
                 <SubNavItem id="work-admin-usage"          icon={BarChart3}   label="Usage (V2 research)" />
-                <SubNavItem id="work-admin-announcements"  icon={Megaphone}   label="Manage Announcements" />
               </div>
             )}
           </div>
