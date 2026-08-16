@@ -17,6 +17,43 @@ const STATUS_STYLES = {
   refunded: 'bg-gray-100 text-gray-500 border-gray-200',
 };
 
+// #340: the raw database word was rendered straight to staff ("pending"), which
+// reads as a system state rather than a fact about money. Same wording as the
+// profile pill in Profile.js so the two screens can't tell different stories.
+const STATUS_LABELS = {
+  active:   'Active',
+  paid:     'Paid',
+  pending:  'Awaiting payment',
+  past_due: 'Payment needs updating',
+  failed:   'Payment failed',
+  canceled: 'Canceled',
+  refunded: 'Refunded',
+};
+
+// A purchase is only KNOWN paid when Square told us so: `paid_at` is written by
+// the square-webhook payment handler and by nothing else.
+//
+// `status === 'active'` is deliberately NOT enough. square-subscriptions-backfill
+// writes status='active' with paid_at left NULL, so treating active as paid would
+// print "Paid <the date we ran the backfill>" — inventing a payment date, which is
+// the exact defect this change exists to remove.
+function hasPaymentDate(p) {
+  return p.paid_at != null;
+}
+
+// Whether the package is currently working for the athlete. Separate question
+// from "did money arrive", and the two must not be conflated.
+function isLive(p) {
+  return p.status === 'active' || p.status === 'paid';
+}
+
+// The date caption. Only ever claims a payment when there is a payment date.
+function dateLabel(p) {
+  if (hasPaymentDate(p)) return `Paid ${fmtDate(p.paid_at)}`;
+  if (isLive(p)) return `Active since ${fmtDate(p.created_at)}`;
+  return `Assigned ${fmtDate(p.created_at)}`;
+}
+
 function fmtDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -156,9 +193,15 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
 
   const deletePackage = async (purchase) => {
     const usageCount = (usageByPurchase[purchase.id] || []).length;
-    const confirmMsg = usageCount > 0
+    // #341: "Awaiting payment" currently means "Square never told us", not
+    // "the athlete didn't pay" — so spell that out at the moment of deletion,
+    // which is the point of no return.
+    const unpaidWarning = hasPaymentDate(purchase)
+      ? ''
+      : '\n\nThis package has no payment confirmed in the portal. Square payment confirmations are not currently syncing, so it may still have been paid. Check Square before continuing.';
+    const confirmMsg = (usageCount > 0
       ? `This package has ${usageCount} logged session(s). Deleting it will also remove those usage records. Continue?`
-      : `Delete "${purchase.product_name_snapshot}" from this account? This cannot be undone.`;
+      : `Delete "${purchase.product_name_snapshot}" from this account? This cannot be undone.`) + unpaidWarning;
     if (!window.confirm(confirmMsg)) return;
     setBusyId(purchase.id);
     try {
@@ -172,6 +215,14 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
     } catch (e) { alert('Error deleting package: ' + formatUserError(e)); } finally { setBusyId(null); }
   };
 
+  // #341: Square payment confirmations are not currently reaching the portal —
+  // store_webhook_events has never recorded a single event, so no one-time
+  // purchase has ever been marked paid. That means "Awaiting payment" is NOT
+  // proof the athlete didn't pay; Square may well hold a completed payment for
+  // it. Staff must not delete on the strength of this screen alone. The notice
+  // is driven by the data, so it disappears by itself once payments sync.
+  const unconfirmedCount = purchases.filter(p => !hasPaymentDate(p) && !isLive(p)).length;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[88vh] flex flex-col">
@@ -184,12 +235,23 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         </div>
 
         <div className="p-5 overflow-y-auto flex-1 min-h-0 space-y-3">
+          {!loading && unconfirmedCount > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+              <p className="font-semibold mb-1">Check Square before deleting anything here.</p>
+              <p>
+                {unconfirmedCount === 1 ? 'One package on this account has' : `${unconfirmedCount} packages on this account have`}{' '}
+                no payment confirmed in the portal. Payment confirmations from Square are
+                not currently reaching us, so some of these may in fact have been paid.
+                Confirm in Square first — deleting a package the athlete paid for cannot be undone.
+              </p>
+            </div>
+          )}
           {loading ? (
             <p className="text-sm text-gray-500 text-center py-8">Loading packages…</p>
           ) : purchases.length === 0 ? (
             <div className="text-center py-10">
               <Package size={32} className="text-gray-300 mx-auto mb-2" />
-              <p className="text-sm text-gray-500">No packages or bundles purchased yet.</p>
+              <p className="text-sm text-gray-500">No packages assigned yet.</p>
             </div>
           ) : purchases.map(p => {
             const total = p.store_products?.bundle_qty ?? null;
@@ -207,9 +269,16 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
                     <div className="flex items-center gap-2">
                       {isOpen ? <ChevronDown size={16} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />}
                       <span className="font-medium text-gray-900 truncate">{p.product_name_snapshot}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_STYLES[p.status] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>{p.status}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_STYLES[p.status] || 'bg-gray-100 text-gray-600 border-gray-200'}`}>{STATUS_LABELS[p.status] || p.status}</span>
                     </div>
-                    <div className="text-xs text-gray-500 mt-1 ml-6">Purchased {fmtDate(p.paid_at || p.created_at)}</div>
+                    {/* #340: this line used to read "Purchased {paid_at || created_at}".
+                        paid_at is NULL on every lesson-pack purchase in production, so it
+                        silently fell back to the date the pack was ASSIGNED and captioned
+                        it "Purchased" — telling staff money had been received when the
+                        portal has no such record. Cordell photographed exactly this: three
+                        rows reading "Purchased <date>" and "pending" at the same time.
+                        Never claim a purchase we cannot evidence. */}
+                    <div className="text-xs text-gray-500 mt-1 ml-6">{dateLabel(p)}</div>
                   </div>
                   <div className="text-right flex-shrink-0 ml-3">
                     <div className="text-sm font-semibold text-gray-900">

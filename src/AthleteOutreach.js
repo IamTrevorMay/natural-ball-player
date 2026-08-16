@@ -45,9 +45,17 @@ const PACKAGE_KINDS = ['package', 'bundle', 'lesson'];
 const OWNING_STATUSES = ['active', 'paid'];
 
 // `lenient` relaxes BOTH of this database's bookkeeping gaps at once, because
-// they co-occur: the 46 lesson-pack purchases sit at status `pending` AND have
+// they co-occur: the lesson-pack purchases sit at status `pending` AND have
 // a NULL remaining_qty, so relaxing only the status would still leave every one
 // of them flagged and the toggle would look broken.
+//
+// #341: lenient is now the DEFAULT (see `lenientOwnership` below). `pending`
+// in this database does not mean the athlete owes money — store_webhook_events
+// has been empty since June 2026, so Square has never confirmed a single
+// one-time payment and all 130 lesson-pack purchases sit at `pending` with
+// paid_at NULL, including ones the owner has confirmed were really paid.
+// Treating them as "no package" put ~99 paying athletes into a mass message
+// telling them to go buy a package.
 function isOwningPurchase(p, { lenient = false } = {}) {
   const statusOk = OWNING_STATUSES.includes(p.status) || (lenient && p.status === 'pending');
   if (!statusOk) return false;
@@ -478,7 +486,13 @@ export default function AthleteOutreach({ userId }) {
   // with visible defaults rather than magic numbers buried in the query).
   const [lowThreshold, setLowThreshold] = useState(DEFAULT_LOW_THRESHOLD);
   const [expiringDays, setExpiringDays] = useState(DEFAULT_EXPIRING_DAYS);
-  const [lenientOwnership, setLenientOwnership] = useState(false);
+  // #341: defaults to TRUE. Off, this screen's "no package" audience was every
+  // athlete whose purchases are stuck at `pending` — which, with Square
+  // confirmations not reaching the portal at all, is every lesson-pack holder
+  // in the database. Sending them the "you don't have a package, go buy one"
+  // template is the single most damaging thing on this screen, so the safe
+  // reading is the default and the owner opts INTO the strict one.
+  const [lenientOwnership, setLenientOwnership] = useState(true);
   const [excludeMonthlyHolders, setExcludeMonthlyHolders] = useState(true);
 
   // Outreach log (optional table — see supabase/migrations/20260815_outreach_log.sql)
@@ -559,10 +573,12 @@ export default function AthleteOutreach({ userId }) {
       else if (hasOwningStatusButNoQty) nullQtyOnly++;
       rows.push({
         user: u,
+        // #341: "stuck at pending" read as "hasn't paid". It means Square never
+        // sent us a confirmation — say that, and nothing more.
         detail: hasPendingPack
-          ? 'has a package purchase stuck at "pending"'
+          ? 'has a package purchase Square never confirmed'
           : hasOwningStatusButNoQty
-            ? 'paid pack with no sessions recorded'
+            ? 'has a pack with no sessions recorded'
             : 'no package purchase on file',
       });
     });
@@ -695,12 +711,13 @@ export default function AthleteOutreach({ userId }) {
             className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
           />
           <span>
-            <span className="font-medium text-gray-900">Count half-recorded purchases as owned</span>
+            <span className="font-medium text-gray-900">Count unconfirmed purchases as owned</span>
             <span className="block text-[11px] text-gray-400 mt-0.5">
-              Off by default, matching the booking gate in <code>Schedule.js</code>. Turning it on also counts
-              purchases stuck at status <code>pending</code> and packs whose <code>remaining_qty</code> was never
-              recorded — in this database every lesson pack is both at once, so relaxing only one would change
-              nothing.
+              On by default, so athletes who bought a pack are not told they have none. Square payment
+              confirmations are not currently reaching the portal, so a purchase sitting at status{' '}
+              <code>pending</code> — or a pack whose <code>remaining_qty</code> was never recorded — usually means
+              &quot;we were never told&quot;, not &quot;unpaid&quot;. Untick it to see the strict list the booking
+              gate in <code>Schedule.js</code> uses, but check Square before messaging anyone it adds.
             </span>
           </span>
         </label>
@@ -1046,24 +1063,32 @@ function PackageRemindersTab({
       <OutreachPanel
         adminId={adminId}
         kind="no_package"
-        listLabel="Athletes with no active package or subscription"
+        listLabel="Athletes with no package on file"
         rows={noPackage.rows}
         template={noPkgMsg}
         setTemplate={setNoPkgMsg}
         tokensFor={(r) => ({ first_name: firstName(r?.user?.full_name) })}
-        emptyTitle="Every player has an active package"
-        emptyBody="Nobody matches the app's active-package test right now."
+        emptyTitle="Every player has a package on file"
+        emptyBody="Nobody is missing a package right now."
         lastSentByUser={lastSentByUser}
         onLogged={onLogged}
         onLogUnavailable={onLogUnavailable}
         notes={
           <div className="space-y-3">
             <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-600">
-              <span className="font-semibold text-gray-900">How this list is built:</span> the same predicate the
-              booking gate uses (<code>ReserveSlotModal</code> in <code>src/Schedule.js</code>) — a purchase of kind
-              package/bundle/lesson, status <code>active</code> or <code>paid</code>
-              {lenientOwnership ? ' or pending (you relaxed that above)' : ''}, not expired, and with sessions left
-              (a monthly <code>package</code> may have an unlimited/NULL count; a bundle or lesson pack may not).
+              {/* #341: this described the strict predicate as the norm and the lenient
+                  one as something the owner had "relaxed". That is backwards now — the
+                  lenient reading is the default, because a `pending` purchase in this
+                  database means Square never told us, not that the athlete didn't pay. */}
+              <span className="font-semibold text-gray-900">How this list is built:</span> an athlete is left OFF
+              this list if they hold a purchase of kind package/bundle/lesson that is not expired and has sessions
+              left (a monthly <code>package</code> may have an unlimited/NULL count; a bundle or lesson pack may
+              not), with status <code>active</code> or <code>paid</code>
+              {lenientOwnership
+                ? <> — or <code>pending</code>, which counts as owned by default because Square payment
+                  confirmations are not reaching the portal.</>
+                : <> only. You have unticked &quot;Count unconfirmed purchases as owned&quot;, so this is the strict
+                  test the booking gate uses and it will list athletes whose packs are simply unconfirmed.</>}
             </div>
             {(noPackage.rows.length > 0) && (
               <div className={`rounded-lg px-4 py-3 text-xs flex items-start gap-2 ${
@@ -1077,22 +1102,47 @@ function PackageRemindersTab({
                     (2) The banner told the owner to flip a control called
                     Count "pending" purchases as owned, which does not exist;
                     the checkbox in Audience settings above is labelled
-                    "Count half-recorded purchases as owned". */}
-                <span>
-                  <span className="font-semibold">
-                    {noPackage.rows.length} of {noPackage.totalPlayers} players ({flaggedShare}%){' '}
-                    {noPackage.rows.length === 1 ? 'is' : 'are'} flagged.
-                  </span>{' '}
-                  Read this before you send: <span className="font-semibold">{noPackage.pendingOnly}</span> of them{' '}
-                  {noPackage.pendingOnly === 1 ? 'DOES' : 'DO'} have a package purchase that is simply stuck at status{' '}
-                  <code>pending</code> — in this database every lesson-pack purchase sits at <code>pending</code>, so
-                  they probably are paying customers.
-                  Another <span className="font-semibold">{noPackage.nullQtyOnly}</span>{' '}
-                  {noPackage.nullQtyOnly === 1 ? 'has' : 'have'} a paid pack whose session count was never recorded
-                  (<code>remaining_qty</code> is NULL). Flip{' '}
-                  <span className="font-semibold">Count half-recorded purchases as owned</span> above to see the
-                  list without them, or uncheck people individually below.
-                </span>
+                    "Count half-recorded purchases as owned".
+
+                    #341: kept, but it now contradicted itself — it told the owner
+                    to flip a toggle that is ON by default. Two versions: with the
+                    default (unconfirmed purchases count as owned) it says who is
+                    left and why they can still be wrong; with the toggle unticked
+                    it carries the original warning, because that is the setting
+                    that sweeps paying lesson-pack holders back into the list. The
+                    checkbox is now labelled "Count unconfirmed purchases as owned". */}
+                {lenientOwnership ? (
+                  <span>
+                    <span className="font-semibold">
+                      {noPackage.rows.length} of {noPackage.totalPlayers} players ({flaggedShare}%){' '}
+                      {noPackage.rows.length === 1 ? 'is' : 'are'} listed.
+                    </span>{' '}
+                    Athletes whose only purchase is unconfirmed by Square are already excluded, so this list is
+                    people with nothing usable on file — no package purchase at all, or one that has expired or run
+                    out of sessions.{noPackage.pendingOnly > 0 && (
+                      <> <span className="font-semibold">{noPackage.pendingOnly}</span> of them{' '}
+                      {noPackage.pendingOnly === 1 ? 'does' : 'do'} hold a purchase Square never confirmed that is
+                      also expired or out of sessions.</>
+                    )} Payment records in the portal are incomplete either way — check Square before treating anyone
+                    here as never having bought a package, or uncheck people individually below.
+                  </span>
+                ) : (
+                  <span>
+                    <span className="font-semibold">
+                      {noPackage.rows.length} of {noPackage.totalPlayers} players ({flaggedShare}%){' '}
+                      {noPackage.rows.length === 1 ? 'is' : 'are'} flagged.
+                    </span>{' '}
+                    Read this before you send: <span className="font-semibold">{noPackage.pendingOnly}</span> of them{' '}
+                    {noPackage.pendingOnly === 1 ? 'DOES' : 'DO'} have a package purchase that is simply stuck at status{' '}
+                    <code>pending</code> — in this database every lesson-pack purchase sits at <code>pending</code>{' '}
+                    because Square confirmations never arrive, so they probably are paying customers.
+                    Another <span className="font-semibold">{noPackage.nullQtyOnly}</span>{' '}
+                    {noPackage.nullQtyOnly === 1 ? 'has' : 'have'} a paid pack whose session count was never recorded
+                    (<code>remaining_qty</code> is NULL). Re-tick{' '}
+                    <span className="font-semibold">Count unconfirmed purchases as owned</span> above to take them
+                    back out, or uncheck people individually below.
+                  </span>
+                )}
               </div>
             )}
           </div>

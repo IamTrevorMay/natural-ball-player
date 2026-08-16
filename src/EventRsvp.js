@@ -49,9 +49,12 @@
 // ---------------------------------------------------------------------------
 // DEGRADING GRACEFULLY
 // ---------------------------------------------------------------------------
-// supabase/migrations/20260815_event_rsvps.sql is written but NOT applied. Every
-// query here checks for the missing-table PostgREST error and shows
-// RSVP_NOT_SET_UP_MESSAGE instead of looking broken.
+// supabase/migrations/20260815_event_rsvps.sql IS applied — the event_rsvps
+// table exists in production (0 rows as of 2026-08-16, nobody has answered yet,
+// which is why every headcount currently reads "0 going / N no response"). The
+// missing-table guard below is kept deliberately: it still covers a fresh/local
+// database that has not run the migration, so every query here checks for the
+// PostgREST error and shows RSVP_NOT_SET_UP_MESSAGE instead of looking broken.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabaseClient';
@@ -364,13 +367,107 @@ export function RsvpButtons({ value, onSelect, disabled, saving, compact }) {
   );
 }
 
-export function RsvpHeadcount({ buckets, className = '' }) {
+// #277 — the four headcount buckets in the order Cordell reads them, so the
+// summary row and the drill-down modal cannot drift apart. `noun` is the tail
+// of the count text ("4 going"); `aria` is the tail of the button label.
+const RSVP_BUCKETS = [
+  { key: 'going', Icon: Check, tone: 'font-semibold text-emerald-700', titleTone: 'text-emerald-700', noun: 'going', aria: 'going' },
+  { key: 'maybe', Icon: HelpCircle, tone: 'text-amber-700', titleTone: 'text-amber-700', noun: 'maybe', aria: 'answering maybe' },
+  { key: 'not_going', Icon: X, tone: 'text-rose-700', titleTone: 'text-rose-700', noun: 'not going', aria: 'not going' },
+  { key: 'no_response', Icon: Users, tone: 'text-gray-500', titleTone: 'text-gray-500', noun: 'no response', aria: 'with no response' },
+];
+
+// Titles for the drill-down. Reuses RSVP_LABELS for the three real responses so
+// "Not going" is spelled the one way everywhere; no_response is not a stored
+// response value, so it only exists here.
+const RSVP_BUCKET_TITLES = { ...RSVP_LABELS, no_response: 'No response' };
+
+// #277 — Cordell: "Admin and coaches need to have the ability to click on all of
+// these to see who exactly is in each of these 4 categories." When `clickable`,
+// each count becomes a button that opens RsvpBucketModal; the markup, colours
+// and spacing are otherwise byte-for-byte what players have always seen.
+export function RsvpHeadcount({ buckets, className = '', clickable = false, onSelect }) {
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-xs ${className}`}>
-      <span className="inline-flex items-center gap-1 font-semibold text-emerald-700"><Check size={13} />{buckets.going.length} going</span>
-      <span className="inline-flex items-center gap-1 text-amber-700"><HelpCircle size={13} />{buckets.maybe.length} maybe</span>
-      <span className="inline-flex items-center gap-1 text-rose-700"><X size={13} />{buckets.not_going.length} not going</span>
-      <span className="inline-flex items-center gap-1 text-gray-500"><Users size={13} />{buckets.no_response.length} no response</span>
+      {RSVP_BUCKETS.map(({ key, Icon, tone, noun, aria }) => {
+        const n = buckets[key].length;
+        const body = <><Icon size={13} />{n} {noun}</>;
+        return clickable ? (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onSelect?.(key)}
+            aria-label={`Show the ${n} ${n === 1 ? 'person' : 'people'} ${aria}`}
+            className={`inline-flex items-center gap-1 rounded transition hover:underline hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${tone}`}
+          >
+            {body}
+          </button>
+        ) : (
+          <span key={key} className={`inline-flex items-center gap-1 ${tone}`}>{body}</span>
+        );
+      })}
+    </div>
+  );
+}
+
+// A stored RSVP's timestamp, shown next to the name in the drill-down so a coach
+// can tell a fresh answer from a stale one. Bad/absent values render as nothing.
+function fmtRespondedAt(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    + ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+// #277 — the drill-down: exactly who is in one bucket. Presentation only; every
+// person object already came back with tallyRsvps (full user row + `_rsvp`), so
+// there is no new query here. Standard app overlay (see Schedule.js AddEventPanel).
+export function RsvpBucketModal({ bucketKey, buckets, onClose }) {
+  useEffect(() => {
+    const onEsc = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [onClose]);
+
+  if (!bucketKey) return null;
+  const people = buckets[bucketKey] || [];
+  const meta = RSVP_BUCKETS.find(b => b.key === bucketKey);
+  const title = RSVP_BUCKET_TITLES[bucketKey] || 'RSVP';
+
+  return (
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      {/* Stop the backdrop handler from firing for clicks inside the card. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
+          <h3 className={`text-lg font-bold ${meta ? meta.titleTone : 'text-gray-900'}`}>{title} ({people.length})</h3>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1 min-h-0">
+          {people.length === 0 ? (
+            <p className="text-sm text-gray-500 italic">Nobody yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {people.map(p => {
+                // no_response people have no _rsvp row at all — names only.
+                const when = fmtRespondedAt(p._rsvp?.responded_at);
+                return (
+                  <li key={p.id} className="text-sm text-gray-900">
+                    <div className="font-medium truncate">{p.full_name || 'Unknown'}</div>
+                    {p._rsvp?.note && <div className="text-xs text-gray-600 mt-0.5">{p._rsvp.note}</div>}
+                    {when && <div className="text-xs text-gray-400 mt-0.5">Answered {when}</div>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -394,9 +491,11 @@ function RosterColumn({ title, tone, people }) {
 
 // Coach / admin roster panel for one occurrence: who is Going / Not going /
 // Maybe / No response, the headcount, and the human-clicked nudge.
-export function RsvpRosterPanel({ buckets, eventLabel, userId, className = '' }) {
+export function RsvpRosterPanel({ buckets, eventLabel, userId, className = '', clickable = false }) {
   const [nudging, setNudging] = useState(false);
   const [nudgeMsg, setNudgeMsg] = useState('');
+  // #277 — which bucket the staff member clicked in the headcount, or null.
+  const [openBucket, setOpenBucket] = useState(null);
   const nonResponders = buckets.no_response;
 
   const handleNudge = async () => {
@@ -416,7 +515,8 @@ export function RsvpRosterPanel({ buckets, eventLabel, userId, className = '' })
 
   return (
     <div className={className}>
-      <RsvpHeadcount buckets={buckets} className="mb-3" />
+      <RsvpHeadcount buckets={buckets} className="mb-3" clickable={clickable} onSelect={setOpenBucket} />
+      {clickable && <RsvpBucketModal bucketKey={openBucket} buckets={buckets} onClose={() => setOpenBucket(null)} />}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <RosterColumn title="Going" tone="text-emerald-700" people={buckets.going} />
         <RosterColumn title="Maybe" tone="text-amber-700" people={buckets.maybe} />
@@ -541,8 +641,10 @@ export function EventRsvpSection({ event, source, userId, userRole, className = 
           {players.length === 0 ? (
             <p className="text-xs text-gray-500 italic">No players on this team yet, so there is no headcount to show.</p>
           ) : isStaff ? (
-            <RsvpRosterPanel buckets={buckets} eventLabel={label} userId={userId} />
+            // #277 — staff can click any of the four counts to see the names.
+            <RsvpRosterPanel buckets={buckets} eventLabel={label} userId={userId} clickable />
           ) : (
+            // Players keep the plain, non-clickable counts.
             <RsvpHeadcount buckets={buckets} />
           )}
         </div>
@@ -561,6 +663,8 @@ function RsvpEventRow({ event, myRow, buckets, isStaff, canAnswer, userId, onSav
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showRoster, setShowRoster] = useState(false);
+  // #277 — bucket drilled into from this row's headcount (staff only), or null.
+  const [openBucket, setOpenBucket] = useState(null);
   const label = `${eventTitleOf(event)} on ${fmtEventDate(occurrence.event_date)}`;
 
   const handleSelect = async (response) => {
@@ -606,7 +710,10 @@ function RsvpEventRow({ event, myRow, buckets, isStaff, canAnswer, userId, onSav
       </div>
       {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
       <div className="mt-3">
-        <RsvpHeadcount buckets={buckets} />
+        {/* #277 — same drill-down on the board rows as on the event detail, so a
+            coach never has to find the "Show roster" toggle to get the names. */}
+        <RsvpHeadcount buckets={buckets} clickable={isStaff} onSelect={setOpenBucket} />
+        {isStaff && <RsvpBucketModal bucketKey={openBucket} buckets={buckets} onClose={() => setOpenBucket(null)} />}
       </div>
       {isStaff && (
         <div className="mt-2">
@@ -618,7 +725,7 @@ function RsvpEventRow({ event, myRow, buckets, isStaff, canAnswer, userId, onSav
             {showRoster ? 'Hide roster' : 'Show roster & nudge'}
           </button>
           {showRoster && (
-            <RsvpRosterPanel className="mt-3" buckets={buckets} eventLabel={label} userId={userId} />
+            <RsvpRosterPanel className="mt-3" buckets={buckets} eventLabel={label} userId={userId} clickable />
           )}
         </div>
       )}
