@@ -545,9 +545,57 @@ function PurchasesTab() {
 // #238: package overview grouped by product. Each package/bundle expands to
 // show every client who bought it, when, how many sessions remain, and how much
 // time is left before it expires.
+
+// #340: the raw database word was rendered straight to staff ("pending"), which
+// reads as a system state rather than a fact about money. Same wording as
+// PackagesModal.js and the profile pill in Profile.js so the three screens
+// can't tell different stories.
+const PKG_STATUS_LABELS = {
+  active:   'Active',
+  paid:     'Paid',
+  pending:  'Awaiting payment',
+  past_due: 'Payment needs updating',
+  failed:   'Payment failed',
+  canceled: 'Canceled',
+  refunded: 'Refunded',
+};
+
+// Duplicated from PackagesModal.js on purpose (#341): three screens needed the
+// same two questions answered and a shared module would have widened the blast
+// radius of this fix. Keep the definitions identical if either one changes.
+//
+// A purchase is only KNOWN paid when Square told us so: `paid_at` is written by
+// the square-webhook payment handler and by nothing else.
+//
+// `status === 'active'` is deliberately NOT enough. square-subscriptions-backfill
+// writes status='active' with paid_at left NULL, so treating active as paid would
+// print "Paid <the date we ran the backfill>" — inventing a payment date, which is
+// the exact defect this change exists to remove.
+function pkgHasPaymentDate(r) {
+  return r.paid_at != null;
+}
+
+// Whether the package is currently working for the athlete. Separate question
+// from "did money arrive", and the two must not be conflated.
+function pkgIsLive(r) {
+  return r.status === 'active' || r.status === 'paid';
+}
+
+// The date cell. Only ever claims a payment when there is a payment date.
+function pkgDateLabel(r) {
+  const d = (v) => (v ? new Date(v).toLocaleDateString() : '—');
+  if (pkgHasPaymentDate(r)) return `Paid ${d(r.paid_at)}`;
+  if (pkgIsLive(r)) return `Active since ${d(r.created_at)}`;
+  return `Assigned ${d(r.created_at)}`;
+}
+
 function packageTimeLeft(expiresAt) {
   if (!expiresAt) return null;
   const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000);
+  // #340: an unparseable expires_at gives NaN, which used to print "NaNd left".
+  // Rare, but the filter removal puts far more rows through here, and the cell
+  // already falls back to "—" for the (common) no-expiry case.
+  if (!Number.isFinite(days)) return null;
   if (days < 0) return { text: `expired ${Math.abs(days)}d ago`, cls: 'text-red-600' };
   if (days <= 14) return { text: `${days}d left`, cls: 'text-orange-600' };
   return { text: `${days}d left`, cls: 'text-gray-500' };
@@ -567,14 +615,28 @@ function PackagesTab() {
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false })
         .limit(1000);
-      // Cosmetic (#298 follow-up): a plain one-off kind='lesson' purchase has
-      // no bundle_qty and isn't a package — showing it here rendered as if it
-      // were an unlimited package ("Monthly"), which misled staff. Every
-      // kind='package' row still counts (monthly subscriptions are never
-      // counted, so they never have a bundle_qty either); bundle/lesson rows
-      // only count when their product actually carries a bundle_qty.
-      const real = (data || []).filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null);
-      setRows(real);
+      // #340/#341: this used to be
+      //   .filter(r => r.product_kind === 'package' || r.store_products?.bundle_qty != null)
+      // left over from a #298 follow-up that only wanted to stop a one-off
+      // kind='lesson' purchase rendering as an unlimited "Monthly" package. The
+      // filter throws away every purchase whose product has no session count —
+      // and bundle_qty is NULL on 77 of the 92 active products, while all 130
+      // lesson-pack purchases in production are product_kind='lesson'. So this
+      // tab showed none of them: the same defect PackagesModal.js had, removed
+      // there for the same reason (see its load()).
+      //
+      // It also quietly falsified the numbers on this screen. The #341 notice
+      // below and the per-group summary are both computed from `rows`, so with
+      // the filter in place they described only the survivors — a QA run with 6
+      // fixture rows (4 unconfirmed) showed 3 rows and a banner reading "One
+      // purchase below…". In production the tab would warn about nothing at all.
+      //
+      // Nothing is filtered out here any more; `rows` is every assigned
+      // package/bundle/lesson, so the counts agree with what is on screen.
+      // Rows whose product carries no session count render "—" under Sessions
+      // left rather than being hidden, which tells staff the truth: the pack is
+      // assigned, we just don't know its size yet.
+      setRows(data || []);
       setLoading(false);
     })();
   }, []);
@@ -585,17 +647,48 @@ function PackagesTab() {
     const key = r.product_name_snapshot || '(unnamed)';
     (groups[key] = groups[key] || []).push(r);
   });
-  const activeStatuses = new Set(['active', 'paid', 'pending', 'past_due']);
   const groupNames = Object.keys(groups).sort();
 
+  // #341: Square payment confirmations are not currently reaching the portal —
+  // store_webhook_events has never recorded a single event, so no one-time
+  // purchase has ever been marked paid. "Awaiting payment" on this screen is NOT
+  // proof the athlete didn't pay; Square may well hold a completed payment for
+  // it. The notice is driven by the data, so it disappears by itself once
+  // payments sync. Counted over the whole unfiltered `rows` (#340) — this
+  // number is a claim about what is listed below, so it has to be counted from
+  // the same set that is rendered.
+  const unconfirmedCount = rows.filter(r => !pkgHasPaymentDate(r) && !pkgIsLive(r)).length;
+
   if (loading) return <div className="text-center py-12 text-gray-500">Loading…</div>;
-  if (groupNames.length === 0) return <div className="text-center py-12 text-gray-500">No packages or bundles sold yet.</div>;
+  if (groupNames.length === 0) return <div className="text-center py-12 text-gray-500">No packages or bundles assigned yet.</div>;
 
   return (
     <div className="space-y-2">
+      {unconfirmedCount > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+          <p className="font-semibold mb-1">Check Square before chasing payment on anything here.</p>
+          <p>
+            {unconfirmedCount === 1 ? 'One purchase below has' : `${unconfirmedCount} purchases below have`}{' '}
+            no payment confirmed in the portal. Payment confirmations from Square are
+            not currently reaching us, so some of these may in fact have been paid.
+            Confirm in Square before treating anyone here as owing money.
+          </p>
+        </div>
+      )}
       {groupNames.map(name => {
         const list = groups[name];
-        const activeCount = list.filter(r => activeStatuses.has(r.status)).length;
+        // #340: this line used to read "{list.length} sold · {activeCount} active",
+        // where activeCount counted status in (active, paid, pending, past_due).
+        // Both halves asserted money we cannot evidence: every one of the 130
+        // lesson-pack purchases in production sits at 'pending' with paid_at NULL,
+        // so "sold" and "active" were both counting rows the portal has no payment
+        // record for. Split into the three separate facts we actually know:
+        // how many were assigned, how many Square confirmed payment for, and how
+        // many are currently usable. All three count `list`, which is now the
+        // group's full unfiltered membership (#340), so the header total always
+        // matches the number of rows that open underneath it.
+        const paidCount = list.filter(pkgHasPaymentDate).length;
+        const liveCount = list.filter(pkgIsLive).length;
         const isOpen = !!open[name];
         return (
           <div key={name} className="bg-white rounded-lg shadow">
@@ -604,7 +697,7 @@ function PackagesTab() {
               className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition"
             >
               <div className="font-semibold text-gray-900">{name}</div>
-              <div className="text-sm text-gray-500">{list.length} sold · {activeCount} active</div>
+              <div className="text-sm text-gray-500">{list.length} assigned · {paidCount} payment confirmed · {liveCount} active</div>
             </button>
             {isOpen && (
               <div className="border-t border-gray-100 overflow-x-auto">
@@ -612,7 +705,14 @@ function PackagesTab() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Purchased</th>
+                      {/* #340: this column was headed "Purchased" and rendered
+                          new Date(r.paid_at || r.created_at). paid_at is NULL on
+                          every lesson-pack purchase in production, so it silently
+                          fell back to the date the pack was ASSIGNED and captioned
+                          it as a sale — telling staff money had been received when
+                          the portal has no such record. The heading no longer
+                          asserts anything; the cell says which date it is showing. */}
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sessions left</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Time left</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
@@ -621,17 +721,28 @@ function PackagesTab() {
                   <tbody className="bg-white divide-y divide-gray-200">
                     {list.map(r => {
                       const tl = packageTimeLeft(r.expires_at);
+                      // #340: the pack size, when the product carries one. NULL
+                      // on 77 of the 92 active products, so it is shown only
+                      // when known — never invented, and never a reason to hide
+                      // the row. Same shape as PackagesModal.js ("3 / 8").
+                      const total = r.store_products?.bundle_qty ?? null;
                       return (
                         <tr key={r.id}>
                           <td className="px-4 py-2 text-sm text-gray-900">
                             <div>{r.user?.full_name || '—'}</div>
                             <div className="text-xs text-gray-500">{r.user?.email}</div>
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-700">{new Date(r.paid_at || r.created_at).toLocaleDateString()}</td>
-                          <td className="px-4 py-2 text-sm text-gray-700">{r.remaining_qty != null ? r.remaining_qty : (r.product_kind === 'package' ? 'Monthly' : '—')}</td>
+                          <td className="px-4 py-2 text-sm text-gray-700">{pkgDateLabel(r)}</td>
+                          {/* #344: this said 'Monthly' for EVERY recurring row, so a
+                              fortnightly plan read as monthly here while the profile
+                              modal correctly called it "Every two weeks" — two screens
+                              telling different stories about one purchase, which is the
+                              confusion #344 exists to end. Say 'Recurring' and let the
+                              product name carry the real frequency. */}
+                          <td className="px-4 py-2 text-sm text-gray-700">{r.remaining_qty != null ? `${r.remaining_qty}${total != null ? ` / ${total}` : ''}` : (r.product_kind === 'package' ? 'Recurring' : '—')}</td>
                           <td className={`px-4 py-2 text-sm ${tl?.cls || 'text-gray-400'}`}>{tl?.text || '—'}</td>
                           <td className="px-4 py-2 text-sm">
-                            <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_COLORS[r.status] || 'bg-gray-100 text-gray-700'}`}>{r.status}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_COLORS[r.status] || 'bg-gray-100 text-gray-700'}`}>{PKG_STATUS_LABELS[r.status] || r.status}</span>
                           </td>
                         </tr>
                       );

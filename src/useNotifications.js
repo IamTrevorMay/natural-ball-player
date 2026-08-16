@@ -1,5 +1,39 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+
+// 🔴 #341 KILL SWITCH — LEAVE THIS `false` UNTIL SQUARE PAYMENT CONFIRMATIONS
+// ARE VERIFIED ARRIVING.
+//
+// Flip to `true` and the athlete-facing "you still owe us" nudges come back:
+// the NotificationBell row and the StoreModal "My Purchases" pay link, both of
+// which point at a LIVE Square checkout_url. Measured against the LIVE database
+// on 2026-08-16: `store_webhook_events` holds ZERO rows — Square's payment
+// webhook has never delivered a single event since the store went up in June
+// 2026 — so `paid_at` and `square_payment_id` are NULL on ALL 130 lesson-pack
+// purchases and every one of them sits at status='pending' with a live
+// checkout_url still attached.
+//
+// status='pending' therefore means "Square never told us", NOT "the athlete
+// owes money". Cordell has confirmed that several of these were in fact paid in
+// Square. With this on, an athlete who already paid is shown a red badge
+// telling them a payment is due and is handed a one-click link that charges
+// their card a second time. That is real money out of a real customer, so this
+// stays off — the nudge is worth less than one double charge.
+//
+// THE ONE CONDITION FOR FLIPPING IT ON: Square payment confirmations verified
+// arriving end to end — `store_webhook_events` receiving rows for new payments
+// AND `paid_at` populating on the matching store_purchases. Nothing else counts;
+// a fixed webhook subscription that has not yet been observed writing those two
+// things is not evidence. Until then pending is unfalsifiable and we must not
+// bill on it. See also the #305 BOOKING_GATE_ENABLED switch in Schedule.js,
+// which is off for the same root cause (the same 130 pending purchases).
+//
+// When it does go back on, the copy must NOT return to "Payment due" — see the
+// wording in NotificationBell.js / StoreModal.js, which states only what we can
+// evidence ("Payment not confirmed") and tells an athlete who already paid that
+// no action is needed.
+export const PAYMENT_DUE_NOTICES_ENABLED = false;
+
 async function fetchWorkDmThreadIdsForUser(userId) {
   const [asUserA, asUserB] = await Promise.all([
     supabase.from('work_dm_threads').select('id').eq('user_a_id', userId),
@@ -21,18 +55,30 @@ export function useMainPortalCounts(userId, userRole) {
     if (!userId) return;
 
     // Pending payments assigned to / started by this user (#213). Surfaces a
-    // "complete your payment" nudge that links straight to Square checkout.
-    try {
-      const { data: pays } = await supabase
-        .from('store_purchases')
-        .select('id, product_name_snapshot, amount_cents, checkout_url, created_at')
-        .eq('user_id', userId)
-        .eq('status', 'pending')
-        .not('checkout_url', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(10);
-      setPendingPayments(pays || []);
-    } catch (e) { console.error('Pending payments error:', e); }
+    // nudge that links straight to Square checkout.
+    //
+    // #341: gated on PAYMENT_DUE_NOTICES_ENABLED (see the block at the top of
+    // this file). While it's off we don't even ASK for these rows: an
+    // unrendered checkout_url is still a live "charge me again" URL sitting in
+    // the client, and NotificationBell sums this array into its unread badge —
+    // so leaving it empty is also what stops the bell reading "1 new" with
+    // nothing underneath it. The consumers gate on the flag too; this is the
+    // belt to their braces, not a substitute for it.
+    if (PAYMENT_DUE_NOTICES_ENABLED) {
+      try {
+        const { data: pays } = await supabase
+          .from('store_purchases')
+          .select('id, product_name_snapshot, amount_cents, checkout_url, created_at')
+          .eq('user_id', userId)
+          .eq('status', 'pending')
+          .not('checkout_url', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        setPendingPayments(pays || []);
+      } catch (e) { console.error('Pending payments error:', e); }
+    } else {
+      setPendingPayments([]);
+    }
 
     try {
       const { data: pRows } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', userId);

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 import { X, ShoppingBag, Loader2, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
+import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
 
 const KIND_LABEL = {
   lesson: 'Lessons',
@@ -19,7 +20,13 @@ function StatusPill({ status }) {
   const map = {
     paid:     { cls: 'bg-green-100 text-green-700',  icon: CheckCircle, label: 'Paid' },
     active:   { cls: 'bg-green-100 text-green-700',  icon: CheckCircle, label: 'Active' },
-    pending:  { cls: 'bg-yellow-100 text-yellow-800',icon: Clock,       label: 'Pending' },
+    // #341: this pill is athlete-facing and 'pending' is not a fact about
+    // money — the Square payment webhook has never delivered an event, so a
+    // purchase Cordell watched get paid still reads 'pending' here. "Pending"
+    // invited the reading "you haven't paid"; say only what we know, which is
+    // that no confirmation has reached the portal. Staff screens use #340's
+    // "Awaiting payment" (PackagesModal/Profile) — same claim, staff voice.
+    pending:  { cls: 'bg-yellow-100 text-yellow-800',icon: Clock,       label: 'Payment not confirmed' },
     past_due: { cls: 'bg-orange-100 text-orange-800',icon: AlertCircle, label: 'Past due' },
     failed:   { cls: 'bg-red-100 text-red-700',      icon: AlertCircle, label: 'Failed' },
     canceled: { cls: 'bg-gray-100 text-gray-700',    icon: X,           label: 'Canceled' },
@@ -157,17 +164,34 @@ export default function StoreModal({ userId, onClose }) {
                         {new Date(pu.created_at).toLocaleDateString()} · {fmtMoney(pu.amount_cents)}
                         {pu.remaining_qty != null ? ` · ${pu.remaining_qty} remaining` : ''}
                       </p>
+                      {/* #341: shown whenever the pill says "Payment not
+                          confirmed", flag or no flag — the pill is visible
+                          either way and an athlete who paid in Square deserves
+                          to be told the portal's silence isn't a bill. */}
+                      {pu.status === 'pending' && (
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          If you've already paid, you're all set — no action needed.
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusPill status={pu.status} />
-                      {pu.status === 'pending' && pu.checkout_url && (
+                      {/* #341: the pay-again link is behind
+                          PAYMENT_DUE_NOTICES_ENABLED (useNotifications.js,
+                          currently false). It sends the athlete to the original
+                          live Square checkout_url, and with the payment webhook
+                          never having fired, 'pending' includes purchases that
+                          were really paid — so "Complete" was offering paying
+                          customers a second charge. It comes back, reworded, on
+                          the day Square confirmations are verified arriving. */}
+                      {PAYMENT_DUE_NOTICES_ENABLED && pu.status === 'pending' && pu.checkout_url && (
                         <a
                           href={pu.checkout_url}
-                          className="text-xs text-blue-600 hover:underline"
+                          className="text-xs text-blue-600 hover:underline whitespace-nowrap"
                           target="_blank"
                           rel="noreferrer"
                         >
-                          Complete
+                          Finish checkout
                         </a>
                       )}
                     </div>

@@ -8752,9 +8752,19 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
                 </span>
               </div>
             ) : (
+              // #341: this read "No active package found. Please ensure payment
+              // has been arranged before reserving this slot." — an accusation
+              // aimed at the athlete, at the worst possible moment. The query
+              // above filters status in ('active','paid'), and every one of the
+              // 130 lesson-pack purchases in production sits at 'pending' with
+              // paid_at NULL because store_webhook_events has been empty since
+              // June 2026, so this banner fires for pack holders who HAVE paid.
+              // Reworded to state only what the portal knows about itself.
+              // Booking is not gated here (BOOKING_GATE_ENABLED is false) and
+              // this change is text only — nothing about who may reserve moves.
               <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
-                <span>No active package found. Please ensure payment has been arranged before reserving this slot.</span>
+                <span>We don&apos;t have a package confirmed on your account for this session. You can still reserve it — if you&apos;ve already paid or have a pack, no action is needed and we&apos;ll sort it out on our end.</span>
               </div>
             )
           )}

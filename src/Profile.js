@@ -141,6 +141,18 @@ export async function fetchPackageStatus(userId) {
     // Best status wins, so one stale unpaid row can't mask a live package.
     const rank = { active: 4, paid: 4, past_due: 3, pending: 2 };
     const best = rows.reduce((a, b) => ((rank[b.status] || 1) > (rank[a.status] || 1) ? b : a));
+    // #341: `pending` on these rows means "Square never told us", NOT "the
+    // athlete owes money". store_webhook_events has never recorded a single
+    // event since June 2026, so paid_at is NULL on all 130 lesson-pack
+    // purchases and every one of them sits at 'pending' — including the ones
+    // the owner has confirmed were really paid in Square. The pill below must
+    // therefore never tell an athlete they are behind on payment; it can only
+    // report what the portal knows.
+    //
+    // pendingCount therefore counts "purchases Square has not confirmed to us",
+    // not "unpaid purchases", and the labels below are worded accordingly. Note
+    // that a paid_at test would not rescue the other statuses either:
+    // square-subscriptions-backfill writes status='active' with paid_at NULL.
     return {
       ...best,
       total: rows.length,
@@ -1958,8 +1970,21 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 const s = subscriptionRow?.status;
                 const pending = subscriptionRow?.pendingCount || 0;
                 const total = subscriptionRow?.total || 0;
+                // #341: who is reading this pill matters. `onBack` is only set
+                // when someone is viewing SOMEBODY ELSE'S profile, so no onBack
+                // means the athlete is looking at their own page — and this
+                // block is rendered for them too (the gate above is
+                // `!onBack || admin || coach`). Telling that athlete "Awaiting
+                // Payment (3)" accuses them of owing money for packages the
+                // owner has confirmed were paid in Square; the portal simply
+                // never received the confirmation, because store_webhook_events
+                // has been empty since June 2026. Staff still need to know the
+                // portal has no payment on file — they just get wording that
+                // says that, instead of wording that blames the athlete.
+                const staffView = !!onBack && (userRole === 'admin' || userRole === 'coach');
                 let label = 'No Package Set Up';
                 let cls = 'bg-gray-100 text-gray-600 border-gray-200';
+                let hint = null;
                 if (s === 'active' || s === 'paid') {
                   label = total > 1 ? `Package Active (${total})` : 'Package Active';
                   cls = 'bg-green-50 text-green-700 border-green-200';
@@ -1967,7 +1992,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   label = 'Payment Needs Updated';
                   cls = 'bg-orange-50 text-orange-700 border-orange-200';
                 } else if (s === 'pending') {
-                  label = pending > 1 ? `Awaiting Payment (${pending})` : 'Awaiting Payment';
+                  // Neutral for the athlete ("your pack is on your account"),
+                  // explicit for staff ("we have no confirmation, and that is a
+                  // fact about our records, not about the athlete").
+                  label = staffView
+                    ? (pending > 1 ? `Payment Not Confirmed (${pending})` : 'Payment Not Confirmed')
+                    : (pending > 1 ? `Package Assigned (${pending})` : 'Package Assigned');
+                  hint = staffView
+                    ? `${pending} package${pending === 1 ? '' : 's'} with no payment confirmed in the portal. Square payment confirmations are not currently syncing, so ${pending === 1 ? 'it' : 'they'} may already have been paid — check Square before following up.`
+                    : 'This package is on your account. If you have already paid, no action is needed — payment confirmations from Square are not currently syncing into the portal.';
                   cls = 'bg-yellow-50 text-yellow-700 border-yellow-200';
                 } else if (total > 0) {
                   // Every row is cancelled / refunded / failed. Saying "No
@@ -1977,16 +2010,29 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   label = total > 1 ? `No Active Package (${total} past)` : 'No Active Package (1 past)';
                   cls = 'bg-gray-100 text-gray-600 border-gray-200';
                 }
+                // #341: the tooltip is invisible on a phone, which is where most
+                // athletes read this, so the reassurance is also rendered as
+                // text for the athlete's own pending case. Kept inside a single
+                // column wrapper so it stays ONE flex item in the wrapping strip
+                // the QA 2026-08-15 note above is about.
+                const showAthleteReassurance = !staffView && s === 'pending';
                 return (
-                  <button
-                    onClick={() => setShowPackages(true)}
-                    title={total > 0
-                      ? `${total} package${total === 1 ? '' : 's'} assigned — click to see all of them`
-                      : 'View all packages & sessions'}
-                    className={`px-3 py-1 rounded-full text-xs font-medium border transition hover:opacity-80 ${cls}`}
-                  >
-                    {label} ▾
-                  </button>
+                  <div className="flex flex-col items-end">
+                    <button
+                      onClick={() => setShowPackages(true)}
+                      title={hint || (total > 0
+                        ? `${total} package${total === 1 ? '' : 's'} assigned — click to see all of them`
+                        : 'View all packages & sessions')}
+                      className={`px-3 py-1 rounded-full text-xs font-medium border transition hover:opacity-80 ${cls}`}
+                    >
+                      {label} ▾
+                    </button>
+                    {showAthleteReassurance && (
+                      <span className="mt-1 max-w-[230px] text-right text-[11px] leading-tight text-gray-500">
+                        Already paid? No action needed — payment confirmations from Square aren&apos;t reaching the portal right now.
+                      </span>
+                    )}
+                  </div>
                 );
               })()}
               {onBack && (userRole === 'admin' || userRole === 'coach') && userData.role === 'player' && (

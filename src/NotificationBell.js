@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
+import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
 
 // #316: shared by App.js and WorkPortal.js — both render this bell and both
 // need to delete a pending payment the same way. Was previously copy-pasted
@@ -14,7 +15,15 @@ import { formatUserError } from './errorMessage';
 // don't simplify it away to a plain `if (error)`, or a coach-gated delete
 // (should that ever come back) goes silent again.
 export async function deletePendingPayment(purchaseId, productName, onSuccess) {
-  if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.`)) return;
+  // #341: every row that reaches this function is status='pending' with no
+  // paid_at (that's the only thing useMainPortalCounts selects), and pending
+  // currently means "Square never told us" rather than "unpaid" — no payment
+  // webhook has ever been delivered, so paid_at is NULL even on purchases
+  // Cordell has confirmed were paid. The caution is therefore unconditional
+  // here, unlike PackagesModal.deletePackage which can check hasPaymentDate.
+  // Wording deliberately mirrors that screen's so the two tell one story.
+  const unpaidWarning = '\n\nThis purchase has no payment confirmed in the portal. Square payment confirmations are not currently syncing, so it may still have been paid. Check Square before continuing.';
+  if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.${unpaidWarning}`)) return;
   const { data, error } = await supabase.from('store_purchases').delete().eq('id', purchaseId).select('id');
   if (error) { alert('Error deleting payment: ' + formatUserError(error)); return; }
   if (!data || data.length === 0) {
@@ -51,7 +60,9 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
   const total =
     (mainCounts?.unreadMessages || 0)
     + (mainCounts?.pendingSlots?.length || 0)
-    + (mainCounts?.pendingPayments?.length || 0)
+    // #341: excluded while PAYMENT_DUE_NOTICES_ENABLED is off, or the badge
+    // would advertise notifications the panel below deliberately doesn't render.
+    + (PAYMENT_DUE_NOTICES_ENABLED ? (mainCounts?.pendingPayments?.length || 0) : 0)
     + (mainCounts?.packageFlags?.length || 0)
     + (workCounts?.unreadMessages || 0)
     + (workCounts?.pendingHours?.length || 0)
@@ -134,7 +145,23 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
               </button>
             ))}
 
-            {(mainCounts?.pendingPayments || []).map(pay => (
+            {/* #341: the whole payment block — notice, checkout link and the
+                admin delete button that hangs off it — is behind
+                PAYMENT_DUE_NOTICES_ENABLED (defined in useNotifications.js,
+                currently false). This used to read "Payment due: … tap to
+                complete payment" over a live Square checkout_url; with the
+                payment webhook never firing, that told athletes who HAD paid
+                that they owed money and gave them one click to pay twice.
+                useMainPortalCounts also returns an empty list while the flag is
+                off, so this map has nothing to iterate either way — the guard
+                stays so the two can't drift apart. While it's off, the admin
+                delete path for an unconfirmed purchase is PackagesModal
+                (Packages screen), which carries the same Square caution; who
+                may delete is unchanged (RLS: store_purchases_delete_admin).
+                The copy below is what shows when the flag goes back on: it
+                states only what we can evidence — that no confirmation has
+                reached us — and never asserts a debt. */}
+            {PAYMENT_DUE_NOTICES_ENABLED && (mainCounts?.pendingPayments || []).map(pay => (
               <div key={`main-pay-${pay.id}`} className="flex items-stretch border-b border-gray-100">
                 <a
                   href={pay.checkout_url}
@@ -144,13 +171,16 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                   className="flex-1 text-left px-4 py-3 hover:bg-gray-50 transition"
                 >
                   <div className="flex items-start space-x-3">
-                    <div className="mt-0.5"><CreditCard size={16} className="text-green-600" /></div>
+                    <div className="mt-0.5"><CreditCard size={16} className="text-gray-400" /></div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-gray-900">
-                        Payment due: <span className="font-medium">{pay.product_name_snapshot}</span>
+                        Payment not confirmed: <span className="font-medium">{pay.product_name_snapshot}</span>
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {fmtMoney(pay.amount_cents)} · tap to complete payment
+                        {fmtMoney(pay.amount_cents)} · we haven't received a confirmation for this yet
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Already paid? You're all set — no action needed. If not, tap to finish checkout.
                       </p>
                     </div>
                     {currentPortal !== 'main' && <PortalTag kind="main" />}
@@ -162,7 +192,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                   <button
                     onClick={(e) => { e.stopPropagation(); onDeletePayment(pay.id, pay.product_name_snapshot); }}
                     className="px-3 text-gray-400 hover:text-red-600 hover:bg-red-50 transition flex items-center"
-                    title="Delete this pending payment"
+                    title="Delete this unconfirmed payment — check Square first (#341)"
                   >
                     <Trash2 size={15} />
                   </button>
