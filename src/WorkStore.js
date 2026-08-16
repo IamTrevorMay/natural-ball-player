@@ -733,7 +733,13 @@ function PackagesTab() {
                             <div className="text-xs text-gray-500">{r.user?.email}</div>
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-700">{pkgDateLabel(r)}</td>
-                          <td className="px-4 py-2 text-sm text-gray-700">{r.remaining_qty != null ? `${r.remaining_qty}${total != null ? ` / ${total}` : ''}` : (r.product_kind === 'package' ? 'Monthly' : '—')}</td>
+                          {/* #344: this said 'Monthly' for EVERY recurring row, so a
+                              fortnightly plan read as monthly here while the profile
+                              modal correctly called it "Every two weeks" — two screens
+                              telling different stories about one purchase, which is the
+                              confusion #344 exists to end. Say 'Recurring' and let the
+                              product name carry the real frequency. */}
+                          <td className="px-4 py-2 text-sm text-gray-700">{r.remaining_qty != null ? `${r.remaining_qty}${total != null ? ` / ${total}` : ''}` : (r.product_kind === 'package' ? 'Recurring' : '—')}</td>
                           <td className={`px-4 py-2 text-sm ${tl?.cls || 'text-gray-400'}`}>{tl?.text || '—'}</td>
                           <td className="px-4 py-2 text-sm">
                             <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_COLORS[r.status] || 'bg-gray-100 text-gray-700'}`}>{PKG_STATUS_LABELS[r.status] || r.status}</span>
