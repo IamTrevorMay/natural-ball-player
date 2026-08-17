@@ -6879,6 +6879,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   // one-vs-series choice (null = no prompt open).
   const [laneDeleting, setLaneDeleting] = useState(false);
   const [laneRecurrencePrompt, setLaneRecurrencePrompt] = useState(null);
+  const [deleteRecurrencePrompt, setDeleteRecurrencePrompt] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -7375,13 +7376,65 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     } catch (err) { alert('Error: ' + formatUserError(err)); } finally { setLoading(false); }
   };
 
-  const handleDelete = async () => {
-    if (!window.confirm('Delete this event?')) return;
+  const applyDelete = async (choice) => {
+    setDeleteRecurrencePrompt(false);
+    const label = choice === 'one' ? 'this occurrence' : 'the entire series';
+    if (!window.confirm(`Delete ${label}?`)) return;
     try {
-      const { error } = await supabase.from('facility_events').delete().eq('id', eventMasterId);
-      if (error) throw error;
+      if (choice === 'one') {
+        // Tombstone this date via the exception model (#279): find-or-update an
+        // existing exception row, or insert a new one with is_exception=true.
+        const { data: existing, error: findErr } = await supabase
+          .from('facility_events')
+          .select('id')
+          .eq('recurrence_parent_id', eventMasterId)
+          .eq('original_date', occurrenceDate)
+          .maybeSingle();
+        if (findErr) throw findErr;
+        if (existing) {
+          const { error } = await supabase.from('facility_events').update({ is_exception: true }).eq('id', existing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('facility_events').insert({
+            recurrence_parent_id: eventMasterId,
+            original_date: occurrenceDate,
+            event_date: occurrenceDate,
+            is_exception: true,
+            is_recurring: false,
+            title: event.title,
+            description: event.description,
+            start_time: event.start_time,
+            end_time: event.end_time,
+            location: event.location,
+            color: event.color,
+            lanes: event.lanes || [],
+            athlete_id: event.athlete_id,
+            coach_id: event.coach_id,
+            coach_ids: event.coach_ids || null,
+          });
+          if (error) throw error;
+        }
+      } else {
+        // Delete entire series: exception rows first, then master.
+        await supabase.from('facility_events').delete().eq('recurrence_parent_id', eventMasterId);
+        const { error } = await supabase.from('facility_events').delete().eq('id', eventMasterId);
+        if (error) throw error;
+      }
       onDelete();
-    } catch (err) { alert('Error: ' + formatUserError(err)); }
+    } catch (err) { alert('Error deleting event: ' + formatUserError(err)); }
+  };
+
+  const handleDelete = () => {
+    const recurring = !!(event._is_virtual || event.is_recurring || event.recurrence_parent_id);
+    if (recurring) { setDeleteRecurrencePrompt(true); return; }
+    if (!window.confirm('Delete this event?')) return;
+    (async () => {
+      try {
+        const { error } = await supabase.from('facility_events').delete().eq('id', eventMasterId);
+        if (error) throw error;
+        onDelete();
+      } catch (err) { alert('Error: ' + formatUserError(err)); }
+    })();
   };
 
   const headerColorKey = (editing ? formData.color : event.color) || 'teal';
@@ -7390,8 +7443,8 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className={`${headerBg} p-6 rounded-t-lg`}>
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className={`${headerBg} p-6 rounded-t-lg flex-shrink-0`}>
           <div className="flex items-center justify-between">
             <div className="flex items-start space-x-3">
               <span className={`w-3 h-3 rounded-full ${headerPalette.dot} mt-1.5 flex-shrink-0`} />
@@ -7403,7 +7456,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
           </div>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
           {editing ? (
             <div className="space-y-4">
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Title</label><input type="text" value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
@@ -7902,6 +7955,17 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           allowFuture={false}
           onPick={(choice) => applyLaneDelete(choice, laneRecurrencePrompt)}
           onClose={() => setLaneRecurrencePrompt(null)}
+        />
+      )}
+      {deleteRecurrencePrompt && (
+        <RecurrenceDecisionModal
+          title="Delete a recurring event"
+          message="Delete just this occurrence, or the entire series?"
+          actionLabel="Delete"
+          allowOne={true}
+          allowFuture={false}
+          onPick={applyDelete}
+          onClose={() => setDeleteRecurrencePrompt(false)}
         />
       )}
     </div>
