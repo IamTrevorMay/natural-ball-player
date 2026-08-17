@@ -273,12 +273,17 @@ export async function countSignupsForEvents(supabase, targets) {
   // instead of over-counting other dates of the same series.
   const { data, error } = await supabase
     .from('event_signups')
-    .select('event_id, event_date')
+    .select('event_id, event_date, user_id')
     .in('event_id', ids);
   if (error) return null;
   const everyDate = new Set(list.filter(t => !t.eventDate).map(t => t.eventId));
   const onDate = new Set(list.filter(t => t.eventDate).map(t => `${t.eventId}_${t.eventDate}`));
-  return (data || []).filter(r => everyDate.has(r.event_id) || onDate.has(`${r.event_id}_${r.event_date}`)).length;
+  const matched = (data || []).filter(r => everyDate.has(r.event_id) || onDate.has(`${r.event_id}_${r.event_date}`));
+  // QA: count PEOPLE, not rows. One athlete can hold both an old child-keyed
+  // row and a new master-keyed one for the same date, and the roster the coach
+  // just looked at dedupes by athlete — a warning saying 2 while the screen
+  // says 1 undermines the warning.
+  return new Set(matched.map(r => `${r.user_id}_${r.event_date}`)).size;
 }
 
 // #347 QA: the numbers for the "this wipes the whole series" warning.
