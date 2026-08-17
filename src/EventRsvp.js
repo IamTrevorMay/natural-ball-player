@@ -292,41 +292,123 @@ export function tallyRsvps(players, rowsForOccurrence) {
   return buckets;
 }
 
+const chunk = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
+
+// Map recipient -> the 1:1 direct conversation they already have with the
+// sender, so a nudge lands in the existing thread instead of adding a new one
+// to the athlete's Messages list every time. Same lookup AthleteOutreach.js
+// sendInAppMessages does.
+async function findDirectThreads(senderId, recipientIds) {
+  const map = new Map();
+  try {
+    const { data: myParts, error: mpErr } = await supabase
+      .from('conversation_participants').select('conversation_id').eq('user_id', senderId);
+    if (mpErr) throw mpErr;
+    const myConvIds = [...new Set((myParts || []).map(p => p.conversation_id).filter(Boolean))];
+    const directIds = [];
+    for (const ids of chunk(myConvIds, 150)) {
+      const { data, error } = await supabase.from('conversations').select('id').eq('type', 'direct').in('id', ids);
+      if (error) throw error;
+      directIds.push(...(data || []).map(c => c.id));
+    }
+    const byConv = {};
+    for (const ids of chunk(directIds, 150)) {
+      const { data, error } = await supabase
+        .from('conversation_participants').select('conversation_id, user_id').in('conversation_id', ids);
+      if (error) throw error;
+      (data || []).forEach(p => { (byConv[p.conversation_id] = byConv[p.conversation_id] || []).push(p.user_id); });
+    }
+    const wanted = new Set(recipientIds);
+    Object.entries(byConv).forEach(([convId, uids]) => {
+      const uniq = [...new Set(uids)];
+      if (uniq.length === 2 && uniq.includes(senderId)) {
+        const other = uniq.find(u => u !== senderId);
+        if (other && wanted.has(other) && !map.has(other)) map.set(other, convId);
+      }
+    });
+  } catch (e) {
+    // A failed lookup only costs us thread reuse — fall through and create new
+    // conversations rather than refusing to send.
+    console.error('nudgeNonResponders: existing-conversation lookup failed:', e);
+  }
+  return map;
+}
+
 // The nudge. Reuses the Main Portal's in-app messaging path verbatim — the same
 // three inserts NewMessageModal in Messages.js performs for a 'direct' message
 // (conversations -> conversation_participants -> messages). That is what
 // useNotifications.useMainPortalCounts counts and what NotificationBell shows,
 // so the nudge lands in the bell and in Messages with no new transport.
 //
+// PRIVACY: one two-person thread per athlete, never one shared thread. Most of
+// these athletes are minors — a single thread would show every non-responder
+// the names of all the others and broadcast any reply to the whole list.
+// Same send path as AthleteOutreach.js sendInAppMessages.
+//
+// Returns how many messages actually went out, so the screen can say the true
+// number instead of assuming everything worked.
+//
 // HUMAN-TRIGGERED ONLY. Nothing here is scheduled or automatic; it runs when a
 // coach clicks the button.
 export async function nudgeNonResponders({ senderId, recipientIds, eventLabel }) {
   const recipients = [...new Set((recipientIds || []).filter(Boolean))].filter(id => id !== senderId);
-  if (recipients.length === 0) return { sent: 0, error: null };
+  if (recipients.length === 0) return { sent: 0, failed: 0, error: null };
 
   const content = `RSVP reminder: we still need your answer for ${eventLabel}. `
     + `Open My Team → RSVP and pick Going, Not going or Maybe so your coach has an accurate headcount.`;
 
-  const { data: conversation, error: convError } = await supabase
-    .from('conversations')
-    .insert({ type: 'direct', created_by: senderId, is_pinned: false, replies_disabled: false })
-    .select()
-    .single();
-  if (convError) return { sent: 0, error: convError };
+  const threadByUser = await findDirectThreads(senderId, recipients);
+  let firstError = null;
 
-  const participants = [{ conversation_id: conversation.id, user_id: senderId }]
-    .concat(recipients.map(id => ({ conversation_id: conversation.id, user_id: id })));
-  const { error: partError } = await supabase.from('conversation_participants').insert(participants);
-  if (partError) return { sent: 0, error: partError };
+  // One conversation per athlete who doesn't already have one. The rows are
+  // identical and carry no recipient identity — the participants insert below
+  // is what pairs each thread with its athlete.
+  const needThread = recipients.filter(id => !threadByUser.has(id));
+  for (const batch of chunk(needThread, 100)) {
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert(batch.map(() => ({ type: 'direct', created_by: senderId, is_pinned: false, replies_disabled: false })))
+      .select('id');
+    if (error || !data || data.length !== batch.length) {
+      firstError = firstError || error || 'Could not open a conversation.';
+      continue;
+    }
+    const participants = [];
+    batch.forEach((id, idx) => {
+      threadByUser.set(id, data[idx].id);
+      participants.push({ conversation_id: data[idx].id, user_id: senderId });
+      participants.push({ conversation_id: data[idx].id, user_id: id });
+    });
+    const { error: partError } = await supabase.from('conversation_participants').insert(participants);
+    if (partError) {
+      // QA: the conversations created just above now have nobody in them. Nobody
+      // can open them, and every press of the button used to leave another set
+      // behind. Remove the ones this pass created. Best-effort on purpose: a
+      // failed cleanup is logged, never allowed to hide the real error.
+      const orphanIds = data.map(row => row.id);
+      batch.forEach(id => threadByUser.delete(id));
+      firstError = firstError || partError;
+      const { error: cleanupError } = await supabase.from('conversations').delete().in('id', orphanIds);
+      if (cleanupError) console.error('nudgeNonResponders: could not clean up empty conversations:', cleanupError);
+    }
+  }
 
-  const { error: msgError } = await supabase.from('messages').insert({
-    conversation_id: conversation.id,
-    sender_id: senderId,
-    content,
-  });
-  if (msgError) return { sent: 0, error: msgError };
+  // One message row per athlete, each in that athlete's own thread.
+  let sent = 0;
+  const deliverable = recipients.filter(id => threadByUser.has(id));
+  for (const batch of chunk(deliverable, 100)) {
+    const { error } = await supabase.from('messages').insert(
+      batch.map(id => ({ conversation_id: threadByUser.get(id), sender_id: senderId, content }))
+    );
+    if (error) { firstError = firstError || error; continue; }
+    sent += batch.length;
+  }
 
-  return { sent: recipients.length, error: null };
+  return { sent, failed: recipients.length - sent, error: firstError };
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +561,11 @@ function RosterColumn({ title, tone, people }) {
       {people.length === 0 ? (
         <p className="text-xs text-gray-400 italic">None</p>
       ) : (
-        <ul className="space-y-0.5">
+        // A full roster can be 130+ names, and with no RSVPs recorded they all
+        // land in "No response" — uncapped that is thousands of pixels of one
+        // column. Scroll inside the column; the headcount above opens the
+        // full drill-down.
+        <ul className="space-y-0.5 max-h-40 overflow-y-auto">
           {people.map(p => (
             <li key={p.id} className="text-xs text-gray-700 truncate">{p.full_name || 'Unknown'}</li>
           ))}
@@ -500,17 +586,23 @@ export function RsvpRosterPanel({ buckets, eventLabel, userId, className = '', c
 
   const handleNudge = async () => {
     if (nonResponders.length === 0) return;
-    if (!window.confirm(`Send an in-app RSVP reminder to ${nonResponders.length} player${nonResponders.length === 1 ? '' : 's'} who haven't responded?`)) return;
+    if (!window.confirm(`Send a private in-app RSVP reminder to each of the ${nonResponders.length} player${nonResponders.length === 1 ? '' : 's'} who haven't responded?`)) return;
     setNudging(true);
     setNudgeMsg('');
-    const { sent, error } = await nudgeNonResponders({
+    const { sent, failed, error } = await nudgeNonResponders({
       senderId: userId,
       recipientIds: nonResponders.map(p => p.id),
       eventLabel,
     });
     setNudging(false);
-    if (error) { setNudgeMsg('Could not send: ' + formatUserError(error)); return; }
-    setNudgeMsg(`Reminder sent to ${sent} player${sent === 1 ? '' : 's'}. They'll see it in their bell and in Messages.`);
+    // Each player gets their own private message, and some can fail while
+    // others go through — say the number that actually sent, not the number
+    // we tried.
+    if (sent === 0) { setNudgeMsg('Could not send: ' + formatUserError(error)); return; }
+    setNudgeMsg(
+      `Private reminder sent to ${sent} player${sent === 1 ? '' : 's'}. They'll see it in their bell and in Messages.`
+      + (failed > 0 ? ` ${failed} could not be sent — please try again for those.` : '')
+    );
   };
 
   return (

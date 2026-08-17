@@ -4,6 +4,14 @@ import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
 import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
 
+// #307: a purchase that was actually paid for must never be deleted — that
+// destroys the record that money came in and takes its session-usage history
+// with it (store_session_usage.purchase_id is ON DELETE CASCADE). Paid
+// purchases are refunded in Square, not deleted here. Same list
+// PackagesModal.js:123 uses; duplicated rather than imported so this function
+// carries its own guard wherever it is called from. Keep the two in step.
+const DELETABLE_STATUSES = ['pending', 'canceled', 'failed'];
+
 // #316: shared by App.js and WorkPortal.js — both render this bell and both
 // need to delete a pending payment the same way. Was previously copy-pasted
 // verbatim in both files; extracted here so there's one implementation.
@@ -15,6 +23,21 @@ import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
 // don't simplify it away to a plain `if (error)`, or a coach-gated delete
 // (should that ever come back) goes silent again.
 export async function deletePendingPayment(purchaseId, productName, onSuccess) {
+  // Read the purchase's own status instead of trusting the screen it was
+  // clicked from. Today's only caller passes pending rows, but nothing in the
+  // signature says so, and that stops being true the moment payments go live.
+  const { data: purchase, error: readError } = await supabase
+    .from('store_purchases')
+    .select('status, paid_at')
+    .eq('id', purchaseId)
+    .maybeSingle();
+  if (readError) { alert('Could not check this payment: ' + formatUserError(readError)); return; }
+  if (!purchase) { alert('That payment could not be found. Refresh the page and try again.'); return; }
+  if (purchase.paid_at || !DELETABLE_STATUSES.includes(purchase.status)) {
+    alert('This purchase is no longer waiting for payment, so it cannot be deleted here. Handle it in Square instead.');
+    return;
+  }
+
   // #341: every row that reaches this function is status='pending' with no
   // paid_at (that's the only thing useMainPortalCounts selects), and pending
   // currently means "Square never told us" rather than "unpaid" — no payment
@@ -24,10 +47,18 @@ export async function deletePendingPayment(purchaseId, productName, onSuccess) {
   // Wording deliberately mirrors that screen's so the two tell one story.
   const unpaidWarning = '\n\nThis purchase has no payment confirmed in the portal. Square payment confirmations are not currently syncing, so it may still have been paid. Check Square before continuing.';
   if (!window.confirm(`Delete the pending payment for "${productName}"? This cannot be undone.${unpaidWarning}`)) return;
-  const { data, error } = await supabase.from('store_purchases').delete().eq('id', purchaseId).select('id');
+  // The same guard repeated as filters, so a purchase that gets paid between
+  // the check above and this delete is left alone by the database itself.
+  const { data, error } = await supabase
+    .from('store_purchases')
+    .delete()
+    .eq('id', purchaseId)
+    .is('paid_at', null)
+    .in('status', DELETABLE_STATUSES)
+    .select('id');
   if (error) { alert('Error deleting payment: ' + formatUserError(error)); return; }
   if (!data || data.length === 0) {
-    alert('Nothing was deleted — you may not have permission to remove this payment.');
+    alert('Nothing was deleted — you may not have permission to remove this payment, or it was paid in the meantime.');
     return;
   }
   onSuccess?.();

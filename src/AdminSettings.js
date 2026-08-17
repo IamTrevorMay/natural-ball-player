@@ -4288,9 +4288,15 @@ function DuplicatesTab({ users, refreshUsers, onNavigateToProfile }) {
     if (!window.confirm('Archive this user? Their status will be set to Archived.')) return;
     const profile = users.find(u => u.id === userId)?.player_profiles;
     const profileId = Array.isArray(profile) ? profile[0]?.id : profile?.id;
-    if (profileId) {
-      await supabase.from('player_profiles').update({ status: 'Archived' }).eq('id', profileId);
+    // Archived status lives on the athlete profile. This tab lists duplicates
+    // of every role, so a duplicate coach or staff account has nothing to
+    // archive — say so instead of doing nothing and looking successful.
+    if (!profileId) {
+      alert('This account has no athlete profile, so there is nothing to archive. Use Delete to remove the duplicate account.');
+      return;
     }
+    const { error } = await supabase.from('player_profiles').update({ status: 'Archived' }).eq('id', profileId);
+    if (error) { alert('Archive failed: ' + formatUserError(error)); return; }
     refreshUsers();
   };
 
