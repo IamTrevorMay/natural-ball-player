@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog, LayoutGrid } from 'lucide-react';
-import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
+import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots, upsertFacilityException, deleteFacilityOccurrence, deleteFacilitySeries, deleteFacilityFuture, countFacilitySeriesImpact, countSignupsForEvents, facilitySeriesDeleteWarning, DELETE_CANCELLED } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import LaneMoveDecisionModal from './LaneMoveDecisionModal';
@@ -15,6 +15,35 @@ import { CreateUserModal } from './AdminSettings';
 import { familyKey, familyLabel, sameFamily } from './productFamily';
 // #277: per-occurrence RSVP (Going / Not going / Maybe) + coach roster & nudge.
 import { EventRsvpSection } from './EventRsvp';
+
+// #347 QA: every path that would wipe a whole facility series asks here first,
+// so the warning and its numbers can never differ between the Delete button on
+// the event card and the right-click menu. `master` is optional — pass it when
+// the caller already has the series row, otherwise it is read here so the date
+// count is measured from the series' own start, not from whichever occurrence
+// happens to be open. Returns true only if the user said yes.
+async function confirmWholeFacilitySeriesDelete(masterId, master, lead) {
+  let seriesRow = master;
+  if (!seriesRow) {
+    const { data } = await supabase
+      .from('facility_events').select('recurrence_rule, event_date').eq('id', masterId).maybeSingle();
+    seriesRow = data || null;
+  }
+  const counts = await countFacilitySeriesImpact(supabase, masterId, seriesRow);
+  return window.confirm(facilitySeriesDeleteWarning(counts, lead));
+}
+
+// #347 QA: shown when "Delete this and future events" is picked on the first
+// date of a series, where it quietly means "delete everything".
+const WHOLE_SERIES_FROM_FUTURE_LEAD =
+  'Delete the ENTIRE repeating series?\n\nThere are no dates in this series before this one, so "Delete this and future events" '
+  + 'here removes the whole thing — nothing would be left.';
+
+const WHOLE_SERIES_LEAD = 'Delete the ENTIRE repeating series?';
+
+// #347 QA: asked before Escape or a backdrop click throws away a half-filled
+// edit form. Same wording FacilityEventDetail already uses.
+const DISCARD_EDITS_PROMPT = 'Discard your unsaved changes to this event?';
 
 // Format a time string (e.g. "14:00" or "2:30 PM") to 12-hour AM/PM
 function formatTimeDisplay(time) {
@@ -757,50 +786,14 @@ export default function Schedule({ userId, userRole }) {
     // per-occurrence exception instead. is_exception MUST be false here —
     // true means hidden/deleted (see scheduleUtils.expandRecurringEvents),
     // and a true exception would make the moved event vanish entirely.
+    // #347: the find-or-create and the field list now live in
+    // scheduleUtils.upsertFacilityException, shared with the five other
+    // per-occurrence writes below. The old hand-written list here dropped
+    // is_public/public_price_cents/public_capacity/booking_type, so moving one
+    // week of a public paid rental silently unpublished it.
     const masterId = ev._master_id || ev.recurrence_parent_id;
-    const { data: existingException, error: findError } = await supabase
-      .from('facility_events')
-      .select('id')
-      .eq('recurrence_parent_id', masterId)
-      .eq('original_date', ev.event_date)
-      .maybeSingle();
-    if (findError) {
-      console.error('applyFacilityEventMove: exception lookup failed:', findError);
-      alert('Failed to move event: ' + formatUserError(findError));
-      return;
-    }
-
-    if (existingException) {
-      const { error } = await supabase.from('facility_events').update(updates).eq('id', existingException.id);
-      if (error) { console.error('applyFacilityEventMove: exception update failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
-    } else {
-      const { error } = await supabase.from('facility_events').insert({
-        recurrence_parent_id: masterId,
-        original_date: ev.event_date,
-        event_date: ev.event_date,
-        is_exception: false,
-        is_recurring: false,
-        title: ev.title,
-        description: ev.description,
-        start_time: ev.start_time,
-        end_time: ev.end_time,
-        location: ev.location,
-        color: ev.color,
-        lanes: currentLanes,
-        athlete_id: ev.athlete_id,
-        // #310 merge: this insert predates athlete_ids and was missing it —
-        // without this, moving a lane (or the whole event) on one occurrence
-        // of a recurring event would create that occurrence's exception row
-        // with athlete_ids defaulted back to empty, silently dropping its
-        // players. Pass through unchanged, same as every other field here.
-        athlete_ids: ev.athlete_ids || [],
-        coach_id: ev.coach_id,
-        coach_ids: ev.coach_ids || null,
-        team_ids: ev.team_ids || [],
-        ...updates,
-      });
-      if (error) { console.error('applyFacilityEventMove: exception insert failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
-    }
+    const error = await upsertFacilityException(supabase, { ...ev, lanes: currentLanes }, masterId, ev.event_date, updates);
+    if (error) { console.error('applyFacilityEventMove: exception write failed:', error); alert('Failed to move event: ' + formatUserError(error)); return; }
     fetchFacilityEvents();
   };
 
@@ -1291,24 +1284,15 @@ export default function Schedule({ userId, userRole }) {
   // Delete one occurrence (virtual): insert exception
   const deleteVirtualOccurrence = async (event, source) => {
     if (source === 'facility') {
-      const { error } = await supabase.from('facility_events').insert({
-        recurrence_parent_id: event._master_id || event.recurrence_parent_id,
-        original_date: event.event_date,
-        event_date: event.event_date,
-        is_exception: true,
-        is_recurring: false,
-        title: event.title,
-        description: event.description,
-        start_time: event.start_time,
-        end_time: event.end_time,
-        location: event.location,
-        color: event.color,
-        lanes: event.lanes || [],
-        athlete_id: event.athlete_id,
-        coach_id: event.coach_id,
-        coach_ids: event.coach_ids || null,
-      });
-      return error;
+      // #347: was a blind INSERT with a hand-written field list. It could
+      // leave a second child row for a date that already had one, and it
+      // dropped every column it forgot. Shared with FacilityEventDetail's
+      // Delete button so the two paths cannot drift again.
+      return deleteFacilityOccurrence(
+        supabase, event,
+        event._master_id || event.recurrence_parent_id,
+        event.original_date || event.event_date,
+      );
     }
     if (source === 'staff') {
       const { error } = await supabase.from('staff_schedule_events').insert({
@@ -1362,6 +1346,18 @@ export default function Schedule({ userId, userRole }) {
   // Delete entire series ('all'): delete master and children
   const deleteSeries = async (event, source) => {
     const masterId = event._master_id || event.recurrence_parent_id || event.id;
+    // #347: shared with FacilityEventDetail's Delete button.
+    // #347 QA: and so is the warning. This call site used to delete the whole
+    // series bare, so the same "Delete all events in series" choice destroyed
+    // every date and every athlete sign-up with no confirm at all when it was
+    // made from the right-click menu in Month/Week view, while the identical
+    // choice in Lanes view warned first. The guard belongs to the operation,
+    // not to one menu. Backing out returns DELETE_CANCELLED, which handleDelete
+    // already treats as neither an error nor a success.
+    if (source === 'facility') {
+      if (!(await confirmWholeFacilitySeriesDelete(masterId, null, WHOLE_SERIES_LEAD))) return DELETE_CANCELLED;
+      return deleteFacilitySeries(supabase, masterId);
+    }
     if (source === 'team') {
       await supabase.from('schedule_events').delete().eq('recurrence_parent_id', masterId);
       const { error } = await supabase.from('schedule_events').delete().eq('id', masterId);
@@ -1385,7 +1381,19 @@ export default function Schedule({ userId, userRole }) {
       }
       return error;
     }
-    if (source === 'facility' || source === 'staff') {
+    // #347: shared with FacilityEventDetail's Delete button. The cutoff is the
+    // SERIES date, which for a moved occurrence is original_date rather than
+    // the date the child row now sits on.
+    // #347 QA: on the series' own first date this choice really means "delete
+    // everything", so deleteFacilityFuture asks before it escalates and returns
+    // DELETE_CANCELLED (handled in handleDelete) if the answer is no.
+    if (source === 'facility') {
+      return deleteFacilityFuture(
+        supabase, masterId, event.original_date || cutoff,
+        (master) => confirmWholeFacilitySeriesDelete(masterId, master, WHOLE_SERIES_FROM_FUTURE_LEAD),
+      );
+    }
+    if (source === 'staff') {
       const { data: master } = await supabase.from(tableForSource(source)).select('recurrence_rule, event_date').eq('id', masterId).single();
       if (!master) return null;
       const cutoffDate = new Date(cutoff + 'T00:00:00');
@@ -1429,6 +1437,9 @@ export default function Schedule({ userId, userRole }) {
         if (choice === 'one') err = await deleteVirtualOccurrence(event, source);
         else if (choice === 'future') err = await deleteFuture(event, source);
         else err = await deleteSeries(event, source);
+        // The user was warned that this would take the whole series and said
+        // no. Nothing was deleted and nothing failed.
+        if (err === DELETE_CANCELLED) return;
         if (err) { alert('Failed to delete: ' + formatUserError(err)); return; }
         refetchForSource(source);
       },
@@ -1555,19 +1566,62 @@ export default function Schedule({ userId, userRole }) {
     setCtxMenu({ x: e.clientX, y: e.clientY, items: buildContextMenuItems(event, source) });
   };
 
+  // #347: the source is a property of the ROW, not of the view. Facility view
+  // shows facility_events in the main panel and training_slots in the coach
+  // drawer, and selectedCoach stays set after the drawer closes — so keying
+  // off `selectedCoach` sent facility deletes at training_slots with facility
+  // UUIDs: zero rows matched, no error, and the UI reported success.
+  // A training_slots row is the one with its own slot_date column.
+  const sourceForSelectedEvent = (ev) => {
+    if (view === 'team' || view === 'player') return 'team';
+    if (ev && (ev._is_slot || ev.slot_date)) return 'slot';
+    return 'facility';
+  };
+
+  // #347 QA: a facility row that belongs to a repeating series must never be
+  // row-deleted. A modified-occurrence child row (recurrence_parent_id set) is
+  // only an OVERRIDE of one date, so deleting it does not delete that date — the
+  // master's original version of it comes straight back, and
+  // event_signups_event_id_fkey (ON DELETE CASCADE) destroys that date's athlete
+  // sign-ups on the way out. Those rows go through the same tombstone path a
+  // single-occurrence delete uses, which turns the override into "this date is
+  // gone". Standalone facility rows are still a plain delete.
+  const facilitySeriesDate = (ev) => {
+    if (ev._is_virtual) return { masterId: ev._master_id, date: ev.original_date || ev.event_date };
+    if (ev.recurrence_parent_id) return { masterId: ev.recurrence_parent_id, date: ev.original_date || ev.event_date };
+    return null;
+  };
+
   const bulkDelete = async () => {
     if (selectedEvents.length === 0) return;
-    // Determine source before confirming so we can warn about recurring series.
-    let source = 'facility';
-    if (view === 'team' || view === 'player') source = 'team';
-    if (view === 'facility' && selectedCoach) source = 'slot';
-    const recurringMasters = source === 'slot'
-      ? selectedEvents.filter(ev => !ev._is_virtual && ev.repeat_weekly)
-      : [];
+    // Determine sources before confirming so we can warn about recurring series.
+    const sources = [...new Set(selectedEvents.map(sourceForSelectedEvent))];
+    const recurringMasters = selectedEvents.filter(ev => sourceForSelectedEvent(ev) === 'slot' && !ev._is_virtual && ev.repeat_weekly);
     let confirmMsg = `Delete ${selectedEvents.length} selected event(s)?`;
     if (recurringMasters.length > 0) {
       const seriesWord = recurringMasters.length === 1 ? '1 selection is a repeating series' : `${recurringMasters.length} selections are repeating series`;
       confirmMsg += `\n\nWARNING: ${seriesWord} — all future occurrences will be permanently deleted.`;
+    }
+    // #347 QA: say out loud when athletes are signed up for what is being
+    // removed. Same counting helper the whole-series warning uses, and the same
+    // honesty rule: a number we could not establish is never printed as one.
+    // A date of a series is counted on that date only; a standalone row is
+    // counted across every date on it, because deleting the row takes them all.
+    const signupTargets = selectedEvents
+      .filter(ev => sourceForSelectedEvent(ev) === 'facility')
+      .map(ev => {
+        const series = facilitySeriesDate(ev);
+        return series
+          ? { eventId: ev._is_virtual ? series.masterId : ev.id, eventDate: ev.event_date }
+          : { eventId: ev.id, eventDate: null };
+      });
+    if (signupTargets.length > 0) {
+      const signups = await countSignupsForEvents(supabase, signupTargets);
+      if (signups == null) {
+        confirmMsg += '\n\nAny athlete sign-ups on the selected dates will be cancelled.';
+      } else if (signups > 0) {
+        confirmMsg += `\n\n${signups} athlete sign-up${signups === 1 ? '' : 's'} on the selected dates will be cancelled.`;
+      }
     }
     if (!window.confirm(confirmMsg)) return;
     trackAction('bulk_delete_events', { count: selectedEvents.length });
@@ -1575,9 +1629,19 @@ export default function Schedule({ userId, userRole }) {
     let deleted = 0;
     for (const ev of selectedEvents) {
       const id = ev._master_id || ev.id;
+      const source = sourceForSelectedEvent(ev);
+      const facilitySeries = source === 'facility' ? facilitySeriesDate(ev) : null;
       try {
         if (ev._is_virtual && (source === 'facility' || source === 'slot')) {
           const error = await deleteVirtualOccurrence(ev, source);
+          if (error) throw error;
+          deleted++;
+        } else if (facilitySeries) {
+          // A real child row for one date of a series: tombstone the date
+          // (upsert turns the existing override row into "this date is gone")
+          // instead of deleting the override and letting the master's version
+          // of that date reappear.
+          const error = await deleteFacilityOccurrence(supabase, ev, facilitySeries.masterId, facilitySeries.date);
           if (error) throw error;
           deleted++;
         } else {
@@ -1594,7 +1658,7 @@ export default function Schedule({ userId, userRole }) {
       alert(`${deleted} deleted, ${failed} failed. Refresh to see current state.`);
     }
     exitSelectMode();
-    refetchForSource(source);
+    sources.forEach(refetchForSource);
   };
 
   // ============================================
@@ -1604,7 +1668,7 @@ export default function Schedule({ userId, userRole }) {
   const handleProgramDrop = async (payload, dateStr) => {
     trackAction('drop_template_on_calendar', { kind: payload?.kind });
     if (!payload || !dateStr) return;
-    if (!canManageCalendar() && view !== 'my-schedule') { alert('You do not have permission to schedule events here.'); return; }
+    if (!canManageCalendar() && view !== 'my-schedule') { alert('You are not able to schedule events on this calendar. Ask an admin or a coach to add it for you.'); return; }
 
     // Determine targets based on current view
     let targets = {};
@@ -2604,10 +2668,15 @@ export default function Schedule({ userId, userRole }) {
           #309 actually asked for without that cross-file coupling. */}
       {shiftDetailEvent && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShiftDetailEvent(null)}>
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="text-lg font-semibold text-gray-900">{shiftDetailEvent.title}</h3>
-              <button onClick={() => setShiftDetailEvent(null)} className="text-gray-400 hover:text-gray-600">
+          {/* #347 QA sweep: capped and scrollable, so long text makes the card
+              scroll rather than pushing its own close button off the screen. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b gap-3">
+              {/* #347 QA sweep: free-text title in a header. Clamped to two lines
+                  (full text on hover) so a long one can neither grow the header
+                  nor push the X out of the card. */}
+              <h3 className="text-lg font-semibold text-gray-900 min-w-0 line-clamp-2 break-words" title={shiftDetailEvent.title || undefined}>{shiftDetailEvent.title}</h3>
+              <button onClick={() => setShiftDetailEvent(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
                 <X size={20} />
               </button>
             </div>
@@ -2626,9 +2695,11 @@ export default function Schedule({ userId, userRole }) {
                 </span>
               </div>
               {shiftDetailEvent.location && (
-                <div className="flex items-center space-x-2 text-sm text-gray-700">
-                  <MapPin size={16} className="text-gray-400" />
-                  <span>{shiftDetailEvent.location}</span>
+                /* #347 QA sweep: a long location used to paint straight out of
+                   the card. min-w-0 + break-words keeps it inside. */
+                <div className="flex items-center space-x-2 text-sm text-gray-700 min-w-0">
+                  <MapPin size={16} className="text-gray-400 flex-shrink-0" />
+                  <span className="min-w-0 break-words">{shiftDetailEvent.location}</span>
                 </div>
               )}
               {shiftDetailEvent.recurrence_parent_id && (
@@ -2638,7 +2709,7 @@ export default function Schedule({ userId, userRole }) {
                 </div>
               )}
               {shiftDetailEvent.description && (
-                <div className="text-sm text-gray-700 whitespace-pre-wrap">{shiftDetailEvent.description}</div>
+                <div className="text-sm text-gray-700 whitespace-pre-wrap break-words">{shiftDetailEvent.description}</div>
               )}
             </div>
           </div>
@@ -5796,7 +5867,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
         throw new Error('Could not verify user permissions.');
       }
       if (!['admin', 'coach'].includes(userData.role) && !isOwnGame) {
-        throw new Error('You do not have permission to delete events.');
+        throw new Error('You are not able to delete events. Ask an admin or a coach to delete this one for you.');
       }
 
       const { data: deleteData, error: deleteError } = await supabase
@@ -5806,7 +5877,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
         .select();
       if (deleteError) throw deleteError;
       if (!deleteData || deleteData.length === 0) {
-        throw new Error('Event could not be deleted. It may have already been removed or you lack permission.');
+        throw new Error('This event may already be gone. Refresh the page to check — if it is still there, ask an admin or a coach to delete it.');
       }
 
       alert('Event deleted successfully!');
@@ -5904,6 +5975,43 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     }
   };
 
+  // #347 QA: this card's only way out was the X in its header. The header is
+  // flex-shrink-0, so a long title grew it past the card's max-h and the card's
+  // overflow-hidden then clipped everything below it — including the Close
+  // button — leaving a reload as the only escape. The title is clamped below so
+  // the header cannot grow, and Escape / a backdrop click now close the card as
+  // well, so a tall header can never trap the user again. Same shape as
+  // FacilityEventDetail: unsaved edits are confirmed before they are discarded,
+  // and a click that STARTED inside the card does not dismiss it (so dragging a
+  // text selection out of the card is safe).
+  // Escape and a backdrop click always step back ONE layer, never straight out:
+  // the delete confirmation and the "why are you cancelling?" picker both sit on
+  // top of this card, so dismissing them must not throw the card away too.
+  const requestClose = () => {
+    if (confirmDelete) { setConfirmDelete(false); return; }
+    if (showCancelReason) { setShowCancelReason(false); return; }
+    if (editing && !window.confirm(DISCARD_EDITS_PROMPT)) return;
+    onClose();
+  };
+
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      if (confirmDelete) { setConfirmDelete(false); return; }
+      if (showCancelReason) { setShowCancelReason(false); return; }
+      if (editing && !window.confirm(DISCARD_EDITS_PROMPT)) return;
+      onClose();
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [confirmDelete, showCancelReason, editing, onClose]);
+
+  const backdropMouseDown = useRef(false);
+  const backdropProps = {
+    onMouseDown: (e) => { backdropMouseDown.current = e.target === e.currentTarget; },
+    onClick: (e) => { if (e.target === e.currentTarget && backdropMouseDown.current) requestClose(); },
+  };
+
   // Training-slot / private session (#233): players see a Cancel button with a
   // 12h-before cutoff; staff get a read-only summary (slots are managed from the
   // Slots tab, not from schedule_events, so the normal delete path doesn't apply).
@@ -5970,23 +6078,34 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     };
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-          <div className="bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200 p-6 rounded-t-lg">
-            <div className="flex items-center justify-between">
-              <div>
+      // #347: this card listed every booked player with no height cap, so on a
+      // full session the Close button sat below the viewport of a `fixed`
+      // overlay the page cannot scroll. Same chrome as the main modal below.
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" {...backdropProps}>
+        {/* #347 QA: overflow-hidden keeps the card's own box honest, and the
+            title is clamped to two lines (full text on hover). This heading is
+            a coach's free-text note, so a long one used to grow the header past
+            the card and push the buttons off the bottom of the screen. */}
+        <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+          <div className="bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200 p-6 rounded-t-lg flex-shrink-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1">Training Session</div>
-                <h3 className="text-xl font-bold text-gray-900">{event.title || 'Training Session'}</h3>
+                <h3 className="text-xl font-bold text-gray-900 line-clamp-2 break-words" title={event.title || 'Training Session'}>{event.title || 'Training Session'}</h3>
               </div>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
             </div>
           </div>
-          <div className="p-6 space-y-4">
+          <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
             <div className="text-sm text-gray-700">
               <div className="font-medium">{startAt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
               <div>{fmtTime(event.start_time)}{event.duration_minutes ? ` · ${event.duration_minutes} min` : ''}</div>
             </div>
-            {event.notes && <div className="text-sm text-gray-500">{event.notes}</div>}
+            {/* #347 QA: the coach's note is free text. Without break-words a
+                single long unbroken string (a pasted URL, a run-on word) made
+                this modal's body scroll sideways for thousands of pixels, so
+                the note could not be read at all. */}
+            {event.notes && <div className="text-sm text-gray-500 break-words">{event.notes}</div>}
 
             {isPlayer ? (
               withinCancelWindow ? (
@@ -6059,19 +6178,30 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" {...backdropProps}>
+      {/* #347 QA: overflow-hidden, same as the training-session and facility
+          cards. Without it this card is a flex item whose automatic minimum
+          width is its content, so one long unbroken word in a title, location
+          or note stretched the card — and the page — thousands of pixels wide. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
         <div className={`bg-gradient-to-br ${getEventColor(event)} border-2 p-6 rounded-t-lg flex-shrink-0`}>
-          <div className="flex items-center justify-between">
-            <div>
+          {/* #347 QA: min-w-0 lets the flex child shrink, break-words lets a long
+              unbroken title wrap instead of pushing the modal wider than the
+              screen, and line-clamp-2 caps how tall that wrapping can make this
+              header — the header does not shrink, so an unclamped title grew it
+              past the card's max-h and the card's overflow-hidden then hid the
+              date, the notes, the RSVP section and the Close/Edit/Delete row.
+              Full title on hover, and Escape/backdrop close the card either way. */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <div className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1">
                 {event.event_type}
               </div>
-              <h3 className="text-xl font-bold text-gray-900">
+              <h3 className="text-xl font-bold text-gray-900 line-clamp-2 break-words" title={event.title || event.opponent || undefined}>
                 {event.title || event.opponent}
               </h3>
             </div>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <button onClick={requestClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
               <X size={24} />
             </button>
           </div>
@@ -6256,9 +6386,9 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
               </div>
 
               {event.location && (
-                <div className="flex items-center space-x-3 text-sm">
-                  <span className="text-gray-400 font-medium">Location:</span>
-                  <span className="text-gray-900">{event.location}</span>
+                <div className="flex items-center space-x-3 text-sm min-w-0">
+                  <span className="text-gray-400 font-medium flex-shrink-0">Location:</span>
+                  <span className="text-gray-900 min-w-0 break-words">{event.location}</span>
                 </div>
               )}
 
@@ -6301,7 +6431,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                   {mealData.description && (
                     <div className="mt-3 pt-3 border-t border-orange-300">
                       <span className="text-orange-700 font-medium text-sm">Description:</span>
-                      <p className="text-gray-900 text-sm mt-1">{mealData.description}</p>
+                      <p className="text-gray-900 text-sm mt-1 break-words">{mealData.description}</p>
                     </div>
                   )}
                 </div>
@@ -6363,7 +6493,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                     {general && (
                       <div className="p-3 bg-gray-50 rounded-lg">
                         <div className="text-xs font-semibold text-gray-600 mb-1">Notes</div>
-                        <div className="text-sm text-gray-900 whitespace-pre-wrap">{general}</div>
+                        <div className="text-sm text-gray-900 whitespace-pre-wrap break-words">{general}</div>
                       </div>
                     )}
                     {exercises.length > 0 && (
@@ -6398,7 +6528,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                     {!general && exercises.length === 0 && (
                       <div className="p-3 bg-gray-50 rounded-lg">
                         <div className="text-xs font-semibold text-gray-600 mb-1">Notes</div>
-                        <div className="text-sm text-gray-900 whitespace-pre-wrap">{event.notes}</div>
+                        <div className="text-sm text-gray-900 whitespace-pre-wrap break-words">{event.notes}</div>
                       </div>
                     )}
                   </div>
@@ -6456,12 +6586,21 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
         {/* Custom Delete Confirmation Modal */}
         {confirmDelete && (
           <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 rounded-lg">
-            <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
+            {/* #347 QA: this confirmation has no scroll of its own, so a very
+                long event title used to push its Cancel/Delete buttons off the
+                bottom of the screen. Capped and scrollable, with the title
+                clamped; Escape dismisses this layer too. */}
+            <div className="bg-white rounded-lg p-6 max-w-sm mx-4 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Confirm Delete</h3>
               <p className="text-gray-700 mb-6">
                 Are you sure you want to delete this {event.event_type}?
                 <br />
-                <span className="font-semibold mt-2 block">"{event.title || event.opponent}"</span>
+                {/* No `block` class here: Tailwind's .block beats .line-clamp-3's
+                    display:-webkit-box (same specificity, later in the sheet),
+                    which silently disabled the clamp and let a long title push
+                    Cancel/Delete off the screen. The clamp supplies its own
+                    block-level box, so mt-2 still applies. */}
+                <span className="font-semibold mt-2 break-words line-clamp-3" title={event.title || event.opponent || undefined}>"{event.title || event.opponent}"</span>
               </p>
               <p className="text-sm text-red-600 mb-4">This action cannot be undone.</p>
               <div className="flex space-x-3">
@@ -6839,6 +6978,14 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const eventMasterId = event._master_id || event.id;
   const occurrenceDate = event.event_date;
 
+  // #347: the SERIES row this popup is showing an occurrence of, and the
+  // series date that occurrence stands for. eventMasterId above resolves to
+  // the child's own id for an already-modified occurrence — right for editing
+  // that one row, wrong for anything series-wide — so Save/Delete use these.
+  const seriesMasterId = event._master_id || event.recurrence_parent_id || event.id;
+  const seriesDate = event.original_date || event.event_date;
+  const isRecurringOccurrence = !!(event._is_virtual || event.is_recurring || event.recurrence_parent_id);
+
   // #287: team assignment. Teams are readable by every authenticated role
   // (same query the Team calendar's fetchTeams uses), so names resolve for
   // players viewing the modal too.
@@ -6879,20 +7026,39 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   // one-vs-series choice (null = no prompt open).
   const [laneDeleting, setLaneDeleting] = useState(false);
   const [laneRecurrencePrompt, setLaneRecurrencePrompt] = useState(null);
-  const [deleteRecurrencePrompt, setDeleteRecurrencePrompt] = useState(false);
+
+  // #347: one-vs-series prompts for the popup's own Save and Delete buttons.
+  // Every other write in this component already had one; these two did not,
+  // and quietly rewrote/destroyed the whole series instead.
+  const [savePrompt, setSavePrompt] = useState(false);
+  const [deletePrompt, setDeletePrompt] = useState(false);
+  // #347: the assigned-players roster overlay (Cordell's request).
+  const [showPlayerList, setShowPlayerList] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const [{ data: teamData, error: teamError }, { data: athleteData, error: athleteError }] = await Promise.all([
-        supabase.from('teams').select('id, name').order('name'),
-        supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name'),
-      ]);
+      const { data: teamData, error: teamError } = await supabase.from('teams').select('id, name').order('name');
       if (teamError) console.error('FacilityEventDetail: teams query failed:', teamError);
-      if (athleteError) console.error('FacilityEventDetail: athletes query failed:', athleteError);
       setTeams(teamData || []);
+      // #347: the athlete directory is ~950 rows and is only ever used by the
+      // staff-only assign/edit pickers and the assigned-players list. A player
+      // opening any facility event used to download the whole thing.
+      if (!isStaff) return;
+      const { data: athleteData, error: athleteError } = await supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name');
+      if (athleteError) console.error('FacilityEventDetail: athletes query failed:', athleteError);
       setAthletes(athleteData || []);
     })();
-  }, []);
+  }, [isStaff]);
+
+  // #347: full_name ONLY. Do not join player_profiles or select email / phone /
+  // date_of_birth / parent fields here — that exposure must not be widened.
+  const assignedPlayerNames = useMemo(
+    () => (event.athlete_ids || [])
+      .map(id => athletes.find(a => a.id === id)?.full_name)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b)),
+    [event.athlete_ids, athletes],
+  );
 
   const applyTeamAssignment = async (choice) => {
     setTeamRecurrencePrompt(false);
@@ -6903,44 +7069,12 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
         // exception row, same find-or-create the #285 lane-move uses. is_exception
         // MUST be false — true means hidden/cancelled (scheduleUtils line 91), and
         // would make this occurrence vanish instead of getting a team.
-        const { data: existingException, error: findError } = await supabase
-          .from('facility_events')
-          .select('id')
-          .eq('recurrence_parent_id', eventMasterId)
-          .eq('original_date', occurrenceDate)
-          .maybeSingle();
-        if (findError) throw findError;
-        if (existingException) {
-          const { error } = await supabase.from('facility_events').update({ team_ids: teamDraft }).eq('id', existingException.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('facility_events').insert({
-            recurrence_parent_id: eventMasterId,
-            original_date: occurrenceDate,
-            event_date: occurrenceDate,
-            is_exception: false,
-            is_recurring: false,
-            title: event.title,
-            description: event.description,
-            start_time: event.start_time,
-            end_time: event.end_time,
-            location: event.location,
-            color: event.color,
-            lanes: event.lanes || [],
-            athlete_id: event.athlete_id,
-            // #310 merge: this insert predates athlete_ids and was missing
-            // it — without this, reassigning teams on one occurrence of a
-            // recurring event would create that occurrence's exception row
-            // with athlete_ids defaulted back to empty, silently dropping
-            // its players. Pass through unchanged, same as every other
-            // field here.
-            athlete_ids: event.athlete_ids || [],
-            coach_id: event.coach_id,
-            coach_ids: event.coach_ids || null,
-            team_ids: teamDraft,
-          });
-          if (error) throw error;
-        }
+        // #347: find-or-create and the field list are now shared
+        // (scheduleUtils.upsertFacilityException); the list this used to spell
+        // out dropped is_public / public_price_cents / public_capacity /
+        // booking_type / is_non_team_activity / created_by every time.
+        const error = await upsertFacilityException(supabase, event, eventMasterId, occurrenceDate, { team_ids: teamDraft });
+        if (error) throw error;
       } else {
         // 'all' — and the plain non-recurring case. Children (per-occurrence
         // exception rows) are updated too so an already-modified occurrence
@@ -6972,43 +7106,9 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     const patch = { coach_ids: coachDraft.length > 0 ? coachDraft : null, coach_id: coachDraft[0] || null };
     try {
       if (choice === 'one') {
-        const { data: existingException, error: findError } = await supabase
-          .from('facility_events')
-          .select('id')
-          .eq('recurrence_parent_id', eventMasterId)
-          .eq('original_date', occurrenceDate)
-          .maybeSingle();
-        if (findError) throw findError;
-        if (existingException) {
-          const { error } = await supabase.from('facility_events').update(patch).eq('id', existingException.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('facility_events').insert({
-            recurrence_parent_id: eventMasterId,
-            original_date: occurrenceDate,
-            event_date: occurrenceDate,
-            is_exception: false,
-            is_recurring: false,
-            title: event.title,
-            description: event.description,
-            start_time: event.start_time,
-            end_time: event.end_time,
-            location: event.location,
-            color: event.color,
-            lanes: event.lanes || [],
-            athlete_id: event.athlete_id,
-            // #310 merge: this insert predates athlete_ids and was missing
-            // it — without this, reassigning coach(es) on one occurrence of
-            // a recurring event would create that occurrence's exception
-            // row with athlete_ids defaulted back to empty, silently
-            // dropping its players. Pass through unchanged, same as every
-            // other field here.
-            athlete_ids: event.athlete_ids || [],
-            team_ids: event.team_ids || [],
-            ...patch,
-          });
-          if (error) throw error;
-        }
+        // #347: shared find-or-create + full-row copy — see applyTeamAssignment.
+        const error = await upsertFacilityException(supabase, event, eventMasterId, occurrenceDate, patch);
+        if (error) throw error;
       } else {
         const { error } = await supabase.from('facility_events').update(patch).eq('id', eventMasterId);
         if (error) throw error;
@@ -7034,44 +7134,9 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     const patch = { athlete_id: athleteDraft || null };
     try {
       if (choice === 'one') {
-        const { data: existingException, error: findError } = await supabase
-          .from('facility_events')
-          .select('id')
-          .eq('recurrence_parent_id', eventMasterId)
-          .eq('original_date', occurrenceDate)
-          .maybeSingle();
-        if (findError) throw findError;
-        if (existingException) {
-          const { error } = await supabase.from('facility_events').update(patch).eq('id', existingException.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('facility_events').insert({
-            recurrence_parent_id: eventMasterId,
-            original_date: occurrenceDate,
-            event_date: occurrenceDate,
-            is_exception: false,
-            is_recurring: false,
-            title: event.title,
-            description: event.description,
-            start_time: event.start_time,
-            end_time: event.end_time,
-            location: event.location,
-            color: event.color,
-            lanes: event.lanes || [],
-            // #310 merge: this insert predates athlete_ids and was missing
-            // it — without this, reassigning the single athlete on one
-            // occurrence of a recurring event would create that occurrence's
-            // exception row with athlete_ids defaulted back to empty,
-            // silently dropping its players. Pass through unchanged, same
-            // as every other field here.
-            athlete_ids: event.athlete_ids || [],
-            coach_id: event.coach_id,
-            coach_ids: event.coach_ids || null,
-            team_ids: event.team_ids || [],
-            ...patch,
-          });
-          if (error) throw error;
-        }
+        // #347: shared find-or-create + full-row copy — see applyTeamAssignment.
+        const error = await upsertFacilityException(supabase, event, eventMasterId, occurrenceDate, patch);
+        if (error) throw error;
       } else {
         const { error } = await supabase.from('facility_events').update(patch).eq('id', eventMasterId);
         if (error) throw error;
@@ -7101,37 +7166,9 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     const patch = { athlete_ids: playersDraft, athlete_id: playersDraft[0] || null };
     try {
       if (choice === 'one') {
-        const { data: existingException, error: findError } = await supabase
-          .from('facility_events')
-          .select('id')
-          .eq('recurrence_parent_id', eventMasterId)
-          .eq('original_date', occurrenceDate)
-          .maybeSingle();
-        if (findError) throw findError;
-        if (existingException) {
-          const { error } = await supabase.from('facility_events').update(patch).eq('id', existingException.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('facility_events').insert({
-            recurrence_parent_id: eventMasterId,
-            original_date: occurrenceDate,
-            event_date: occurrenceDate,
-            is_exception: false,
-            is_recurring: false,
-            title: event.title,
-            description: event.description,
-            start_time: event.start_time,
-            end_time: event.end_time,
-            location: event.location,
-            color: event.color,
-            lanes: event.lanes || [],
-            coach_id: event.coach_id,
-            coach_ids: event.coach_ids || null,
-            team_ids: event.team_ids || [],
-            ...patch,
-          });
-          if (error) throw error;
-        }
+        // #347: shared find-or-create + full-row copy — see applyTeamAssignment.
+        const error = await upsertFacilityException(supabase, event, eventMasterId, occurrenceDate, patch);
+        if (error) throw error;
       } else {
         const { error } = await supabase.from('facility_events').update(patch).eq('id', eventMasterId);
         if (error) throw error;
@@ -7170,6 +7207,11 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     setLaneDeleting(true);
     try {
       if (choice === 'one') {
+        // #347: shared find-or-create + full-row copy — see applyTeamAssignment.
+        // Unlike the other five callers the patch depends on the row being
+        // written: an existing child keeps its OWN lanes minus this one (it may
+        // have been moved to different lanes by #289), a new child starts from
+        // the master's.
         const { data: existingException, error: findError } = await supabase
           .from('facility_events')
           .select('id, lanes')
@@ -7177,37 +7219,9 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           .eq('original_date', occurrenceDate)
           .maybeSingle();
         if (findError) throw findError;
-        if (existingException) {
-          const { error } = await supabase.from('facility_events').update({ lanes: (existingException.lanes || []).filter(l => l !== lane) }).eq('id', existingException.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('facility_events').insert({
-            recurrence_parent_id: eventMasterId,
-            original_date: occurrenceDate,
-            event_date: occurrenceDate,
-            is_exception: false,
-            is_recurring: false,
-            title: event.title,
-            description: event.description,
-            start_time: event.start_time,
-            end_time: event.end_time,
-            location: event.location,
-            color: event.color,
-            lanes: (event.lanes || []).filter(l => l !== lane),
-            athlete_id: event.athlete_id,
-            // #310 merge: this insert predates athlete_ids and was missing
-            // it — without this, deleting a lane from one occurrence of a
-            // recurring event would create that occurrence's exception row
-            // with athlete_ids defaulted back to empty, silently dropping
-            // its players. Pass through unchanged, same as every other
-            // field here.
-            athlete_ids: event.athlete_ids || [],
-            coach_id: event.coach_id,
-            coach_ids: event.coach_ids || null,
-            team_ids: event.team_ids || [],
-          });
-          if (error) throw error;
-        }
+        const baseLanes = existingException ? (existingException.lanes || []) : (event.lanes || []);
+        const error = await upsertFacilityException(supabase, event, eventMasterId, occurrenceDate, { lanes: baseLanes.filter(l => l !== lane) });
+        if (error) throw error;
       } else {
         // 'all' — and the plain non-recurring case. Unlike team/coach/athlete
         // above, which blindly overwrite every child with the same new
@@ -7356,11 +7370,16 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     }
   };
 
-  const handleSave = async () => {
-    if (formData.is_public && !(parseFloat(formData.public_price) > 0)) return alert('Enter a price for public booking');
+  // #347: this update used to run `.eq('id', eventMasterId)` unconditionally.
+  // On a recurring event eventMasterId is the SERIES row, so changing the time
+  // on one Tuesday silently moved every Tuesday, with no warning. It now goes
+  // through the same one-vs-series prompt every other write in this component
+  // already had.
+  const applySave = async (choice) => {
+    setSavePrompt(false);
     setLoading(true);
     try {
-      const { error } = await supabase.from('facility_events').update({
+      const patch = {
         title: formData.title, description: formData.description || null,
         event_date: formData.event_date || null,
         start_time: formData.start_time || null, end_time: formData.end_time || null,
@@ -7370,63 +7389,64 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
         booking_type: formData.is_public ? formData.booking_type : null,
         public_price_cents: formData.is_public ? Math.round(parseFloat(formData.public_price) * 100) : null,
         public_capacity: formData.is_public ? (parseInt(formData.public_capacity) || 1) : 1,
-      }).eq('id', eventMasterId);
-      if (error) throw error;
+      };
+      if (choice === 'one') {
+        const error = await upsertFacilityException(supabase, event, seriesMasterId, seriesDate, patch);
+        if (error) throw error;
+      } else {
+        // #347: the form was seeded with THIS occurrence's date. Writing it
+        // back to the master unchanged would drag the series' start date onto
+        // the occurrence the user happened to open, shifting every date in the
+        // series — so only send event_date when it was actually edited.
+        if (isRecurringOccurrence && formData.event_date === (event.event_date || '')) delete patch.event_date;
+        const { error } = await supabase.from('facility_events').update(patch).eq('id', seriesMasterId);
+        if (error) throw error;
+      }
       onUpdate();
     } catch (err) { alert('Error: ' + formatUserError(err)); } finally { setLoading(false); }
   };
 
+  const handleSave = () => {
+    if (formData.is_public && !(parseFloat(formData.public_price) > 0)) return alert('Enter a price for public booking');
+    if (isRecurringOccurrence) { setSavePrompt(true); return; }
+    applySave('all');
+  };
+
+  // #347: this was `.delete().eq('id', eventMasterId)` for every event, and on
+  // a recurring occurrence eventMasterId is the SERIES row. Because
+  // facility_events_recurrence_parent_id_fkey and event_signups_event_id_fkey
+  // are both ON DELETE CASCADE, deleting one Tuesday destroyed every
+  // occurrence, every per-occurrence edit and every athlete sign-up. This is
+  // the only Delete affordance Lanes view has, so it has to offer the same
+  // this-one / this-and-future / all choice the Month/Week right-click does.
   const applyDelete = async (choice) => {
-    setDeleteRecurrencePrompt(false);
-    const label = choice === 'one' ? 'this occurrence' : 'the entire series';
-    if (!window.confirm(`Delete ${label}?`)) return;
+    setDeletePrompt(false);
     try {
+      let error;
       if (choice === 'one') {
-        // Tombstone this date via the exception model (#279): find-or-update an
-        // existing exception row, or insert a new one with is_exception=true.
-        const { data: existing, error: findErr } = await supabase
-          .from('facility_events')
-          .select('id')
-          .eq('recurrence_parent_id', eventMasterId)
-          .eq('original_date', occurrenceDate)
-          .maybeSingle();
-        if (findErr) throw findErr;
-        if (existing) {
-          const { error } = await supabase.from('facility_events').update({ is_exception: true }).eq('id', existing.id);
-          if (error) throw error;
-        } else {
-          const { error } = await supabase.from('facility_events').insert({
-            recurrence_parent_id: eventMasterId,
-            original_date: occurrenceDate,
-            event_date: occurrenceDate,
-            is_exception: true,
-            is_recurring: false,
-            title: event.title,
-            description: event.description,
-            start_time: event.start_time,
-            end_time: event.end_time,
-            location: event.location,
-            color: event.color,
-            lanes: event.lanes || [],
-            athlete_id: event.athlete_id,
-            coach_id: event.coach_id,
-            coach_ids: event.coach_ids || null,
-          });
-          if (error) throw error;
-        }
+        error = await deleteFacilityOccurrence(supabase, event, seriesMasterId, seriesDate);
+      } else if (choice === 'future') {
+        // #347 QA: picked on the series' FIRST date, "this and future" leaves
+        // nothing behind — it is a whole-series delete. deleteFacilityFuture
+        // will not escalate without this confirm, and hands back
+        // DELETE_CANCELLED (not an error) if the user backs out.
+        const result = await deleteFacilityFuture(
+          supabase, seriesMasterId, seriesDate,
+          (master) => confirmWholeFacilitySeriesDelete(seriesMasterId, master, WHOLE_SERIES_FROM_FUTURE_LEAD),
+        );
+        if (result === DELETE_CANCELLED) return;
+        error = result;
       } else {
-        // Delete entire series: exception rows first, then master.
-        await supabase.from('facility_events').delete().eq('recurrence_parent_id', eventMasterId);
-        const { error } = await supabase.from('facility_events').delete().eq('id', eventMasterId);
-        if (error) throw error;
+        if (!(await confirmWholeFacilitySeriesDelete(seriesMasterId, null, WHOLE_SERIES_LEAD))) return;
+        error = await deleteFacilitySeries(supabase, seriesMasterId);
       }
+      if (error) throw error;
       onDelete();
-    } catch (err) { alert('Error deleting event: ' + formatUserError(err)); }
+    } catch (err) { alert('Error: ' + formatUserError(err)); }
   };
 
   const handleDelete = () => {
-    const recurring = !!(event._is_virtual || event.is_recurring || event.recurrence_parent_id);
-    if (recurring) { setDeleteRecurrencePrompt(true); return; }
+    if (isRecurringOccurrence) { setDeletePrompt(true); return; }
     if (!window.confirm('Delete this event?')) return;
     (async () => {
       try {
@@ -7441,22 +7461,68 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   const headerPalette = FACILITY_EVENT_COLORS.find(c => c.key === headerColorKey) || FACILITY_EVENT_COLORS[0];
   const headerBg = headerPalette.detail;
 
+  // #347: the popup had no way out. It is `fixed`, so the page behind it can't
+  // scroll, and with a long roster the header X went off the top of the screen
+  // while Close/Edit/Delete went off the bottom — a reload was the only escape.
+  // Escape and a backdrop click now close it; both confirm first if there are
+  // unsaved edits in the form.
+  const anyNestedModalOpen = teamRecurrencePrompt || coachRecurrencePrompt || athleteRecurrencePrompt
+    || playersRecurrencePrompt || !!laneRecurrencePrompt || showCreatePlayer
+    || savePrompt || deletePrompt || showPlayerList;
+
+  const requestClose = () => {
+    if (editing && !window.confirm('Discard your unsaved changes to this event?')) return;
+    onClose();
+  };
+
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      // Let whatever is stacked on top own the key press.
+      if (anyNestedModalOpen) return;
+      if (editing && !window.confirm('Discard your unsaved changes to this event?')) return;
+      onClose();
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [anyNestedModalOpen, editing, onClose]);
+
+  // #347: Escape for the assigned-players overlay stacked on top.
+  useEffect(() => {
+    if (!showPlayerList) return undefined;
+    const onEsc = (e) => { if (e.key === 'Escape') setShowPlayerList(false); };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [showPlayerList]);
+
+  // Only close on a backdrop click whose gesture also STARTED on the backdrop,
+  // so dragging a text selection out of the card doesn't dismiss it.
+  const backdropMouseDown = useRef(false);
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) requestClose(); }}
+    >
+      {/* #347 QA: overflow-hidden keeps the card's own box honest, and the title
+          is clamped to two lines (full text on hover). Without both, a long
+          title grew the header past the card and pushed Close/Edit/Delete off
+          the bottom of the screen — the bug the height cap was added to fix. */}
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
         <div className={`${headerBg} p-6 rounded-t-lg flex-shrink-0`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-start space-x-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-3 min-w-0">
               <span className={`w-3 h-3 rounded-full ${headerPalette.dot} mt-1.5 flex-shrink-0`} />
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-700 mb-1">Facility Event</div>
-                <h3 className="text-xl font-bold text-gray-900">{event.title}</h3>
+                <h3 className="text-xl font-bold text-gray-900 line-clamp-2 break-words" title={event.title}>{event.title}</h3>
               </div>
             </div>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+            <button onClick={requestClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
           </div>
         </div>
-        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {editing ? (
             <div className="space-y-4">
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Title</label><input type="text" value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
@@ -7511,19 +7577,15 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                   </div>
                 </div>
               )}
-              <div className="flex space-x-3 pt-2">
-                <button onClick={() => setEditing(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-                <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
-              </div>
             </div>
           ) : (
             <div className="space-y-3">
               <div className="flex items-center space-x-3 text-sm"><CalendarIcon size={16} className="text-gray-400" /><span>{new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span></div>
               {(event.start_time || event.end_time) && <div className="flex items-center space-x-3 text-sm"><Clock size={16} className="text-gray-400" /><span>{formatTimeDisplay(event.start_time)}{event.end_time ? ` - ${formatTimeDisplay(event.end_time)}` : ''}</span></div>}
-              {event.location && <div className="flex items-center space-x-3 text-sm"><MapPin size={16} className="text-gray-400" /><span>{event.location}</span></div>}
+              {event.location && <div className="flex items-center space-x-3 text-sm min-w-0"><MapPin size={16} className="text-gray-400 flex-shrink-0" /><span className="min-w-0 break-words">{event.location}</span></div>}
               {event.is_recurring && <div className="flex items-center space-x-3 text-sm"><Repeat size={16} className="text-gray-400" /><span className="text-gray-500">Recurring event</span></div>}
               {event.is_public && <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-sm"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Public booking</span>{event.booking_type && <span className="text-gray-700 font-medium">{event.booking_type}</span>}{event.public_price_cents != null && <span className="text-gray-500">${(event.public_price_cents / 100).toFixed(2)} · capacity {event.public_capacity || 1}</span>}</div>}
-              {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900">{event.description}</div>}
+              {event.description && <div className="mt-3 p-3 bg-gray-50 rounded-lg text-sm text-gray-900 break-words">{event.description}</div>}
               {/* #320: athlete assignment — shown to everyone, editable by staff. */}
               {(() => {
                 const athleteName = athletes.find(a => a.id === event.athlete_id)?.full_name || event.athlete?.full_name || '';
@@ -7661,8 +7723,8 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                   single Athlete field above, which is unchanged. Reuses the
                   `athletes` list already fetched for that field. */}
               {(() => {
-                const playerNames = (event.athlete_ids || []).map(id => athletes.find(a => a.id === id)?.full_name).filter(Boolean);
-                if (playerNames.length === 0 && !isStaff) return null;
+                const playerCount = (event.athlete_ids || []).length;
+                if (playerCount === 0 && !isStaff) return null;
                 return (
                   <div className="text-sm">
                     <div className="flex items-center justify-between">
@@ -7670,14 +7732,21 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                         <Users size={14} className="text-gray-400" />
                         <span className="text-gray-700">
                           Players:{' '}
-                          {playerNames.length > 0
-                            ? <span className="font-medium text-gray-900">{playerNames.join(', ')}</span>
-                            : <span className="text-gray-400 italic">none added</span>}
+                          {/* #347 (Cordell): the roster used to be inlined as a
+                              comma list, which is what made this card thousands
+                              of pixels tall. Staff get a count that opens a
+                              scroll-safe list; a player only ever sees the
+                              count, never other players' names. */}
+                          {playerCount === 0
+                            ? <span className="text-gray-400 italic">none added</span>
+                            : isStaff
+                              ? <button onClick={() => setShowPlayerList(true)} className="text-xs text-teal-600 hover:text-teal-700 font-medium underline underline-offset-2">{playerCount} assigned</button>
+                              : <span className="font-medium text-gray-900">{playerCount}</span>}
                         </span>
                       </div>
                       {isStaff && !editingPlayers && (
                         <button onClick={() => { setPlayersDraft(event.athlete_ids || []); setEditingPlayers(true); }} className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                          {playerNames.length > 0 ? 'Edit players' : 'Add player'}
+                          {playerCount > 0 ? 'Edit players' : 'Add player'}
                         </button>
                       )}
                     </div>
@@ -7868,16 +7937,31 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                 </div>
               )}
 
-              <div className="flex space-x-3 pt-4 border-t border-gray-200">
-                <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
-                {isStaff && (
-                  <>
-                    <button onClick={() => setEditing(true)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition flex items-center justify-center space-x-1"><Edit2 size={16} /><span>Edit</span></button>
-                    <button onClick={handleDelete} className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition flex items-center justify-center space-x-1"><Trash2 size={16} /><span>Delete</span></button>
-                  </>
-                )}
-              </div>
             </div>
+          )}
+        </div>
+        {/* #347: the action row is a SIBLING of the scrolling body, not the last
+            thing inside it (match WorkoutDetailModal). On a big event — a
+            139-player RSVP roster makes this card ~3,000px tall — Close / Edit /
+            Delete used to render below the viewport of a `fixed` overlay that
+            cannot be scrolled to. Both modes get a row so the buttons are
+            always reachable. */}
+        <div className="border-t border-gray-200 p-4 flex space-x-3 flex-shrink-0">
+          {editing ? (
+            <>
+              <button onClick={() => setEditing(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+              <button onClick={handleSave} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Save'}</button>
+            </>
+          ) : (
+            <>
+              <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
+              {isStaff && (
+                <>
+                  <button onClick={() => setEditing(true)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition flex items-center justify-center space-x-1"><Edit2 size={16} /><span>Edit</span></button>
+                  <button onClick={handleDelete} className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition flex items-center justify-center space-x-1"><Trash2 size={16} /><span>Delete</span></button>
+                </>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -7957,16 +8041,64 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
           onClose={() => setLaneRecurrencePrompt(null)}
         />
       )}
-      {deleteRecurrencePrompt && (
+      {/* #347: Save on a recurring event used to rewrite the whole series with
+          no warning at all. Same control as the five above. */}
+      {savePrompt && (
         <RecurrenceDecisionModal
-          title="Delete a recurring event"
-          message="Delete just this occurrence, or the entire series?"
-          actionLabel="Delete"
+          title="Edit a recurring event"
+          message="Apply these changes to just this occurrence, or to every occurrence in the series?"
+          actionLabel="Apply to"
           allowOne={true}
           allowFuture={false}
-          onPick={applyDelete}
-          onClose={() => setDeleteRecurrencePrompt(false)}
+          onPick={applySave}
+          onClose={() => setSavePrompt(false)}
         />
+      )}
+      {/* #347: Delete on a recurring event used to cascade the entire series —
+          every occurrence, every per-occurrence edit, every sign-up — from a
+          single "Delete this event?" confirm. "This and future" is offered
+          here (unlike the field-level prompts above) because it is a delete:
+          it just caps recurrence_rule.until, no series split needed. */}
+      {deletePrompt && (
+        <RecurrenceDecisionModal
+          title="Delete a recurring event"
+          message="This event repeats. Delete just this day, this day and everything after it, or the whole series?"
+          actionLabel="Delete"
+          allowOne={true}
+          allowFuture={true}
+          onPick={applyDelete}
+          onClose={() => setDeletePrompt(false)}
+        />
+      )}
+      {/* #347 (Cordell): who is actually assigned to this event. No new query —
+          the names come from the athletes directory already loaded for the edit
+          picker. full_name only, staff only. */}
+      {showPlayerList && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowPlayerList(false)}
+        >
+          <div className="bg-white rounded-lg shadow-xl max-w-sm w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
+              <h3 className="text-sm font-semibold text-gray-900">Assigned players ({assignedPlayerNames.length})</h3>
+              <button onClick={() => setShowPlayerList(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 min-h-0">
+              {assignedPlayerNames.length === 0 ? (
+                <p className="text-sm text-gray-500 italic">No players assigned.</p>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {assignedPlayerNames.map((name, i) => (
+                    <li key={`${name}-${i}`} className="py-2 text-sm text-gray-900">{name}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="border-t border-gray-200 p-4 flex-shrink-0">
+              <button onClick={() => setShowPlayerList(false)} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition text-sm">Close</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -8439,8 +8571,12 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
           instead of scrolling inside it. */}
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
         <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
-          <h3 className="text-xl font-bold text-gray-900">{isEdit ? 'Edit' : 'Create'} Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+          {/* #347 QA sweep: the coach's name is free text and this header does
+              not shrink, so it is kept to one line — otherwise a long name grows
+              the header and pushes the Cancel / Create Slot footer past the
+              card's max-h and off the bottom of the screen. */}
+          <h3 className="text-xl font-bold text-gray-900 truncate" title={coachName || undefined}>{isEdit ? 'Edit' : 'Create'} Training Slot{coachName ? ` for ${coachName}` : ''}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
         </div>
         <div className="p-6 space-y-4 flex-1 min-h-0 overflow-y-auto">
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>

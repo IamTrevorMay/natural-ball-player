@@ -843,10 +843,21 @@ function EventDetailModal({ event, assignments, canManage, onClose, onEdit, onDe
   const handleDeleteFuture = async () => {
     setDeleting(true);
     const dayBefore = fmtLocalDate(addDays(new Date(occurrenceDate + 'T12:00:00'), -1));
-    const { data: master } = await supabase.from('staff_schedule_events').select('recurrence_rule').eq('id', masterId).single();
-    const updatedRule = { ...(master?.recurrence_rule || {}), endType: 'until', until: dayBefore };
-    await supabase.from('staff_schedule_events').update({ recurrence_rule: updatedRule }).eq('id', masterId);
-    await supabase.from('staff_schedule_events').delete().not('recurrence_parent_id', 'is', null).eq('recurrence_parent_id', masterId).gte('event_date', occurrenceDate);
+    // If this read fails we must stop. Writing an end date onto an empty
+    // repeat pattern produces a rule with no frequency, which expands to no
+    // occurrences at all — the whole series would vanish from the calendar.
+    const { data: master, error: readError } = await supabase
+      .from('staff_schedule_events').select('recurrence_rule').eq('id', masterId).single();
+    if (readError || !master?.recurrence_rule) {
+      alert('Could not read the repeat pattern for this event, so nothing was deleted. Refresh and try again.');
+      setDeleting(false);
+      return;
+    }
+    const updatedRule = { ...master.recurrence_rule, endType: 'until', until: dayBefore };
+    const { error: updateError } = await supabase.from('staff_schedule_events').update({ recurrence_rule: updatedRule }).eq('id', masterId);
+    if (updateError) { alert('Delete failed: ' + formatUserError(updateError)); setDeleting(false); return; }
+    const { error: deleteError } = await supabase.from('staff_schedule_events').delete().not('recurrence_parent_id', 'is', null).eq('recurrence_parent_id', masterId).gte('event_date', occurrenceDate);
+    if (deleteError) { alert('Some later copies of this event could not be removed: ' + formatUserError(deleteError)); setDeleting(false); return; }
     onDeleted();
   };
 
@@ -1067,10 +1078,20 @@ function EventFormModal({ editing, staff, existingAssignments, onClose, onSaved,
       const masterId = editing._master_id || editing.id;
       const occDate = editing._occurrence_date || editing.event_date;
       const dayBefore = fmtLocalDate(addDays(new Date(occDate + 'T12:00:00'), -1));
-      await supabase.from('staff_schedule_events').update({
-        recurrence_rule: { ...(editing.recurrence_rule || {}), endType: 'until', until: dayBefore },
+      // Same trap as handleDeleteFuture: an end date written onto an empty
+      // repeat pattern leaves a rule with no frequency, and the whole existing
+      // series disappears from the calendar. Stop rather than write that.
+      if (!editing.recurrence_rule) {
+        alert('The repeat pattern for this event is missing, so it was not changed. Open the original repeating event and edit it there.');
+        setSaving(false);
+        return;
+      }
+      const { error: capError } = await supabase.from('staff_schedule_events').update({
+        recurrence_rule: { ...editing.recurrence_rule, endType: 'until', until: dayBefore },
       }).eq('id', masterId);
-      await supabase.from('staff_schedule_events').delete().not('recurrence_parent_id', 'is', null).eq('recurrence_parent_id', masterId).gte('event_date', occDate);
+      if (capError) { alert('Save failed: ' + formatUserError(capError)); setSaving(false); return; }
+      const { error: trimError } = await supabase.from('staff_schedule_events').delete().not('recurrence_parent_id', 'is', null).eq('recurrence_parent_id', masterId).gte('event_date', occDate);
+      if (trimError) { alert('Save failed: ' + formatUserError(trimError)); setSaving(false); return; }
 
       const { data, error } = await supabase
         .from('staff_schedule_events')

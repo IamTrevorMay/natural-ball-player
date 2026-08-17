@@ -2,6 +2,55 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
+import { formatUserError } from './errorMessage';
+
+// ConversationDetail (messages) and ChatRoomDetail (group chats) send and
+// remove members exactly the same way. These two helpers are the one
+// implementation both use, so a fix here can't be half-applied.
+
+// Returns null on success, or a ready-to-show message on failure. A send that
+// fails used to leave the typed text sitting in the box with no explanation.
+async function sendMessageRow({ conversationId, senderId, content, parentMessageId }) {
+  const { error } = await supabase.from('messages').insert({
+    conversation_id: conversationId,
+    sender_id: senderId,
+    content,
+    parent_message_id: parentMessageId || null,
+  });
+  if (error) return 'Message not sent: ' + formatUserError(error);
+  return null;
+}
+
+// Returns null on success, or a ready-to-show message on failure.
+//
+// QA: an empty result is NOT proof of failure. The database applies the read
+// rules to the deleted row before handing it back, so a removal the user IS
+// allowed to make can come back with nothing to show — and the old code called
+// that a failure, telling coaches a member had not been removed when he had.
+// Only a real error is a failure on its own. When the result is merely empty,
+// ask the server who is still in the conversation and let that answer decide.
+async function removeParticipantRow(conversationId, memberId) {
+  const { data, error } = await supabase
+    .from('conversation_participants')
+    .delete()
+    .eq('conversation_id', conversationId)
+    .eq('user_id', memberId)
+    .select('user_id');
+  if (error) return 'Could not remove that member: ' + formatUserError(error);
+  if (data && data.length > 0) return null;
+  const { data: stillThere, error: checkError } = await supabase
+    .from('conversation_participants')
+    .select('user_id')
+    .eq('conversation_id', conversationId)
+    .eq('user_id', memberId);
+  // Still listed = genuinely not removed. Anything else (gone, or the check
+  // itself failed) is not a failure we have established, so claim nothing and
+  // let the refreshed list on screen show what really happened.
+  if (!checkError && stillThere && stillThere.length > 0) {
+    return 'That member is still in this conversation. You may not have permission to remove people here — ask an admin or a coach to do it.';
+  }
+  return null;
+}
 
 export default function Messages({ userId, userRole }) {
   const [conversations, setConversations] = useState([]);
@@ -267,23 +316,57 @@ export default function Messages({ userId, userRole }) {
   };
 
   const togglePin = async (conversationId, currentPinned) => {
-    await supabase
+    // Only the creator, an admin or a coach may update a conversation. Without
+    // this check a pin someone isn't allowed to set flips on screen and quietly
+    // reverts on the next refresh.
+    const { error } = await supabase
       .from('conversations')
       .update({ is_pinned: !currentPinned })
       .eq('id', conversationId);
+    if (error) { alert('Could not change the pin: ' + formatUserError(error)); return; }
     fetchConversations();
   };
 
   const deleteConversation = async (conversationId) => {
-    // Optimistically remove from UI immediately
+    // Deleting the conversation row is enough — messages and participants are
+    // removed with it by the database (ON DELETE CASCADE).
+    //
+    // Do NOT remove it from the screen first — a delete the user isn't allowed
+    // to make would let the thread disappear and come straight back on refresh.
+    //
+    // QA: but an empty result is not proof of failure either (see
+    // removeParticipantRow). When nothing comes back, ask the server whether
+    // the conversation is still there and let that decide.
+    const { data, error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('id', conversationId)
+      .select('id');
+    if (error) { alert('Could not delete this conversation: ' + formatUserError(error)); return; }
+    if (!data || data.length === 0) {
+      const { data: stillThere, error: checkError } = await supabase
+        .from('conversations').select('id').eq('id', conversationId);
+      // QA: nothing came back from the delete AND the re-check failed, so
+      // whether the conversation is gone is genuinely unknown. Taking it off
+      // the screen would claim a success we have not established (it comes
+      // back on the next reload); saying it failed would claim the opposite.
+      // Show what the server reports right now and say plainly that we don't
+      // know.
+      if (checkError) {
+        alert('We could not tell whether this conversation was deleted. The list below has been refreshed — please check whether it is still there.');
+        fetchConversations();
+        return;
+      }
+      if (stillThere && stillThere.length > 0) {
+        alert('This conversation is still here. You may not have permission to delete it — ask an admin or a coach to do it.');
+        fetchConversations();
+        return;
+      }
+    }
+
     setConversations(prev => prev.filter(c => c.id !== conversationId));
     if (selectedConversation?.id === conversationId) setSelectedConversation(null);
     if (selectedChat?.id === conversationId) setSelectedChat(null);
-
-    // Then delete from database
-    await supabase.from('messages').delete().eq('conversation_id', conversationId);
-    await supabase.from('conversation_participants').delete().eq('conversation_id', conversationId);
-    await supabase.from('conversations').delete().eq('id', conversationId);
   };
 
   if (loading) {
@@ -677,19 +760,17 @@ function ConversationDetail({ conversation, userId, userRole, users, onBack, onR
     if (!newMessage.trim()) return;
     trackAction('send_message');
     setSending(true);
-    const { error } = await supabase.from('messages').insert({
-      conversation_id: conversation.id,
-      sender_id: userId,
+    const failure = await sendMessageRow({
+      conversationId: conversation.id,
+      senderId: userId,
       content: newMessage.trim(),
-      parent_message_id: replyingTo?.id || null
+      parentMessageId: replyingTo?.id,
     });
-
-    if (!error) {
-      setNewMessage('');
-      setReplyingTo(null);
-      onRefresh();
-    }
     setSending(false);
+    if (failure) { alert(failure); return; }
+    setNewMessage('');
+    setReplyingTo(null);
+    onRefresh();
   };
 
   const handleAddMember = async (memberId) => {
@@ -701,12 +782,9 @@ function ConversationDetail({ conversation, userId, userRole, users, onBack, onR
   };
 
   const handleRemoveMember = async (memberId) => {
-    const { error } = await supabase
-      .from('conversation_participants')
-      .delete()
-      .eq('conversation_id', conversation.id)
-      .eq('user_id', memberId);
-    if (!error) onRefresh();
+    const failure = await removeParticipantRow(conversation.id, memberId);
+    if (failure) { alert(failure); return; }
+    onRefresh();
   };
 
   const getReplies = (messageId) => {
@@ -870,19 +948,17 @@ function ChatRoomDetail({ conversation, userId, userRole, users, onBack, onRefre
     if (!newMessage.trim()) return;
     trackAction('send_message');
     setSending(true);
-    const { error } = await supabase.from('messages').insert({
-      conversation_id: conversation.id,
-      sender_id: userId,
+    const failure = await sendMessageRow({
+      conversationId: conversation.id,
+      senderId: userId,
       content: newMessage.trim(),
-      parent_message_id: replyingTo?.id || null
+      parentMessageId: replyingTo?.id,
     });
-
-    if (!error) {
-      setNewMessage('');
-      setReplyingTo(null);
-      onRefresh();
-    }
     setSending(false);
+    if (failure) { alert(failure); return; }
+    setNewMessage('');
+    setReplyingTo(null);
+    onRefresh();
   };
 
   const handleAddMember = async (memberId) => {
@@ -894,12 +970,9 @@ function ChatRoomDetail({ conversation, userId, userRole, users, onBack, onRefre
   };
 
   const handleRemoveMember = async (memberId) => {
-    const { error } = await supabase
-      .from('conversation_participants')
-      .delete()
-      .eq('conversation_id', conversation.id)
-      .eq('user_id', memberId);
-    if (!error) onRefresh();
+    const failure = await removeParticipantRow(conversation.id, memberId);
+    if (failure) { alert(failure); return; }
+    onRefresh();
   };
 
   const getReplies = (messageId) => {

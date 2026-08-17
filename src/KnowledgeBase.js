@@ -137,12 +137,17 @@ export default function KnowledgeBase({ userId, userRole }) {
         </div>
         <div className="flex items-center space-x-3">
           {(userRole === 'admin' || userRole === 'coach') && activeView === 'browse' && (
+            // There is no way to add an article yet — no form, and nothing in
+            // the app writes to knowledge_articles. The button stays visible
+            // but disabled so it stops promising something it cannot do.
             <button
-              onClick={() => alert('Article creation form coming soon!')}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-2"
+              type="button"
+              disabled
+              title="Articles cannot be added in the portal yet."
+              className="bg-gray-200 text-gray-500 px-4 py-2 rounded-lg font-medium flex items-center space-x-2 cursor-not-allowed"
             >
               <Plus size={18} />
-              <span>Add Article</span>
+              <span>Add Article (not available yet)</span>
             </button>
           )}
         </div>

@@ -6,11 +6,15 @@
 
 import { trackError } from './usage';
 
+// Only genuine "you are not allowed" errors belong here. A bare /violates/
+// used to live in this list, which meant every CHECK / foreign-key failure was
+// reported as "You do not have permission to do that." — telling an admin who
+// owns the system that he lacks permission on something that was never a
+// permission problem. Constraint failures are translated below instead.
 const RLS_HINTS = [
   /row[- ]level security/i,
   /policy/i,
   /permission denied/i,
-  /violates/i,
 ];
 
 const KNOWN_TRANSLATIONS = [
@@ -22,6 +26,13 @@ const KNOWN_TRANSLATIONS = [
   [/duplicate key/i, 'That value is already in use.'],
   [/value too long/i, 'One of the entered values is too long.'],
   [/not[- ]null constraint/i, 'A required field was left blank.'],
+  // Constraint failures are a rejected VALUE, not a rejected PERSON. These sit
+  // after the duplicate-key / not-null entries above so those keep their more
+  // specific wording; the last line is the catch-all for anything else the
+  // database refuses, so a raw constraint name never reaches the screen.
+  [/violates check constraint/i, "That value isn't allowed here — please check what you entered and try again."],
+  [/violates foreign key constraint/i, 'This is connected to another record, so that change was not allowed.'],
+  [/violates .*constraint/i, "One of the values entered isn't allowed here."],
   [/network error|failed to fetch/i, 'Network error — check your connection.'],
 ];
 
