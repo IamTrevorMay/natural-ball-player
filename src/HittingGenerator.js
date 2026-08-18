@@ -73,7 +73,11 @@ function mapAssessment(submission) {
   assign('seq', find((l) => l.includes('sequence') || l.includes('kinematic')));
   assign('pelvis', find((l) => l.includes('pelvis')));
   assign('mbthrow', find((l) => l.includes('med') && l.includes('ball')));
-  assign('cmj', find((l) => l.includes('cmj') || (l.includes('vertical') && l.includes('jump')) || l.includes('counter-movement') || l.includes('counter movement')));
+  // #352: the CMJ and the vertical jump are different tests (up to 7in apart on
+  // the athletes who have both). Back-filling the vertical jump here graded it
+  // against the CMJ band and asserted a physical-power gap for athletes whose
+  // CMJ was never taken. A missing CMJ must read as not-measured, not as weak.
+  assign('cmj', find((l) => l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
   assign('dl', find((l) => l.includes('deadlift')));
   assign('hipir', find((l) => l.includes('hip') && l.includes('ir')));
   assign('tspine', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));

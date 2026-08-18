@@ -936,12 +936,14 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
       {/* Edit Player Info Modal */}
       {editingPlayer && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+          {/* #350: capped with a scrolling body so Cancel/Save stay on screen
+              on a short window. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900">Edit Player Info</h3>
-              <button onClick={() => setEditingPlayer(null)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+              <button onClick={() => setEditingPlayer(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Position</label>
                 <input type="text" value={editForm.position} onChange={(e) => setEditForm({...editForm, position: e.target.value})} placeholder="e.g., SS, RHP" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -968,10 +970,10 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
                   </select>
                 </div>
               </div>
-              <div className="flex space-x-3 pt-2">
-                <button onClick={() => setEditingPlayer(null)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
-                <button onClick={handleEditSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm hover:bg-blue-700 transition">Save</button>
-              </div>
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+              <button onClick={() => setEditingPlayer(null)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
+              <button onClick={handleEditSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm hover:bg-blue-700 transition">Save</button>
             </div>
           </div>
         </div>
@@ -2969,9 +2971,14 @@ function AssignMealPlanModal({ plan, teams, players, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between"><div><h3 className="text-xl font-bold text-gray-900">Assign Meal Plan</h3><p className="text-sm text-gray-600 mt-1">{plan.name}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button></div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      {/* #350: capped, with the plan name clamped to two lines so a long name
+          cannot grow the header past the cap and clip the form below it. The
+          buttons stay inside the <form> (Assign Plan is the submit) but sit in
+          a footer outside the scrolling area. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-6 flex items-start justify-between gap-3 flex-shrink-0"><div className="min-w-0"><h3 className="text-xl font-bold text-gray-900">Assign Meal Plan</h3><p className="text-sm text-gray-600 mt-1 line-clamp-2 break-words" title={plan.name}>{plan.name}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button></div>
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>}
           <div><label className="block text-sm font-medium text-gray-700 mb-2">Assign To</label>
             <div className="flex space-x-2">
@@ -2988,10 +2995,11 @@ function AssignMealPlanModal({ plan, teams, players, onClose, onSuccess }) {
             <div><label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
             <div><label className="block text-sm font-medium text-gray-700 mb-2">End Date</label><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
           </div>
-          <div className="flex space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Assigning...' : 'Assign Plan'}</button>
-          </div>
+        </div>
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+          <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Assigning...' : 'Assign Plan'}</button>
+        </div>
         </form>
       </div>
     </div>
@@ -3215,12 +3223,17 @@ function CreateSlotForm({ onClose, onSave }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+      {/* #350: eight fields is about 750px of form. Uncapped, "Create Slot"
+          sat below the bottom of a `fixed` overlay on a 1280x700 laptop and on
+          every phone, so a coach could not publish a slot at all. The fields
+          scroll now; Cancel and Create Slot live in a footer outside the
+          scroll area. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <h3 className="text-xl font-bold text-gray-900">Create Training Slot</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Date</label><input type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
@@ -3231,10 +3244,10 @@ function CreateSlotForm({ onClose, onSave }) {
           <div className="flex items-center space-x-3"><input type="checkbox" id="ctRepeatWeekly" checked={repeatWeekly} onChange={(e) => setRepeatWeekly(e.target.checked)} className="rounded" /><label htmlFor="ctRepeatWeekly" className="text-sm text-gray-700">Repeat weekly</label></div>
           {repeatWeekly && <div><label className="block text-sm font-medium text-gray-700 mb-1">Repeat until</label><input type="date" value={repeatEndDate} onChange={(e) => setRepeatEndDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>}
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g., Hitting session, Pitching mechanics" rows="2" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
-          <div className="flex space-x-3 pt-2">
-            <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={handleSubmit} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Create Slot'}</button>
-          </div>
+        </div>
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+          <button onClick={handleSubmit} disabled={loading} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Creating...' : 'Create Slot'}</button>
         </div>
       </div>
     </div>

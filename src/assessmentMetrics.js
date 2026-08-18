@@ -53,8 +53,15 @@ export const ASSESSMENT_METRICS = [
   { key: 'strength_score', label: 'Strength readiness (gate 0–100)', group: 'Strength & Power', unit: '0-100' },
 
   // ---- Strength & Power ----
-  { key: 'cmj',          label: 'Counter-movement / vertical jump', group: 'Strength & Power', unit: 'in' },
+  // #352: CMJ and the standing vertical jump are DIFFERENT tests and must not
+  // share a key. Where both are recorded they disagree by up to ~7in, against a
+  // HS grading band only 4in wide, so folding them together silently mis-grades.
+  { key: 'cmj',          label: 'Counter-movement jump (CMJ)',      group: 'Strength & Power', unit: 'in' },
+  { key: 'vertical_jump', label: 'Vertical jump (standing)',        group: 'Strength & Power', unit: 'in' },
   { key: 'broad_jump',   label: 'Broad jump',                       group: 'Strength & Power', unit: 'in' },
+  // #351: the trap-bar JUMP is a jump height in inches. It is NOT a deadlift max
+  // and must never fill `dl`, which is a bodyweight multiple.
+  { key: 'trap_bar_jump', label: 'Trap-bar jump',                   group: 'Strength & Power', unit: 'in' },
   { key: 'dl',           label: 'Trap-bar deadlift (× BW)',         group: 'Strength & Power', unit: '× BW' },
   { key: 'back_squat',   label: 'Back squat 1RM',                   group: 'Strength & Power', unit: 'lb' },
   { key: 'bench',        label: 'Bench press 1RM',                  group: 'Strength & Power', unit: 'lb' },
@@ -128,9 +135,26 @@ const FUZZY_LABEL_TESTS = [
   ['seq', (l) => l.includes('kinematic') || l.includes('sequence')],
   ['pelvis', (l) => l.includes('pelvis')],
   ['mbthrow', (l) => l.includes('med') && l.includes('ball')],
-  ['cmj', (l) => l.includes('cmj') || (l.includes('vertical') && l.includes('jump')) || l.includes('counter-movement') || l.includes('counter movement')],
-  ['broad_jump', (l) => l.includes('broad') && l.includes('jump')],
-  ['dl', (l) => (l.includes('trap') || l.includes('deadlift')) ],
+  // ---- Jumps (#352 / #351) ------------------------------------------------
+  // These four labels all live side-by-side on the live S&C template:
+  //   "Counter-Movement Jump", "Vertical Jump (in):", "Seated Vertical Jump (in):",
+  //   "Approach Vertical Jump (in):", "Trap Bar Jump (in):".
+  // They are five distinct tests. Order matters: the most specific claims its
+  // label first so a looser test below can never steal it.
+  ['cmj', (l) => l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement') || l.includes('countermovement')],
+  // Standing vertical jump ONLY. Seated and approach jumps are separate tests
+  // (no counter-movement / with a run-up) that used to masquerade as this one.
+  ['vertical_jump', (l) => l.includes('vertical') && l.includes('jump')
+    && !l.includes('seated') && !l.includes('approach')],
+  // Trap-bar JUMP (inches) — must be tested BEFORE `dl` so it never lands in a
+  // "× bodyweight" deadlift field (#351).
+  ['trap_bar_jump', (l) => l.includes('trap') && l.includes('jump')],
+  // Bilateral broad jump only — the single-leg broad jump is a different test.
+  ['broad_jump', (l) => l.includes('broad') && l.includes('jump')
+    && !/\bsl\b/.test(l) && !l.includes('single leg') && !l.includes('single-leg')],
+  // #351: `dl` is a deadlift 1RM as a bodyweight multiple. Require an explicit
+  // deadlift word (bare "trap" is not enough) and exclude jumps outright.
+  ['dl', (l) => l.includes('deadlift') && !l.includes('jump')],
   ['grip', (l) => l.includes('grip')],
   ['shoulder_ir', (l) => l.includes('shoulder') && (l.includes(' ir') || l.includes('internal'))],
   ['shoulder_er', (l) => l.includes('shoulder') && (l.includes(' er') || l.includes('external'))],
@@ -153,17 +177,126 @@ function fuzzyKeyForLabel(label) {
   return null;
 }
 
+/* ---------------------------------------------------------------------------
+   MULTI-TRIAL VALUE PARSING
+
+   Coaches record these fields as free text and routinely enter several trials
+   or an R/L pair in one box: "82, 84", "100 / 75", "R-87, 96.6",
+   "90 / 90    108 / 108", "19.7, 20.2", "14.4/15.5/16.7".
+
+   The old parser stripped every non-digit and called parseFloat, which GLUED
+   the trials together: "82, 84" -> 8284, "100 / 75" -> 10075,
+   "90 / 90  108 / 108" -> 9090108108. Those numbers then fed benchmark grading
+   and training-load selection.
+
+   POLICY: take the FIRST number in the string (TRIAL_POLICY below).
+   Reasoning:
+     * It is conservative. The first entry is the first recorded trial, not a
+       best-of, so it can never inflate a readiness/benchmark score.
+     * Inflating is the dangerous direction: these values drive training load
+       and exercise progression for minors. Under-reading produces a lighter,
+       more remedial program; over-reading produces one the athlete cannot
+       safely handle.
+     * It is the only policy that is well defined for every observed shape,
+       including R/L pairs where the numbers are not comparable trials at all.
+
+   Switching to best-of-trials (or mean, or last) later is a ONE-LINE change:
+   swap the body of pickTrial().
+--------------------------------------------------------------------------- */
+
+// Documented, single point of truth for the multi-trial policy.
+export const TRIAL_POLICY = 'first';
+
+// Change this one function to change the policy everywhere.
+// e.g. best-of: `return Math.max(...nums);`  mean: `return nums.reduce(...)/nums.length;`
+function pickTrial(nums) {
+  return nums[0];
+}
+
+// Unsigned number tokens. The sign is decided separately (see below) because a
+// hyphen in this data is almost always a separator or a side prefix ("R-87",
+// "82-84"), not a minus. Negative jump heights / grip / deadlifts are
+// meaningless, and "R-87" must not read as -87.
+const NUM_TOKEN_RE = /\d+(?:\.\d+)?/g;
+
+/**
+ * Parse ONE numeric metric value out of a free-text response.
+ * Returns a finite number or null. Never returns a glued-together trial pair.
+ *
+ * A leading "-" counts as a real minus sign only when nothing alphanumeric
+ * precedes it (e.g. "-3.5" or "attack: -3"), so genuinely-signed metrics such
+ * as attack angle keep working, while "R-87" yields +87.
+ */
+export function parseMetricValue(raw) {
+  if (raw === undefined || raw === null || typeof raw === 'object' || typeof raw === 'boolean') return null;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  const s = String(raw);
+  const nums = [];
+  NUM_TOKEN_RE.lastIndex = 0;
+  let m = NUM_TOKEN_RE.exec(s);
+  while (m) {
+    let n = parseFloat(m[0]);
+    if (Number.isFinite(n)) {
+      // Look back for a minus that is a SIGN rather than a separator/prefix.
+      let i = m.index - 1;
+      if (s[i] === '-') {
+        let j = i - 1;
+        while (j >= 0 && (s[j] === ' ' || s[j] === '\t')) j -= 1; // "x: -3" is still signed
+        // Preceded by a letter/digit/'.'? then the '-' joined two tokens ("R-87", "82-84").
+        if (j < 0 || !/[0-9A-Za-z.]/.test(s[j])) n = -n;
+      }
+      nums.push(n);
+    }
+    m = NUM_TOKEN_RE.exec(s);
+  }
+  if (!nums.length) return null;
+  const picked = pickTrial(nums);
+  return Number.isFinite(picked) ? picked : null;
+}
+
+/**
+ * Same extraction as extractMetricsFromSubmission, but also reports HOW each
+ * value was found: sources[key] === 'tag' (explicit metric_key, authoritative)
+ * or 'fuzzy' (label guess, weakest evidence). Consumers that keep their own,
+ * stricter label matcher need this so they can order the three sources
+ * deliberately instead of relying on object-spread order (#351c).
+ */
+export function extractMetricSourcesFromSubmission(submission) {
+  const values = extractMetricsFromSubmission(submission);
+  const sources = {};
+  const responses = submission?.responses || {};
+  const tpl = submission?.assessment_templates || submission?.template || null;
+  const schema = Array.isArray(tpl?.schema) ? tpl.schema : [];
+  for (const el of schema) {
+    // 'tag' only when the TAGGED element itself actually held a number — a tagged
+    // element left blank is filled by the fuzzy pass and must not claim 'tag'.
+    if (isMetricKey(el?.metric_key) && parseMetricValue(responses[el.id]) != null) sources[el.metric_key] = 'tag';
+  }
+  for (const k of Object.keys(values)) if (!sources[k]) sources[k] = 'fuzzy';
+  return { values, sources };
+}
+
+/** Across submissions (newest-first), the newest value per key plus its source. */
+export function extractMetricSourcesFromSubmissions(submissions) {
+  const values = {};
+  const sources = {};
+  if (!Array.isArray(submissions)) return { values, sources };
+  for (const sub of submissions) {
+    const one = extractMetricSourcesFromSubmission(sub);
+    for (const k in one.values) {
+      if (values[k] === undefined) { values[k] = one.values[k]; sources[k] = one.sources[k]; }
+    }
+  }
+  return { values, sources };
+}
+
 export function extractMetricsFromSubmission(submission) {
   const out = {};
   if (!submission) return out;
   const responses = submission.responses || {};
   const tpl = submission.assessment_templates || submission.template || null;
   const schema = Array.isArray(tpl?.schema) ? tpl.schema : [];
-  const toNum = (raw) => {
-    if (raw === undefined || raw === null || typeof raw === 'object') return null;
-    const num = parseFloat(String(raw).replace(/[^0-9.-]/g, ''));
-    return Number.isNaN(num) ? null : num;
-  };
+  const toNum = parseMetricValue;
   // Pass 1: explicit metric_key tags — authoritative.
   for (const el of schema) {
     const mk = el?.metric_key;

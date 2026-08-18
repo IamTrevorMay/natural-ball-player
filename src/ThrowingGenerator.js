@@ -71,13 +71,24 @@ function deriveGateScores(byKey) {
   if (byKey.shoulder_rom_deficit != null) mobParts.push(100 - lin(byKey.shoulder_rom_deficit, 0, 15)); // lower deficit = better
   const mob = mobParts.length ? clamp(avg(mobParts)) : null;
 
-  // ---- Strength: trap-bar DL (xBW), relative back-squat, CMJ, broad jump, grip ----
+  // ---- Strength: trap-bar DL (xBW), relative back-squat, vertical power, broad jump, grip ----
   const strParts = [];
   if (byKey.dl != null) strParts.push(lin(byKey.dl, 0.8, 1.8));
   if (byKey.back_squat != null && byKey.body_weight) strParts.push(lin(byKey.back_squat / byKey.body_weight, 0.8, 1.8));
-  if (byKey.cmj != null) strParts.push(lin(byKey.cmj, 10, 26));
+  // ONE vertical-power term. Before #352, `cmj` was a single key that almost
+  // always held a STANDING VERTICAL JUMP (304 of 307 live submissions); the two
+  // are now separate keys, so read the real CMJ when it exists and otherwise use
+  // the vertical jump that was actually measured. Both are jump height in
+  // inches, so the same band applies. This is not a substituted or invented
+  // value: it is the measurement the athlete really has. If NEITHER was
+  // measured the term is simply omitted (never 0, which would read as a
+  // maximally-deficient athlete) — see the strParts.length guard below.
+  const verticalPowerIn = byKey.cmj != null ? byKey.cmj : byKey.vertical_jump;
+  if (verticalPowerIn != null) strParts.push(lin(verticalPowerIn, 10, 26));
   if (byKey.broad_jump != null) strParts.push(lin(byKey.broad_jump, 60, 110));
   if (byKey.grip != null) strParts.push(lin(byKey.grip, 25, 55));
+  // No strength metric measured at all -> null, NOT 0. The caller leaves the
+  // coach's existing slider value untouched rather than gating on a fake score.
   const str = strParts.length ? clamp(avg(strParts)) : null;
 
   return { mob, str, mobCount: mobParts.length, strCount: strParts.length };

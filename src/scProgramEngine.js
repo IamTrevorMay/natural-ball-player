@@ -154,6 +154,9 @@ export function makeAssessment(a = {}) {
     rel_trap_bar_dl: a.rel_trap_bar_dl ?? null,
     broad_jump_in: a.broad_jump_in ?? null,
     vertical_jump_in: a.vertical_jump_in ?? null,
+    // #352: the counter-movement jump is a SEPARATE test from the standing
+    // vertical jump — kept as its own field so neither overwrites the other.
+    cmj_in: a.cmj_in ?? null,
     single_leg_stability: a.single_leg_stability ?? null, // "poor" | "fair" | "good"
     movement_competency: a.movement_competency ?? 'developing', // novice|developing|competent
   };
@@ -298,6 +301,12 @@ export const SC_BM = {
   rel_squat: { unit: '× BW', by: {
     youth: { dev: [0.8, 1.2], good: 1.2 }, middleschool: { dev: [1.0, 1.5], good: 1.5 }, hs: { dev: [1.4, 1.9], good: 1.9 },
     college: { dev: [1.8, 2.2], good: 2.2 }, pro: { dev: [2.0, 2.5], good: 2.5 } } },
+  // #352: CMJ benchmark, separate from the standing vertical jump above.
+  // Bands mirror the CMJ bands already calibrated in src/hittingEngine.js (BM.cmj);
+  // 'hs' bridges that file's hs_jv (17/21) and hs_varsity (19/24) rows.
+  cmj_in: { unit: 'in', by: {
+    youth: { dev: [12, 16], good: 16 }, middleschool: { dev: [14, 18], good: 18 }, hs: { dev: [18, 22], good: 22 },
+    college: { dev: [22, 27], good: 27 }, pro: { dev: [24, 30], good: 30 } } },
   rel_trap_bar_dl: { unit: '× BW', by: {
     youth: { dev: [1.0, 1.4], good: 1.4 }, middleschool: { dev: [1.3, 1.8], good: 1.8 }, hs: { dev: [1.7, 2.2], good: 2.2 },
     college: { dev: [2.1, 2.6], good: 2.6 }, pro: { dev: [2.4, 2.8], good: 2.8 } } },
@@ -306,6 +315,7 @@ export const SC_BM = {
 // Force/power metric catalog (key, label) for the UI benchmark bars.
 export const SC_METRICS = [
   { key: 'vertical_jump_in', label: 'Vertical jump' },
+  { key: 'cmj_in', label: 'Counter-movement jump' },
   { key: 'broad_jump_in', label: 'Broad jump' },
   { key: 'rel_squat', label: 'Back squat (× BW)' },
   { key: 'rel_trap_bar_dl', label: 'Trap-bar deadlift (× BW)' },

@@ -479,21 +479,35 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
       {/* Booking form modal */}
       {selected && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+          {/* #350: capped height + a scrolling body, with the pay button in a
+              footer that is a SIBLING of that body. A long event title used to
+              grow this card past the screen, and because the overlay is
+              `fixed` the page behind it cannot scroll — "Continue to payment"
+              went off the bottom with no way to reach it. The title is clamped
+              to two lines (full text on hover) so the header can never grow
+              past the cap and clip the rest of the card. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
             {freeBooked ? (
-              <div className="p-6 text-center">
-                <CheckCircle size={48} className="mx-auto text-green-500 mb-3" />
-                <h3 className="text-xl font-bold text-gray-900 mb-1">You're booked!</h3>
-                <p className="text-sm text-gray-600 mb-5">This free session is confirmed. We've got you down for {dateDisplay(selected.occurrence_date)}{selected.start_time ? ` at ${timeDisplay(selected.start_time)}` : ''}.</p>
-                <button onClick={closeBooking} className="w-full bg-teal-600 text-white py-2.5 rounded-lg hover:bg-teal-700 transition font-medium">Done</button>
-              </div>
+              <>
+                <div className="p-6 text-center overflow-y-auto flex-1 min-h-0">
+                  <CheckCircle size={48} className="mx-auto text-green-500 mb-3" />
+                  <h3 className="text-xl font-bold text-gray-900 mb-1">You're booked!</h3>
+                  <p className="text-sm text-gray-600">This free session is confirmed. We've got you down for {dateDisplay(selected.occurrence_date)}{selected.start_time ? ` at ${timeDisplay(selected.start_time)}` : ''}.</p>
+                </div>
+                <div className="border-t border-gray-200 p-4 flex-shrink-0">
+                  <button onClick={closeBooking} className="w-full bg-teal-600 text-white py-2.5 rounded-lg hover:bg-teal-700 transition font-medium">Done</button>
+                </div>
+              </>
             ) : (
-            <div className="p-6">
+            <>
+            <div className="px-6 pt-6 pb-4 flex-shrink-0">
               <button onClick={closeBooking} className="flex items-center text-sm text-gray-500 hover:text-gray-700 mb-4">
                 <ArrowLeft size={16} className="mr-1" /> Back
               </button>
-              <h3 className="text-xl font-bold text-gray-900">{eventLabel(selected)}</h3>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600 mt-1 mb-1">
+              <h3 className="text-xl font-bold text-gray-900 line-clamp-2 break-words" title={eventLabel(selected)}>{eventLabel(selected)}</h3>
+            </div>
+            <div className="px-6 pb-4 overflow-y-auto flex-1 min-h-0">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600 mb-1">
                 <span className="flex items-center"><CalendarIcon size={14} className="mr-1" />{dateDisplay(selected.occurrence_date)}</span>
                 {selected.start_time && <span className="flex items-center"><Clock size={14} className="mr-1" />{timeDisplay(selected.start_time)}{selected.end_time ? `–${timeDisplay(selected.end_time)}` : ''}</span>}
                 {selected.coach_name && <span className="flex items-center"><User size={14} className="mr-1" />{selected.coach_name}</span>}
@@ -520,14 +534,16 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
               </div>
 
               {submitError && <p className="text-sm text-red-600 mt-3">{submitError}</p>}
-
-              <button onClick={handleBook} disabled={submitting} className="mt-5 w-full bg-teal-600 text-white py-2.5 rounded-lg hover:bg-teal-700 transition font-medium disabled:opacity-50 flex items-center justify-center">
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex-shrink-0">
+              <button onClick={handleBook} disabled={submitting} className="w-full bg-teal-600 text-white py-2.5 rounded-lg hover:bg-teal-700 transition font-medium disabled:opacity-50 flex items-center justify-center">
                 {submitting
                   ? <><Loader2 size={18} className="animate-spin mr-2" /> {selected.price_cents ? 'Redirecting to payment…' : 'Booking…'}</>
                   : (selected.price_cents ? `Continue to payment · ${money(selected.price_cents)}` : 'Reserve · Free')}
               </button>
               <p className="text-xs text-gray-400 text-center mt-2">{selected.price_cents ? "You'll pay securely via Square. No account needed." : 'No payment needed — you\'re confirmed instantly.'}</p>
             </div>
+            </>
             )}
           </div>
         </div>
@@ -540,11 +556,14 @@ export default function PublicBookingPage({ embedded = false, prefill = null }) 
 function WelcomePopup({ onClose }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 relative">
-        <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600" aria-label="Close">
+      {/* #350: capped so a short window (a phone held sideways) can still
+          reach the buttons. The X stays pinned to the card while the text
+          scrolls under it. */}
+      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden relative">
+        <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 z-10" aria-label="Close">
           <X size={20} />
         </button>
-        <div className="text-center">
+        <div className="text-center p-6 overflow-y-auto flex-1 min-h-0">
           <div className="text-4xl mb-3">⚾</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Welcome to the Natural Ball Player</h2>
           <p className="text-gray-600 text-sm mb-6">

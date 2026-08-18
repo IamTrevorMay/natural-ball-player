@@ -20,17 +20,25 @@ import React from 'react';
 export default function LaneMoveDecisionModal({ eventTitle, sourceLane, targetLane, allowWhole, startTimeLabel, onPick, onClose }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-        <h3 className="text-lg font-bold text-gray-900 mb-2">Move which lanes?</h3>
-        <p className="text-sm text-gray-600 mb-2">
-          {eventTitle ? `"${eventTitle}"` : 'This event'} covers more than one lane. You grabbed {sourceLane} and dropped on {targetLane}.
-        </p>
-        {!allowWhole && (
-          <p className="text-xs text-amber-600 mb-2">
-            The whole event wouldn't fit there — only the grabbed lane can move to {targetLane}.
+      {/* #350: capped height, and the event title above the options is clamped
+          to three lines (full text on hover). This modal appears mid-drop, so
+          an unreachable Cancel would leave someone stuck between two lanes
+          with no way out but a page reload. Cap and clamp together: capping
+          alone would let a long title grow the header and clip the options
+          and Cancel underneath it. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="px-6 pt-6 pb-2 flex-shrink-0">
+          <h3 className="text-lg font-bold text-gray-900 mb-2">Move which lanes?</h3>
+          <p className="text-sm text-gray-600 mb-2 line-clamp-3 break-words" title={eventTitle || undefined}>
+            {eventTitle ? `"${eventTitle}"` : 'This event'} covers more than one lane. You grabbed {sourceLane} and dropped on {targetLane}.
           </p>
-        )}
-        <div className="space-y-2 mt-4">
+          {!allowWhole && (
+            <p className="text-xs text-amber-600">
+              The whole event wouldn't fit there — only the grabbed lane can move to {targetLane}.
+            </p>
+          )}
+        </div>
+        <div className="px-6 py-4 space-y-2 overflow-y-auto flex-1 min-h-0">
           {allowWhole && (
             <button autoFocus onClick={() => onPick('whole')} className="w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
               <div className="font-medium text-gray-900">Move the whole event</div>
@@ -48,7 +56,7 @@ export default function LaneMoveDecisionModal({ eventTitle, sourceLane, targetLa
             </div>
           </button>
         </div>
-        <div className="mt-4 flex justify-end">
+        <div className="border-t border-gray-200 px-6 py-3 flex justify-end flex-shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
-import { extractMetricsFromSubmissions } from './assessmentMetrics';
+import { extractMetricSourcesFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import {
   Position, Sex, makeAthlete, trainingStage, maturityBand, loadStyle,
@@ -77,12 +77,22 @@ function mapAssessmentFromSubmission(submission) {
 
   assign('shoulder_ir_dom', find((l) => l.includes('shoulder') && l.includes('ir') && (l.includes('dom') || l.includes('throw'))));
   assign('shoulder_ir_nondom', find((l) => l.includes('shoulder') && l.includes('ir') && (l.includes('non') || l.includes('glove'))));
-  assign('shoulder_er_dom', find((l) => l.includes('shoulder') && l.includes('er') && (l.includes('dom') || l.includes('throw'))));
+  // #352 QA: l.includes('er') is satisfied by the word "should-ER" itself, so a
+  // sheet carrying only Shoulder IR silently filled BOTH the IR and the ER
+  // field with the same number. Require ER as its own word.
+  assign('shoulder_er_dom', find((l) => l.includes('shoulder') && /\ber\b/.test(l) && (l.includes('dom') || l.includes('throw'))));
   assign('total_rom_deficit', find((l) => l.includes('total') && (l.includes('rom') || l.includes('motion'))));
   assign('hip_ir_deg', find((l) => l.includes('hip') && l.includes('ir')));
   assign('ankle_dorsiflexion_cm', find((l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('knee to wall') || l.includes('dorsi')));
   assign('tspine_rotation_deg', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
-  assign('vertical_jump_in', find((l) => (l.includes('vertical') && l.includes('jump')) || l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
+  // #352 QA: this local matcher outranks the shared one, so leaving the CMJ
+  // alternatives here re-blended the two jumps whenever a template listed
+  // "Counter-Movement Jump" before "Vertical Jump" and neither was tagged —
+  // both fields then showed the CMJ and the real vertical jump never appeared.
+  // Vertical jump means vertical jump; the CMJ has its own field below.
+  assign('vertical_jump_in', find((l) => l.includes('vertical') && l.includes('jump')
+    && !l.includes('seated') && !l.includes('approach')));
+  assign('cmj_in', find((l) => l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
   assign('broad_jump_in', find((l) => l.includes('broad') && l.includes('jump')));
   assign('rel_squat', find((l) => l.includes('squat') && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×') || l.includes('x bw'))));
   assign('rel_trap_bar_dl', find((l) => (l.includes('trap') || l.includes('deadlift')) && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×'))));
@@ -110,7 +120,7 @@ function mapAssessmentFromSubmissions(submissions) {
 const BLANK_ASSESSMENT = {
   shoulder_ir_dom: '', shoulder_ir_nondom: '', shoulder_er_dom: '', total_rom_deficit: '',
   hip_ir_deg: '', ankle_dorsiflexion_cm: '', tspine_rotation_deg: '',
-  vertical_jump_in: '', broad_jump_in: '', rel_squat: '', rel_trap_bar_dl: '',
+  vertical_jump_in: '', cmj_in: '', broad_jump_in: '', rel_squat: '', rel_trap_bar_dl: '',
   single_leg_stability: '', movement_competency: 'developing',
 };
 
@@ -123,7 +133,11 @@ const SC_KEY_MAP = {
   shoulder_ir: ['shoulder_ir_dom', 1],
   shoulder_er: ['shoulder_er_dom', 1],
   shoulder_rom_deficit: ['total_rom_deficit', 1],
-  cmj: ['vertical_jump_in', 1],
+  // #352: the standing vertical jump drives vertical_jump_in — the SC_BM bands
+  // were calibrated on it (304 of 307 live submissions are vertical-jump data),
+  // so keeping it here preserves current grading. CMJ is its own field.
+  vertical_jump: ['vertical_jump_in', 1],
+  cmj: ['cmj_in', 1],
   broad_jump: ['broad_jump_in', 1],
   dl: ['rel_trap_bar_dl', 1],
 };
@@ -137,6 +151,7 @@ const ASSESSMENT_FIELDS = [
   ['ankle_dorsiflexion_cm', 'Ankle dorsiflexion (cm)'],
   ['tspine_rotation_deg', 'T-spine rotation (°)'],
   ['vertical_jump_in', 'Vertical jump (in)'],
+  ['cmj_in', 'Counter-movement jump (in)'],
   ['broad_jump_in', 'Broad jump (in)'],
   ['rel_squat', 'Back squat (× BW)'],
   ['rel_trap_bar_dl', 'Trap-bar deadlift (× BW)'],
@@ -271,20 +286,40 @@ export default function ProgramGenerator({ userId, userRole }) {
         .limit(50);
       const subList = subs || [];
       const { assessment: mapped } = mapAssessmentFromSubmissions(subList);
-      // Structured metric_key tags (and the shared fuzzy fallback) are authoritative —
-      // they override the generator's own fuzzy map (with unit conversion).
-      const byKey = extractMetricsFromSubmissions(subList);
-      const keyed = {};
-      for (const [mk, [field, mult]] of Object.entries(SC_KEY_MAP)) {
-        if (byKey[mk] != null) keyed[field] = String(Math.round(byKey[mk] * mult * 100) / 100);
+      const { values: byKey, sources: bySource } = extractMetricSourcesFromSubmissions(subList);
+      const toField = (mk) => {
+        const spec = SC_KEY_MAP[mk];
+        if (!spec || byKey[mk] == null) return null;
+        return [spec[0], String(Math.round(byKey[mk] * spec[1] * 100) / 100)];
+      };
+      const layerFor = (want) => Object.fromEntries(
+        Object.keys(SC_KEY_MAP)
+          .filter((mk) => bySource[mk] === want)
+          .map(toField)
+          .filter(Boolean),
+      );
+      /* PRECEDENCE — strongest evidence first (#351c).
+         This used to be an object spread in which `...keyed` came AFTER
+         `...mapped`. `keyed` mixed explicitly-tagged values together with the
+         SHARED, looser fuzzy fallback, so a loose label guess silently
+         overrode this generator's stricter local matcher — that is how
+         "Trap Bar Jump (in):" beat the local matcher (which correctly requires
+         bw|body|relative|×) and landed a jump height in rel_trap_bar_dl.
+         Written as an explicit ordered list so the ordering is visible and
+         cannot invert again by someone reordering a spread. The FIRST layer to
+         supply a field wins; later layers only fill gaps. */
+      const PRECEDENCE = [
+        layerFor('tag'),                                                            // 1. explicit metric_key tag — authoritative
+        Object.fromEntries(Object.entries(mapped).map(([k, v]) => [k, String(v)])), // 2. this generator's strict local matcher
+        layerFor('fuzzy'),                                                          // 3. shared fuzzy label fallback — weakest
+      ];
+      const resolved = {};
+      for (const layer of PRECEDENCE) {
+        for (const [field, val] of Object.entries(layer)) if (resolved[field] === undefined) resolved[field] = val;
       }
-      const filledCount = new Set([...Object.keys(mapped), ...Object.keys(keyed)]).size;
+      const filledCount = Object.keys(resolved).length;
       if (filledCount) {
-        setAssessment((a) => ({
-          ...a,
-          ...Object.fromEntries(Object.entries(mapped).map(([k, v]) => [k, String(v)])),
-          ...keyed,
-        }));
+        setAssessment((a) => ({ ...a, ...resolved }));
         const newest = String(subList[0]?.assessment_date || '').slice(0, 10);
         setAutoNote(`Auto-filled ${filledCount} field(s) from the athlete's assessments (most recent ${newest || 'n/a'}; each field uses the newest assessment that measured it). Review & edit below.`);
       } else {
@@ -323,6 +358,7 @@ export default function ProgramGenerator({ userId, userRole }) {
         ankle_dorsiflexion_cm: numOrNull(assessment.ankle_dorsiflexion_cm),
         tspine_rotation_deg: numOrNull(assessment.tspine_rotation_deg),
         vertical_jump_in: numOrNull(assessment.vertical_jump_in),
+        cmj_in: numOrNull(assessment.cmj_in),
         broad_jump_in: numOrNull(assessment.broad_jump_in),
         rel_squat: numOrNull(assessment.rel_squat),
         rel_trap_bar_dl: numOrNull(assessment.rel_trap_bar_dl),

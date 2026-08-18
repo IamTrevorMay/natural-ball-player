@@ -344,12 +344,14 @@ function RecipientList({ rows, selected, onToggle, onToggleAll, previewId, onPre
 function ConfirmSendModal({ count, listLabel, sampleName, onCancel, onConfirm, sending }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-4 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-gray-900">Send to {count} athlete{count === 1 ? '' : 's'}?</h3>
-          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600" disabled={sending}><X size={22} /></button>
+      {/* #350: capped with a scrolling body so Cancel and Send stay on screen
+          when the window is short. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-4 flex items-center justify-between gap-3 flex-shrink-0">
+          <h3 className="text-lg font-bold text-gray-900 min-w-0">Send to {count} athlete{count === 1 ? '' : 's'}?</h3>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 flex-shrink-0" disabled={sending}><X size={22} /></button>
         </div>
-        <div className="p-5 space-y-3 text-sm text-gray-700">
+        <div className="p-5 space-y-3 text-sm text-gray-700 overflow-y-auto flex-1 min-h-0">
           <p>
             This will post an in-app message to <span className="font-semibold text-gray-900">{count}</span>{' '}
             athlete{count === 1 ? '' : 's'} from the <span className="font-semibold text-gray-900">{listLabel}</span> list.
@@ -359,7 +361,7 @@ function ConfirmSendModal({ count, listLabel, sampleName, onCancel, onConfirm, s
             They will see it in their NBP portal notifications immediately. Nothing is emailed and nothing is scheduled.
           </p>
         </div>
-        <div className="border-t border-gray-200 p-4 flex justify-end space-x-3">
+        <div className="border-t border-gray-200 p-4 flex justify-end space-x-3 flex-shrink-0">
           <button
             onClick={onCancel}
             disabled={sending}
