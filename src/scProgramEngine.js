@@ -371,6 +371,7 @@ function ex(name, effort, opts = {}) {
     is_olympic_full: opts.is_olympic_full ?? false,
     unilateral: opts.unilateral ?? false,
     note: opts.note ?? '',
+    requires_metric: opts.requires_metric ?? null,
   };
 }
 
@@ -565,7 +566,7 @@ const POWER = [
   ex('Broad Jump', Effort.POWER, { equipment: [], targets: ['glute_ham'] }),
   ex('Vertical Jump', Effort.POWER, { equipment: [], targets: ['glute_ham'] }),
   ex('Depth Jump', Effort.POWER, { equipment: ['box'], min_training_stage: 'intermediate', note: 'Reactive-strength plyo; keep ground-contact short.' }),
-  ex('Trap-Bar Jump', Effort.POWER, { equipment: ['trapbar'], targets: ['triple_extension'], min_training_stage: 'intermediate' }),
+  ex('Trap-Bar Jump', Effort.POWER, { equipment: ['trapbar'], targets: ['triple_extension'], min_training_stage: 'intermediate', requires_metric: 'rel_trap_bar_dl' }),
   ex('Hang High-Pull (oly derivative)', Effort.POWER, {
     thrower_risk: 1, equipment: ['barbell'], targets: ['triple_extension'], min_training_stage: 'intermediate',
     note: 'Triple-extension power without the front-rack catch.',
@@ -903,6 +904,8 @@ function eligible(pool, athlete, allowCaution = true) {
     if (thrower && e.thrower_risk === 1 && !allowCaution) continue;
     // Full Olympic lifts gated by competency / maturity / injury (position-agnostic).
     if (e.is_olympic_full && !allowOly) continue;
+    // Exercises that require a specific assessment metric are excluded when it is absent.
+    if (e.requires_metric && athlete.assessment[e.requires_metric] == null) continue;
     out.push(e);
   }
   return out;
