@@ -73,6 +73,11 @@ function deriveGateScores(byKey) {
 
   // ---- Strength: trap-bar DL (xBW), relative back-squat, vertical power, broad jump, grip ----
   const strParts = [];
+  // byKey.dl is a BODYWEIGHT MULTIPLE. Coaches record the trap-bar deadlift in
+  // pounds (Cordell, #351); extractMetricsFromSubmissions() divides it by the
+  // athlete's body weight before it gets here, and omits it entirely when no
+  // body weight is on file — so this band (0.8-1.8 x BW) is now compared against
+  // the right kind of number instead of against a raw pound figure.
   if (byKey.dl != null) strParts.push(lin(byKey.dl, 0.8, 1.8));
   if (byKey.back_squat != null && byKey.body_weight) strParts.push(lin(byKey.back_squat / byKey.body_weight, 0.8, 1.8));
   // ONE vertical-power term. Before #352, `cmj` was a single key that almost

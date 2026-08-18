@@ -157,6 +157,17 @@ export function makeAssessment(a = {}) {
     // #352: the counter-movement jump is a SEPARATE test from the standing
     // vertical jump — kept as its own field so neither overwrites the other.
     cmj_in: a.cmj_in ?? null,
+    /* #351/#352 — CAPTURED AND DISPLAYED ONLY. These three jumps are collected
+       on 300+ athletes and were previously discarded. They are carried on the
+       assessment so they are shown to the coach and saved with the program, but
+       NOTHING in this engine reads them: no benchmark band (SC_BM), no weakness
+       tag, no exercise gate, no phase bias. There are no calibrated norms for
+       them yet, so grading against a made-up band would be worse than not
+       grading at all. Wire them into SC_BM/SC_METRICS only once real bands
+       exist. */
+    seated_vertical_jump_in: a.seated_vertical_jump_in ?? null,
+    approach_vertical_jump_in: a.approach_vertical_jump_in ?? null,
+    depth_drop_jump_in: a.depth_drop_jump_in ?? null,
     single_leg_stability: a.single_leg_stability ?? null, // "poor" | "fair" | "good"
     movement_competency: a.movement_competency ?? 'developing', // novice|developing|competent
   };
@@ -576,7 +587,14 @@ const POWER = [
   ex('Broad Jump', Effort.POWER, { equipment: [], targets: ['glute_ham'] }),
   ex('Vertical Jump', Effort.POWER, { equipment: [], targets: ['glute_ham'] }),
   ex('Depth Jump', Effort.POWER, { equipment: ['box'], min_training_stage: 'intermediate', note: 'Reactive-strength plyo; keep ground-contact short.' }),
-  ex('Trap-Bar Jump', Effort.POWER, { equipment: ['trapbar'], targets: ['triple_extension'], min_training_stage: 'intermediate', requires_metric: 'rel_trap_bar_dl' }),
+  // #351 — DO NOT re-add `requires_metric: 'rel_trap_bar_dl'` here. A previous
+  // session gated this lift behind a trap-bar deadlift max being on file;
+  // Cordell reviewed that and decided against it: "Yes still program in the
+  // trap bar jump with no deadlift number." The jump is a light, unloaded
+  // triple-extension drill and does not need a 1RM to be prescribed safely.
+  // The requires_metric mechanism itself is kept (see ex() / eligible()) for
+  // exercises that genuinely need a measured number.
+  ex('Trap-Bar Jump', Effort.POWER, { equipment: ['trapbar'], targets: ['triple_extension'], min_training_stage: 'intermediate' }),
   ex('Hang High-Pull (oly derivative)', Effort.POWER, {
     thrower_risk: 1, equipment: ['barbell'], targets: ['triple_extension'], min_training_stage: 'intermediate',
     note: 'Triple-extension power without the front-rack catch.',

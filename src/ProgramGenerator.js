@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
-import { extractMetricSourcesFromSubmissions } from './assessmentMetrics';
+import { extractMetricSourcesFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import {
   Position, Sex, makeAthlete, trainingStage, maturityBand, loadStyle,
@@ -61,13 +61,16 @@ function mapAssessmentFromSubmission(submission) {
     pairs.push([String(el.label || '').toLowerCase(), val]);
   }
 
-  const num = (v) => {
-    const n = parseFloat(v);
-    return Number.isFinite(n) ? n : null;
-  };
-  const find = (test) => {
+  /* Parse through the SHARED canonical parser (#351). A bare parseFloat here
+     read "22.6 / 21.4" as 22.6 and "R-115 L-88" as null, and it bypassed the
+     multi-trial policy and the plausibility guards that the shared registry
+     applies — so this local matcher, which OUTRANKS the shared fuzzy layer in
+     PRECEDENCE below, could hand the engine a number the shared layer had
+     already rejected. `metricKey` is the canonical key this screen field holds,
+     and is what selects the right range + trial direction. */
+  const find = (metricKey, test) => {
     for (const [label, val] of pairs) {
-      if (test(label)) { const n = num(val); if (n != null) return { label, n }; }
+      if (test(label)) { const n = parseMetricValue(val, metricKey); if (n != null) return { label, n }; }
     }
     return null;
   };
@@ -75,27 +78,34 @@ function mapAssessmentFromSubmission(submission) {
     if (hit) { out[key] = hit.n; matched.push(`${key} ← "${hit.label}" (${hit.n})`); }
   };
 
-  assign('shoulder_ir_dom', find((l) => l.includes('shoulder') && l.includes('ir') && (l.includes('dom') || l.includes('throw'))));
-  assign('shoulder_ir_nondom', find((l) => l.includes('shoulder') && l.includes('ir') && (l.includes('non') || l.includes('glove'))));
+  assign('shoulder_ir_dom', find('shoulder_ir', (l) => l.includes('shoulder') && l.includes('ir') && (l.includes('dom') || l.includes('throw'))));
+  assign('shoulder_ir_nondom', find('shoulder_ir', (l) => l.includes('shoulder') && l.includes('ir') && (l.includes('non') || l.includes('glove'))));
   // #352 QA: l.includes('er') is satisfied by the word "should-ER" itself, so a
   // sheet carrying only Shoulder IR silently filled BOTH the IR and the ER
   // field with the same number. Require ER as its own word.
-  assign('shoulder_er_dom', find((l) => l.includes('shoulder') && /\ber\b/.test(l) && (l.includes('dom') || l.includes('throw'))));
-  assign('total_rom_deficit', find((l) => l.includes('total') && (l.includes('rom') || l.includes('motion'))));
-  assign('hip_ir_deg', find((l) => l.includes('hip') && l.includes('ir')));
-  assign('ankle_dorsiflexion_cm', find((l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('knee to wall') || l.includes('dorsi')));
-  assign('tspine_rotation_deg', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
+  assign('shoulder_er_dom', find('shoulder_er', (l) => l.includes('shoulder') && /\ber\b/.test(l) && (l.includes('dom') || l.includes('throw'))));
+  assign('total_rom_deficit', find('shoulder_rom_deficit', (l) => l.includes('total') && (l.includes('rom') || l.includes('motion'))));
+  assign('hip_ir_deg', find('hipir', (l) => l.includes('hip') && l.includes('ir')));
+  assign('ankle_dorsiflexion_cm', find('ankle', (l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('knee to wall') || l.includes('dorsi')));
+  assign('tspine_rotation_deg', find('tspine', (l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
   // #352 QA: this local matcher outranks the shared one, so leaving the CMJ
   // alternatives here re-blended the two jumps whenever a template listed
   // "Counter-Movement Jump" before "Vertical Jump" and neither was tagged —
   // both fields then showed the CMJ and the real vertical jump never appeared.
   // Vertical jump means vertical jump; the CMJ has its own field below.
-  assign('vertical_jump_in', find((l) => l.includes('vertical') && l.includes('jump')
-    && !l.includes('seated') && !l.includes('approach')));
-  assign('cmj_in', find((l) => l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
-  assign('broad_jump_in', find((l) => l.includes('broad') && l.includes('jump')));
-  assign('rel_squat', find((l) => l.includes('squat') && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×') || l.includes('x bw'))));
-  assign('rel_trap_bar_dl', find((l) => (l.includes('trap') || l.includes('deadlift')) && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×'))));
+  assign('vertical_jump_in', find('vertical_jump', (l) => l.includes('vertical') && l.includes('jump')
+    && !l.includes('seated') && !l.includes('approach') && !l.includes('depth')));
+  // #351: the other three jumps on the same sheet, each claiming only its own
+  // label. Display/capture only — they grade nothing (see scProgramEngine).
+  assign('seated_vertical_jump_in', find('seated_vertical_jump', (l) => l.includes('seated') && l.includes('jump')));
+  assign('approach_vertical_jump_in', find('approach_vertical_jump', (l) => l.includes('approach') && l.includes('jump')));
+  assign('depth_drop_jump_in', find('depth_drop_jump', (l) => l.includes('depth') && l.includes('drop') && l.includes('jump')));
+  assign('cmj_in', find('cmj', (l) => l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
+  assign('broad_jump_in', find('broad_jump', (l) => l.includes('broad') && l.includes('jump')));
+  assign('rel_squat', find('back_squat', (l) => l.includes('squat') && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×') || l.includes('x bw'))));
+  // RAW as written (per Cordell, pounds). Converted to × BW in loadAthlete(),
+  // where the athlete's body weight from every submission is available.
+  assign('rel_trap_bar_dl', find('dl', (l) => (l.includes('trap') || l.includes('deadlift')) && (l.includes('bw') || l.includes('body') || l.includes('relative') || l.includes('×'))));
 
   return { assessment: out, matched };
 }
@@ -120,7 +130,8 @@ function mapAssessmentFromSubmissions(submissions) {
 const BLANK_ASSESSMENT = {
   shoulder_ir_dom: '', shoulder_ir_nondom: '', shoulder_er_dom: '', total_rom_deficit: '',
   hip_ir_deg: '', ankle_dorsiflexion_cm: '', tspine_rotation_deg: '',
-  vertical_jump_in: '', cmj_in: '', broad_jump_in: '', rel_squat: '', rel_trap_bar_dl: '',
+  vertical_jump_in: '', cmj_in: '', seated_vertical_jump_in: '', approach_vertical_jump_in: '',
+  depth_drop_jump_in: '', broad_jump_in: '', rel_squat: '', rel_trap_bar_dl: '',
   single_leg_stability: '', movement_competency: 'developing',
 };
 
@@ -138,7 +149,14 @@ const SC_KEY_MAP = {
   // so keeping it here preserves current grading. CMJ is its own field.
   vertical_jump: ['vertical_jump_in', 1],
   cmj: ['cmj_in', 1],
+  // #351: captured & shown, never graded — no SC_BM band exists for these.
+  seated_vertical_jump: ['seated_vertical_jump_in', 1],
+  approach_vertical_jump: ['approach_vertical_jump_in', 1],
+  depth_drop_jump: ['depth_drop_jump_in', 1],
   broad_jump: ['broad_jump_in', 1],
+  // byKey.dl is ALREADY a bodyweight multiple — extractMetricSourcesFromSubmissions
+  // converts the recorded pound figure using the athlete's body weight, and drops
+  // the metric entirely when no body weight is on file (#351).
   dl: ['rel_trap_bar_dl', 1],
 };
 
@@ -152,6 +170,9 @@ const ASSESSMENT_FIELDS = [
   ['tspine_rotation_deg', 'T-spine rotation (°)'],
   ['vertical_jump_in', 'Vertical jump (in)'],
   ['cmj_in', 'Counter-movement jump (in)'],
+  ['seated_vertical_jump_in', 'Seated vertical jump (in)'],
+  ['approach_vertical_jump_in', 'Approach vertical jump (in)'],
+  ['depth_drop_jump_in', 'Depth drop jump (in)'],
   ['broad_jump_in', 'Broad jump (in)'],
   ['rel_squat', 'Back squat (× BW)'],
   ['rel_trap_bar_dl', 'Trap-bar deadlift (× BW)'],
@@ -317,6 +338,22 @@ export default function ProgramGenerator({ userId, userRole }) {
       for (const layer of PRECEDENCE) {
         for (const [field, val] of Object.entries(layer)) if (resolved[field] === undefined) resolved[field] = val;
       }
+      /* #351 — TRAP-BAR DEADLIFT IS IN POUNDS. Cordell: "We always write the
+         weight in pounds." The template labels it "(X BW)" and SC_BM grades it
+         as a bodyweight multiple (pro = 2.8x), so the one real value on file,
+         405, graded ~145x — off the top of every band, flipping the plan to
+         "express power" and unlocking advanced lifts.
+         Applied HERE, after PRECEDENCE, so it covers all three layers: layers 1
+         and 3 come from byKey (already converted upstream) and re-running the
+         conversion on a value that is already single-digit is a no-op, while
+         layer 2 is this file's own matcher and is still raw.
+         No body weight on file -> the field is left EMPTY. Not graded beats
+         graded on a number we cannot interpret. */
+      if (resolved.rel_trap_bar_dl !== undefined) {
+        const rel = toRelativeStrength(parseFloat(resolved.rel_trap_bar_dl), byKey.body_weight);
+        if (rel == null) delete resolved.rel_trap_bar_dl;
+        else resolved.rel_trap_bar_dl = String(rel);
+      }
       const filledCount = Object.keys(resolved).length;
       if (filledCount) {
         setAssessment((a) => ({ ...a, ...resolved }));
@@ -359,6 +396,19 @@ export default function ProgramGenerator({ userId, userRole }) {
         tspine_rotation_deg: numOrNull(assessment.tspine_rotation_deg),
         vertical_jump_in: numOrNull(assessment.vertical_jump_in),
         cmj_in: numOrNull(assessment.cmj_in),
+        // Carried onto the athlete object so the generator can show them; the
+        // engine reads none of them (display only until real benchmark bands
+        // exist).
+        // ⚠️ NOT PERSISTED. `saveProgram` writes only name/description/
+        // duration_weeks/created_by, and `training_programs` has no columns for
+        // any assessment value — so these are re-derived from the athlete's
+        // assessment on every load and are NOT stored with the program. An
+        // earlier version of this comment claimed they were saved; they are
+        // not. Storing them needs new columns (a migration), which is a
+        // separate job. Do not tell Cordell these are being captured.
+        seated_vertical_jump_in: numOrNull(assessment.seated_vertical_jump_in),
+        approach_vertical_jump_in: numOrNull(assessment.approach_vertical_jump_in),
+        depth_drop_jump_in: numOrNull(assessment.depth_drop_jump_in),
         broad_jump_in: numOrNull(assessment.broad_jump_in),
         rel_squat: numOrNull(assessment.rel_squat),
         rel_trap_bar_dl: numOrNull(assessment.rel_trap_bar_dl),
@@ -661,12 +711,32 @@ export default function ProgramGenerator({ userId, userRole }) {
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
                   <BarChart3 className="w-4 h-4" /> Force benchmarks · vs {SC_LEVEL_NAME[program.level]}
                 </div>
-                {SC_METRICS.filter((m) => program.grades[m.key]).map((m) => (
+                {/* #352 (Cordell): "Show it as not tested. Do not substitute it if
+                    the athlete does not have the CMJ tested in their assessment."
+                    An ungraded metric is named and marked Not tested rather than
+                    silently omitted — an omitted row is indistinguishable from a
+                    passing one, which is how the CMJ came to be back-filled from
+                    the standing vertical jump in the first place. */}
+                {SC_METRICS.map((m) => (program.grades[m.key] ? (
                   <MetricBar key={m.key} mkey={m.key} s={program.grades[m.key]} />
-                ))}
+                ) : (
+                  <div key={m.key} className="mb-2.5 flex justify-between text-xs">
+                    <span className="text-gray-400">{m.label}</span>
+                    <span className="font-mono text-gray-400">Not tested</span>
+                  </div>
+                )))}
                 {!SC_METRICS.some((m) => program.grades[m.key]) && (
-                  <div className="text-xs text-gray-400">No force metrics screened (jumps / relative squat &amp; deadlift). Enter them to benchmark &amp; bias the plan.</div>
+                  <div className="text-xs text-gray-400 mt-2">No force metrics screened (jumps / relative squat &amp; deadlift). Enter them to benchmark &amp; bias the plan.</div>
                 )}
+                {/* Collected but deliberately ungraded — no calibrated bands yet (#351). */}
+                {[['seated_vertical_jump_in', 'Seated vertical jump'], ['approach_vertical_jump_in', 'Approach vertical jump'], ['depth_drop_jump_in', 'Depth drop jump']]
+                  .filter(([f]) => assessment[f] !== '' && assessment[f] != null)
+                  .map(([f, label]) => (
+                    <div key={f} className="mb-2.5 flex justify-between text-xs">
+                      <span className="text-gray-500">{label}</span>
+                      <span className="font-mono text-gray-600">{assessment[f]} in <span className="text-gray-400">· not benchmarked</span></span>
+                    </div>
+                  ))}
               </div>
 
               {/* Safety flags */}
