@@ -152,6 +152,16 @@ async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slo
 // #276 — the warning itself. Warn, never block: Cancel backs out, the primary
 // button goes ahead with the booking anyway.
 function BookingCapWarningModal({ message, onCancel, onProceed, proceedLabel = 'Book anyway' }) {
+  // Escape backs out, the same as the Cancel button — the safe direction, and
+  // the only one: it can never be mistaken for going ahead with the booking.
+  // This card is always the top layer (z-[60]) when it is up, so it owns the
+  // key press outright.
+  useEffect(() => {
+    const onEsc = (e) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [onCancel]);
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-sm w-full">
@@ -420,6 +430,34 @@ export default function Schedule({ userId, userRole }) {
   });
   const exitSelectMode = () => { setSelecting(false); setSelectedEvents([]); };
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+
+  // Escape closes the read-only popups this component owns, matching what
+  // EventDetailModal and FacilityEventDetail already do. Only popups with
+  // nothing to lose are listed: a form you could be halfway through typing
+  // into (Add Event, Create Slot, Reserve Slot, Add Game) is deliberately left
+  // alone, because closing one on a stray key press would throw the typing
+  // away without asking.
+  //
+  // Innermost first, one layer per press — the same rule EventDetailModal's
+  // handler follows. `anyPanelOverCoachModal` is the list of things that open
+  // ON TOP of the coach week-view modal; while one of those is up the key press
+  // belongs to it, and closing the modal underneath would yank the panel's
+  // context out from under the user.
+  const anyPanelOverCoachModal = !!(showCreateSlot || showEditSlot || showReserveSlot
+    || capConfirm || ctxMenu || recurrencePrompt || copyToPicker);
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      if (shiftDetailEvent) { setShiftDetailEvent(null); return; }
+      if (showEventTypeChooser !== null) { setShowEventTypeChooser(null); return; }
+      if (selectedCoach && coachModalOpen && !anyPanelOverCoachModal) {
+        setCoachModalOpen(false);
+        setSelectedCoach(null);
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [shiftDetailEvent, showEventTypeChooser, selectedCoach, coachModalOpen, anyPanelOverCoachModal]);
 
   useEffect(() => {
     fetchTeams();
@@ -1607,13 +1645,22 @@ export default function Schedule({ userId, userRole }) {
     // honesty rule: a number we could not establish is never printed as one.
     // A date of a series is counted on that date only; a standalone row is
     // counted across every date on it, because deleting the row takes them all.
+    //
+    // #347 follow-up: a date of a series is keyed (master id, series date) —
+    // the same key FacilityEventDetail signs athletes up under. An already
+    // edited date is a real child row, and older sign-ups on it may still be
+    // keyed to that CHILD's id under whatever date the child carried at the
+    // time; that child row stands for this one date only, so every date on it
+    // counts (eventDate omitted). Counting only `ev.id` on `ev.event_date`, as
+    // this did, missed both halves once a date had been edited and moved.
     const signupTargets = selectedEvents
       .filter(ev => sourceForSelectedEvent(ev) === 'facility')
-      .map(ev => {
+      .flatMap(ev => {
         const series = facilitySeriesDate(ev);
-        return series
-          ? { eventId: ev._is_virtual ? series.masterId : ev.id, eventDate: ev.event_date }
-          : { eventId: ev.id, eventDate: null };
+        if (!series) return [{ eventId: ev.id, eventDate: null }];
+        const targets = [{ eventId: series.masterId, eventDate: series.date }];
+        if (!ev._is_virtual) targets.push({ eventId: ev.id });
+        return targets;
       });
     if (signupTargets.length > 0) {
       const signups = await countSignupsForEvents(supabase, signupTargets);
@@ -5559,6 +5606,22 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
     onDelete && onDelete();
   };
 
+  // Escape closes this card, matching EventDetailModal and FacilityEventDetail.
+  // Nothing here is editable, so there is nothing to confirm — but the delete
+  // confirmation sits on top of the card, so the first press steps back out of
+  // that rather than closing both at once. A delete already in flight is left
+  // alone: closing mid-request would hide the result of it.
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      if (deleting) return;
+      if (confirmDelete) { setConfirmDelete(false); return; }
+      onClose();
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [confirmDelete, deleting, onClose]);
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
@@ -7300,32 +7363,83 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 
   const [signups, setSignups] = useState([]);
   const [mySignup, setMySignup] = useState(null);
+  const [mySignupIds, setMySignupIds] = useState([]);
   const [signupNotes, setSignupNotes] = useState('');
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupsLoading, setSignupsLoading] = useState(true);
 
+  // #347 follow-up: sign-ups must be keyed on the SERIES and the series date,
+  // not on whichever facility_events row happens to render this date.
+  // eventMasterId is the master id on a normal (virtual) occurrence but the
+  // CHILD row's own id once that date has been individually edited, so athletes
+  // who signed up before a coach edited that date were keyed to the master and
+  // then silently vanished from the roster after the edit. seriesMasterId +
+  // seriesDate is the one key every occurrence of a series agrees on, whether
+  // or not that date has been edited, so that is what new sign-ups are written
+  // against below.
+  //
+  // Reads still have to find the rows written under the old key. There are
+  // exactly two shapes in the table:
+  //   (master id, series date)      — a normal/virtual occurrence. Also the new key.
+  //   (this child row's id, any date) — written while this date was an edited
+  //       child row. Its event_date is whatever the child's date was at the
+  //       time, which is NOT the series date if the date itself had been moved,
+  //       and could be an older date still if it was moved more than once — so
+  //       the child id is matched on any date rather than on a guessed one.
+  // The child row for THIS date is `event.id`: expandRecurringEvents renders
+  // the child in place of the virtual occurrence, so a date has at most one
+  // child and it is the row this popup was opened on. That is why no lookup of
+  // the series' other children is needed here, and why sign-ups belonging to a
+  // DIFFERENT date of the same series can never leak into this roster.
+  const ownChildRowId = (!event._is_virtual && event.recurrence_parent_id) ? event.id : null;
+  const signupEventIds = [...new Set([seriesMasterId, ownChildRowId].filter(Boolean))];
+  const signupEventIdsKey = signupEventIds.join(',');
+  const signupMatchesOccurrence = (row) => (
+    row.event_id === seriesMasterId
+      ? row.event_date === seriesDate
+      : row.event_id === ownChildRowId
+  );
+
   const fetchSignups = async () => {
     setSignupsLoading(true);
-    if (isStaff) {
-      const { data, error } = await supabase
-        .from('event_signups')
-        .select('id, notes, created_at, user_id, users:user_id(id, full_name, avatar_url)')
-        .eq('event_id', eventMasterId)
-        .eq('event_date', occurrenceDate)
-        .order('created_at', { ascending: true });
-      if (!error) setSignups(data || []);
-      const myRow = (data || []).find(r => r.user_id === userId);
-      setMySignup(myRow || null);
+    // One query for both roles; players are narrowed to their own row by RLS
+    // and by the user_id filter, staff get the whole roster. Keeping it to one
+    // shape is what makes the roster, the count beside it and the athlete's own
+    // "You're signed up" impossible to disagree with.
+    let query = supabase
+      .from('event_signups')
+      .select(isStaff
+        ? 'id, notes, created_at, user_id, event_id, event_date, users:user_id(id, full_name, avatar_url)'
+        : 'id, notes, created_at, user_id, event_id, event_date')
+      .order('created_at', { ascending: true });
+    // QA: the master branch MUST be bounded to this date in the QUERY, not just
+    // filtered afterwards. Asking for every sign-up in the series pulls back a
+    // year of rows to render one popup, and once a series passes PostgREST's
+    // row cap the rows that get cut are the current ones — the roster then
+    // reads "No sign ups yet" while athletes really are signed up. That is the
+    // exact bug this change exists to fix, re-armed at scale.
+    if (ownChildRowId) {
+      query = query.or(
+        `and(event_id.eq.${seriesMasterId},event_date.eq.${seriesDate}),event_id.eq.${ownChildRowId}`
+      );
     } else {
-      const { data } = await supabase
-        .from('event_signups')
-        .select('id, notes, created_at')
-        .eq('event_id', eventMasterId)
-        .eq('event_date', occurrenceDate)
-        .eq('user_id', userId)
-        .maybeSingle();
-      setMySignup(data || null);
+      query = query.eq('event_id', seriesMasterId).eq('event_date', seriesDate);
     }
+    if (!isStaff) query = query.eq('user_id', userId);
+    const { data, error } = await query;
+    const rows = error ? [] : (data || []).filter(signupMatchesOccurrence);
+    // An athlete can hold both an old child-keyed row and a new master-keyed
+    // one (the unique index is per event_id, so nothing stopped that). That is
+    // one person signed up, not two — dedupe by athlete so the list and the
+    // number next to it stay honest.
+    const byUser = new Map();
+    rows.forEach(r => { if (!byUser.has(r.user_id)) byUser.set(r.user_id, r); });
+    // On a read error leave the previous roster alone rather than blanking it
+    // to a confident "No sign ups yet" that isn't true.
+    if (isStaff && !error) setSignups([...byUser.values()]);
+    const mine = rows.filter(r => r.user_id === userId);
+    setMySignup(mine[0] || null);
+    setMySignupIds(mine.map(r => r.id));
     setSignupsLoading(false);
   };
 
@@ -7333,18 +7447,28 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     fetchSignups();
     fetchGuestBookings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventMasterId, occurrenceDate]);
+  }, [signupEventIdsKey, seriesDate, eventMasterId, occurrenceDate]);
 
   const handleSignup = async () => {
     if (signupsClosed) { alert('Sign-ups are closed — they close 12 hours before the event starts.'); return; }
     setSignupLoading(true);
     try {
       const { error } = await supabase.from('event_signups').insert({
-        event_id: eventMasterId,
-        event_date: occurrenceDate,
+        // The stable key: the series row and the date of the series this
+        // occurrence stands for. Editing this date later cannot move it.
+        event_id: seriesMasterId,
+        event_date: seriesDate,
         user_id: userId,
         notes: signupNotes.trim() || null,
       });
+      // 23505 = the athlete already has a row under this exact key (a stale
+      // popup, or a double click). Nothing is wrong and nothing is lost, so
+      // say so plainly and refresh rather than showing a database error.
+      if (error && error.code === '23505') {
+        await fetchSignups();
+        alert("You're already signed up for this event.");
+        return;
+      }
       if (error) throw error;
       setSignupNotes('');
       await fetchSignups();
@@ -7355,12 +7479,17 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
     }
   };
 
-  const handleCancelSignup = async (signupId) => {
+  const handleCancelSignup = async () => {
     if (signupsClosed) { alert('Sign-ups are locked within 12 hours of the event and can no longer be changed.'); return; }
+    // Cancels every row this athlete holds for this occurrence, not just one.
+    // An athlete carrying both an old child-keyed row and a new master-keyed
+    // one would otherwise still read as signed up after cancelling.
+    const ids = mySignupIds.length > 0 ? mySignupIds : (mySignup ? [mySignup.id] : []);
+    if (ids.length === 0) return;
     if (!window.confirm('Cancel your sign up for this event?')) return;
     setSignupLoading(true);
     try {
-      const { error } = await supabase.from('event_signups').delete().eq('id', signupId);
+      const { error } = await supabase.from('event_signups').delete().in('id', ids);
       if (error) throw error;
       await fetchSignups();
     } catch (err) {
@@ -7831,7 +7960,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
                         <p className="text-xs text-gray-500">Sign-ups are locked within 12 hours of the event.</p>
                       ) : (
                         <button
-                          onClick={() => handleCancelSignup(mySignup.id)}
+                          onClick={handleCancelSignup}
                           disabled={signupLoading}
                           className="text-xs text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
                         >
