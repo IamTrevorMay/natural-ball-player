@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
+import { LANES } from './Schedule';
 import { useModalTracking, trackAction } from './usage';
 import { useExerciseVideos } from './exerciseVideos';
 import ExerciseNameInput from './ExerciseNameInput';
@@ -293,7 +294,12 @@ function generateRecurrenceDates(startDate, rule, interval, endDate, customUnit,
 }
 
 function CreateScheduleModal({ teams, onClose, onSuccess }) {
-  const LANE_OPTIONS = ['Lane 1', 'Lane 2', 'Lane 3', 'Lane 4', 'Lane 5', 'Lane 6', 'Lane 7', 'Lane 8', 'Lane 9', 'Lane 10', 'Lane 11', 'Lane 12', 'Lane 13', 'Lane 14', 'Turf Field', 'Main Weight Room', 'Top Weight Room', 'Speed & Agility'];
+  // Reuse Schedule's LANES rather than keeping a fourth copy of the list. The
+  // facility went from 14 lanes to 7 (#67/#68) but this dropdown kept offering
+  // Lane 8-14: those events saved fine and were then silently dropped by the
+  // Lanes grid, which only buckets the lanes in LANES. Import means it can't
+  // drift again — LANES in Schedule.js is the one source of truth.
+  const LANE_OPTIONS = LANES;
   const [formData, setFormData] = useState({ team_id: '', event_type: 'practice', opponent: '', event_date: '', event_time: '', event_end_time: '', location: '', address: '', home_away: null, is_optional: false, notes: '', lanes: [] });
   const [selectedTeamIds, setSelectedTeamIds] = useState([]);
   const [timeTBD, setTimeTBD] = useState(false);

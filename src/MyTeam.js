@@ -173,7 +173,13 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
         const coachRows = [];
         const playerRows = [];
         for (const m of allMembers) {
-          const memberUserRole = m.users?.role;
+          // A team_members row whose users row is missing or not readable comes
+          // back as `users: null` — PostgREST still returns the outer row when the
+          // embedded join is blocked or the target row is gone. Skip it rather than
+          // dereferencing null: a roster entry with no user isn't renderable, and
+          // reading m.users.player_profiles on one white-screened the roster tab.
+          if (!m.users) continue;
+          const memberUserRole = m.users.role;
           if (memberUserRole === 'admin' || memberUserRole === 'coach') {
             coachRows.push({ ...m.users, role: m.role });
           } else {
