@@ -5624,7 +5624,10 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+      {/* #350 sweep: overflow-hidden so the height cap is authoritative and a
+          long unbroken word in the program name or an exercise cannot stretch
+          the card — and the page — wider than the screen. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden">
         <div className="border-b border-gray-200 p-5 flex items-start justify-between flex-shrink-0">
           <div className="flex items-start space-x-3 min-w-0">
             {(() => { const hc = WORKOUT_HEADER_COLOR[getWorkoutCategory(event.title)] || WORKOUT_HEADER_COLOR.general; return (
@@ -5637,7 +5640,9 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
               <div className="text-sm text-gray-600 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>{new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</span>
                 {event.event_time && <span>• {formatTimeDisplay(event.event_time)}</span>}
-                {program?.name && <span>• {program.name}{trainingDay?.day_number ? ` — Day ${trainingDay.day_number}` : ''}</span>}
+                {/* #350 sweep: the program name is free text in a header that does
+                    not shrink — min-w-0 + break-words keep it from widening the card. */}
+                {program?.name && <span className="min-w-0 break-words line-clamp-2" title={program.name}>• {program.name}{trainingDay?.day_number ? ` — Day ${trainingDay.day_number}` : ''}</span>}
               </div>
             </div>
           </div>
@@ -5646,7 +5651,7 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
           </button>
         </div>
 
-        <div className="p-5 overflow-y-auto flex-1">
+        <div className="p-5 overflow-y-auto flex-1 min-h-0">
           {loading ? (
             <div className="text-center py-10 text-gray-500 text-sm">Loading workout...</div>
           ) : (
@@ -5774,10 +5779,19 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
         </div>
 
         {confirmDelete && (
-          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center rounded-lg">
-            <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
+          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center rounded-lg p-4">
+            {/* #350 sweep: this confirmation had no cap and no scroll of its own,
+                and the workout title inside it is free text, so a long title
+                pushed Cancel / Delete off the bottom of the screen with nothing
+                to scroll. Capped and scrollable, with the title clamped. */}
+            <div className="bg-white rounded-lg p-6 max-w-sm mx-4 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-bold text-gray-900 mb-2">Delete workout?</h3>
-              <p className="text-gray-700 text-sm mb-4">"{event.title || 'Workout'}" will be removed from the calendar. The underlying training program is not affected.</p>
+              <p className="text-gray-700 text-sm mb-4">
+                {/* No `block` class here: Tailwind's .block beats .line-clamp-3's
+                    display:-webkit-box and would silently disable the clamp. */}
+                <span className="font-semibold break-words line-clamp-3" title={event.title || 'Workout'}>"{event.title || 'Workout'}"</span>
+                This workout will be removed from the calendar. The underlying training program is not affected.
+              </p>
               <div className="flex space-x-3">
                 <button onClick={() => setConfirmDelete(false)} className="flex-1 border border-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium hover:bg-gray-50 transition">
                   Cancel
@@ -9029,16 +9043,35 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-900">Reserve Training Slot</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      {/* #350 (Cordell, live): this card had no height cap and no scroll of its
+          own. The backdrop is `fixed`, so the page behind it cannot scroll
+          either, and `items-center` centred an over-tall card so it ran off
+          BOTH edges of the screen. On a phone the package banner, the note box
+          and the Reserve button were simply unreachable and the booking could
+          not be completed at all. Same fix as CreateSlotPanel /
+          EventDetailModal / FacilityEventDetail: cap the card, lay it out as a
+          column, scroll the middle, and keep the footer buttons outside the
+          scrolling body so they are on screen at every window height.
+          overflow-hidden makes the cap authoritative; min-h-0 on the body is
+          load-bearing, because a flex child's default min-height:auto would
+          otherwise let the content push past the cap instead of scrolling
+          inside it.
+          Deliberately NO Escape / backdrop-close here: this modal holds what
+          the parent typed into "What would you like to work on?", and a stray
+          click on the dimmed area must not throw that away. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between gap-3 flex-shrink-0">
+          <h3 className="text-xl font-bold text-gray-900 min-w-0 break-words">Reserve Training Slot</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           <div className="bg-teal-50 rounded-lg p-4">
-            <div className="text-sm font-semibold text-teal-900">{coach?.full_name}</div>
-            {coach?.title && <div className="text-xs text-teal-600">{coach.title}</div>}
+            {/* #350: coach name, title and slot note are all free text. Without
+                break-words one long unbroken value stretches this card wider
+                than a phone screen and the page scrolls sideways. */}
+            <div className="text-sm font-semibold text-teal-900 break-words">{coach?.full_name}</div>
+            {coach?.title && <div className="text-xs text-teal-600 break-words">{coach.title}</div>}
             {coach?.skills && coach.skills.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1.5">
                 {coach.skills.map(s => (
@@ -9050,7 +9083,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
               <div>{new Date(slot.slot_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
               <div>{formatTime(slot.start_time)} - {slot.duration_minutes} min</div>
             </div>
-            {slot.notes && <div className="mt-2 text-xs text-gray-500">{slot.notes}</div>}
+            {slot.notes && <div className="mt-2 text-xs text-gray-500 break-words whitespace-pre-wrap">{slot.notes}</div>}
           </div>
           {slot.is_subscription_session && (
             <div className="flex items-start space-x-2 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 text-sm text-teal-800">
@@ -9105,10 +9138,12 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
               <span>Booking is closed — reservations close 12 hours before the session starts.</span>
             </div>
           )}
-          <div className="flex space-x-3 pt-2">
-            <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-            <button onClick={() => handleReserve(false)} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
-          </div>
+        </div>
+        {/* #350: outside the scrolling body, so Reserve is on screen at any
+            window height instead of running off the bottom of the phone. */}
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+          <button onClick={() => handleReserve(false)} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
         </div>
       </div>
       {/* #276: over the weekly allowance — a warning, not a block. */}
@@ -9196,12 +9231,20 @@ function PlayerAddGameModal({ userId, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-900">Add a Game to My Schedule</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+      {/* #350 sweep: same shape as ReserveSlotModal, and the same bug — this
+          form is ~700px tall, so with no height cap and no scroll of its own
+          the "Add to Schedule" button sat below the bottom of a phone screen
+          and the game could not be saved. The <form> is the flex column so the
+          submit button can stay in a footer outside the scrolling fields and
+          still submit the form. No Escape / backdrop-close: this modal holds a
+          half-typed game. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between gap-3 flex-shrink-0">
+          <h3 className="text-xl font-bold text-gray-900 min-w-0 break-words">Add a Game to My Schedule</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">{error}</div>}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Title / Opponent *</label>
@@ -9322,10 +9365,12 @@ function PlayerAddGameModal({ userId, onClose, onSuccess }) {
               <p className="text-xs text-gray-500 mt-1">Creates one game per occurrence between the start date and "Repeat until" (max 104 occurrences).</p>
             )}
           </div>
-          <div className="flex space-x-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Add to Schedule'}</button>
-          </div>
+        </div>
+        {/* Outside the scrolling fields so it stays on screen at any height. */}
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+          <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50">{loading ? 'Saving...' : 'Add to Schedule'}</button>
+        </div>
         </form>
       </div>
     </div>

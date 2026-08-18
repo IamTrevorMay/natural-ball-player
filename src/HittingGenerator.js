@@ -5,7 +5,7 @@ import {
   LEVELS, LEVEL_NAME, METRICS, BM, UNIV, KIND_COLOR,
   generatePlan, planToProgramDays,
 } from './hittingEngine';
-import { extractMetricsFromSubmissions } from './assessmentMetrics';
+import { extractMetricsFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 
 /* --------------------------------------------------------------------------- *
@@ -50,35 +50,44 @@ function mapAssessment(submission) {
     if (val == null || typeof val === 'object') continue;
     pairs.push([String(el.label || '').toLowerCase(), val]);
   }
-  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
-  const find = (test) => {
-    for (const [label, val] of pairs) { if (test(label)) { const n = num(val); if (n != null) return { label, n }; } }
+  /* Parse through the SHARED canonical parser (#351) so this fuzzy pass obeys
+     the same multi-trial policy (best trial) and plausibility guards as the
+     tagged pass. A bare parseFloat here read "19.7, 20.2" as 19.7 and
+     "R-115 L-88" as null. The metric key is the same key `assign` writes, so
+     the parser can pick the right range and trial direction (e.g. `ttc` is
+     lower-is-better; `attack` is a band metric and keeps the first trial). */
+  const find = (key, test) => {
+    for (const [label, val] of pairs) { if (test(label)) { const n = parseMetricValue(val, key); if (n != null) return { label, n }; } }
     return null;
   };
   const assign = (key, hit) => { if (hit && out[key] == null) { out[key] = hit.n; matched.push(key); } };
 
-  assign('batspeed', find((l) => l.includes('bat speed') || l.includes('bat-speed')));
-  assign('handspeed', find((l) => l.includes('hand speed')));
-  assign('rotaccel', find((l) => l.includes('rotational accel') || l.includes('rot accel') || (l.includes('accel') && l.includes('g'))));
-  assign('ope', find((l) => l.includes('on-plane') || l.includes('on plane') || l.includes('ope')));
-  assign('attack', find((l) => l.includes('attack angle')));
-  assign('earlyconn', find((l) => l.includes('early') && l.includes('connection')));
-  assign('impconn', find((l) => l.includes('connection') && (l.includes('impact') || l.includes('contact'))));
-  assign('ttc', find((l) => l.includes('time to contact') || l.includes('time-to-contact')));
+  assign('batspeed', find('batspeed', (l) => l.includes('bat speed') || l.includes('bat-speed')));
+  assign('handspeed', find('handspeed', (l) => l.includes('hand speed')));
+  assign('rotaccel', find('rotaccel', (l) => l.includes('rotational accel') || l.includes('rot accel') || (l.includes('accel') && l.includes('g'))));
+  assign('ope', find('ope', (l) => l.includes('on-plane') || l.includes('on plane') || l.includes('ope')));
+  assign('attack', find('attack', (l) => l.includes('attack angle')));
+  assign('earlyconn', find('earlyconn', (l) => l.includes('early') && l.includes('connection')));
+  assign('impconn', find('impconn', (l) => l.includes('connection') && (l.includes('impact') || l.includes('contact'))));
+  assign('ttc', find('ttc', (l) => l.includes('time to contact') || l.includes('time-to-contact')));
   // Ball-flight max = the assessment's front-toss EV when present (falls back to generic max-EV labels).
-  assign('evmax', find((l) => (l.includes('front toss') || l.includes('front-toss')) && (l.includes('ev') || l.includes('exit')))
-    || find((l) => (l.includes('exit') && l.includes('max')) || l.includes('max ev') || l.includes('peak exit')));
-  assign('evavg', find((l) => (l.includes('exit') && (l.includes('avg') || l.includes('average'))) || l.includes('avg ev')));
-  assign('xfactor', find((l) => l.includes('separation') || l.includes('x-factor') || l.includes('x factor')));
-  assign('seq', find((l) => l.includes('sequence') || l.includes('kinematic')));
-  assign('pelvis', find((l) => l.includes('pelvis')));
-  assign('mbthrow', find((l) => l.includes('med') && l.includes('ball')));
-  assign('cmj', find((l) => l.includes('cmj') || (l.includes('vertical') && l.includes('jump')) || l.includes('counter-movement') || l.includes('counter movement')));
-  assign('dl', find((l) => l.includes('deadlift')));
-  assign('hipir', find((l) => l.includes('hip') && l.includes('ir')));
-  assign('tspine', find((l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
-  assign('ankle', find((l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('dorsi')));
-  assign('grip', find((l) => l.includes('grip')));
+  assign('evmax', find('evmax', (l) => (l.includes('front toss') || l.includes('front-toss')) && (l.includes('ev') || l.includes('exit')))
+    || find('evmax', (l) => (l.includes('exit') && l.includes('max')) || l.includes('max ev') || l.includes('peak exit')));
+  assign('evavg', find('evavg', (l) => (l.includes('exit') && (l.includes('avg') || l.includes('average'))) || l.includes('avg ev')));
+  assign('xfactor', find('xfactor', (l) => l.includes('separation') || l.includes('x-factor') || l.includes('x factor')));
+  assign('seq', find('seq', (l) => l.includes('sequence') || l.includes('kinematic')));
+  assign('pelvis', find('pelvis', (l) => l.includes('pelvis')));
+  assign('mbthrow', find('mbthrow', (l) => l.includes('med') && l.includes('ball')));
+  // #352: the CMJ and the vertical jump are different tests (up to 7in apart on
+  // the athletes who have both). Back-filling the vertical jump here graded it
+  // against the CMJ band and asserted a physical-power gap for athletes whose
+  // CMJ was never taken. A missing CMJ must read as not-measured, not as weak.
+  assign('cmj', find('cmj', (l) => l.includes('cmj') || l.includes('counter-movement') || l.includes('counter movement')));
+  assign('dl', find('dl', (l) => l.includes('deadlift')));
+  assign('hipir', find('hipir', (l) => l.includes('hip') && l.includes('ir')));
+  assign('tspine', find('tspine', (l) => (l.includes('t-spine') || l.includes('tspine') || l.includes('thoracic')) && l.includes('rot')));
+  assign('ankle', find('ankle', (l) => l.includes('ankle') || l.includes('knee-to-wall') || l.includes('dorsi')));
+  assign('grip', find('grip', (l) => l.includes('grip')));
   return { out, matched };
 }
 
@@ -218,6 +227,18 @@ export default function HittingGenerator({ userId, userRole }) {
       const byKey = extractMetricsFromSubmissions(subList);
       const keyed = Object.keys(byKey).filter((k) => METRIC_KEYS.includes(k));
       keyed.forEach((k) => { next[k] = String(byKey[k]); });
+      /* #351 — TRAP-BAR DEADLIFT IS IN POUNDS. Cordell: "We always write the
+         weight in pounds." BM.dl in hittingEngine.js grades a BODYWEIGHT
+         MULTIPLE (pro = 2.5x), so the raw 405 on file graded ~145x — a maximal
+         "good" that suppressed the lower-body-strength finding entirely.
+         byKey.dl is already converted upstream (and re-converting a single-digit
+         multiple is a no-op), so this exists to catch the fuzzy pass above,
+         which reads the label directly and is therefore still raw.
+         No usable body weight -> blank, i.e. not screened. */
+      if (next.dl !== '' && next.dl != null) {
+        const rel = toRelativeStrength(parseFloat(next.dl), byKey.body_weight);
+        next.dl = rel == null ? '' : String(rel);
+      }
       // Ball-flight max must match the assessment's front-toss EV when one exists —
       // it outranks the Trackman-derived max and any generic max-EV label (newest first).
       let frontToss = null;

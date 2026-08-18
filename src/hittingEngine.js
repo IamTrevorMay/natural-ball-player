@@ -220,12 +220,45 @@ export function buildFindings(V, S, level) {
   /* ---- BAT SPEED (root-cause branching) ---- */
   if (bad('batspeed')) {
     let root; let rx; let tag = 'amber';
-    const powerGap = bad('mbthrow') || bad('cmj') || bad('dl');
-    const seqGap = bad('seq') || bad('xfactor') || bad('rotaccel');
-    if (powerGap && !seqGap) { root = 'Bat speed is capped by a physical-power gap — the rotational-power and/or lower-body strength tests are below level. The mechanics can transfer force, but there isn\'t enough force to transfer yet.'; rx = RX.rotpower.concat(RX.strength.slice(0, 2)); }
-    else if (seqGap && !powerGap) { root = 'The athlete has the physical tools but is leaking them through inefficient sequencing/separation — this is a movement-transfer problem, not a strength problem. Chasing more weight-room strength won\'t fix it.'; rx = RX.batspeed_speed.concat(RX.seq.slice(0, 2)); tag = 'red'; }
-    else if (seqGap && powerGap) { root = 'Both engine and transfer are limiting bat speed — the athlete needs rotational power built AND a cleaner sequence to express it. Sequence work first so new strength has somewhere to go.'; rx = RX.seq.slice(0, 2).concat(RX.rotpower.slice(0, 3)); tag = 'red'; }
-    else { root = 'Neither strength nor sequence tested clearly deficient, so the gap is likely rate-of-force / intent: the athlete can move fast but isn\'t training the swing at high intent. Use a constraint (over/underload) protocol to teach speed.'; rx = RX.batspeed_speed; }
+    /* #352 fallout: `cmj` used to be filled for nearly every athlete because the
+       standing vertical jump was folded into it. Now that the two are separate
+       keys, a genuinely-unmeasured CMJ is simply absent — and "absent" must NOT
+       read as "tested and fine". bad() is false both when a metric graded good
+       and when it was never measured, so branch on what was actually SCREENED
+       before asserting that a cause has been ruled out. Missing metrics still
+       never count as deficient, so nothing here can invent a false red flag,
+       and the finding itself is never dropped. */
+    const POWER_KEYS = ['mbthrow', 'cmj', 'dl'];
+    const SEQ_KEYS = ['seq', 'xfactor', 'rotaccel'];
+    const screened = (keys) => keys.some((k) => !!S[k]);
+    const powerScreened = screened(POWER_KEYS);
+    const seqScreened = screened(SEQ_KEYS);
+    const powerGap = POWER_KEYS.some((k) => bad(k));
+    const seqGap = SEQ_KEYS.some((k) => bad(k));
+    const NO_POWER_SCREEN = ' The physical-power battery (rotational med-ball, counter-movement jump, trap-bar deadlift) was not measured, so a strength gap cannot be ruled out — screen it before committing to this plan.';
+    const NO_SEQ_SCREEN = ' The sequencing battery (kinematic sequence, hip–shoulder separation, rotational acceleration) was not measured, so a transfer problem cannot be ruled out — screen it before committing to this plan.';
+    if (powerGap && !seqGap) {
+      root = 'Bat speed is capped by a physical-power gap — the rotational-power and/or lower-body strength tests are below level.'
+        + (seqScreened ? ' The mechanics can transfer force, but there isn\'t enough force to transfer yet.' : NO_SEQ_SCREEN);
+      rx = RX.rotpower.concat(RX.strength.slice(0, 2));
+    } else if (seqGap && !powerGap) {
+      root = (powerScreened
+        ? 'The athlete has the physical tools but is leaking them through inefficient sequencing/separation — this is a movement-transfer problem, not a strength problem. Chasing more weight-room strength won\'t fix it.'
+        : 'Sequencing/separation is below level, which is a movement-transfer problem.' + NO_POWER_SCREEN);
+      rx = RX.batspeed_speed.concat(RX.seq.slice(0, 2));
+      tag = 'red';
+    } else if (seqGap && powerGap) {
+      root = 'Both engine and transfer are limiting bat speed — the athlete needs rotational power built AND a cleaner sequence to express it. Sequence work first so new strength has somewhere to go.';
+      rx = RX.seq.slice(0, 2).concat(RX.rotpower.slice(0, 3));
+      tag = 'red';
+    } else if (!powerScreened && !seqScreened) {
+      root = 'Bat speed is below level, but NOTHING that would explain it has been measured — neither the physical-power battery (rotational med-ball, counter-movement jump, trap-bar deadlift) nor the sequencing battery (kinematic sequence, separation, rotational acceleration) is on file. Treat the cause as unknown and screen those first: the intent work below is a holding pattern, not a diagnosis.';
+      rx = RX.batspeed_speed;
+    } else {
+      root = 'Neither strength nor sequence tested clearly deficient, so the gap is likely rate-of-force / intent: the athlete can move fast but isn\'t training the swing at high intent. Use a constraint (over/underload) protocol to teach speed.'
+        + (powerScreened ? '' : NO_POWER_SCREEN) + (seqScreened ? '' : NO_SEQ_SCREEN);
+      rx = RX.batspeed_speed;
+    }
     push({ cat: 'Power output', tag, title: 'Bat speed below level', leverage: 4, sev: sev('batspeed'),
       measured: `${V.batspeed} mph (target ≥${BM.batspeed.by[level].good} mph for ${LEVEL_NAME[level]}).`,
       root, why: 'Bat speed is the floor for exit velocity and hard-hit rate. It\'s a prerequisite for the level — but only useful when paired with on-plane efficiency.',

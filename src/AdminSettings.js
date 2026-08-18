@@ -920,15 +920,18 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+      {/* #350: capped with a scrolling body so Cancel and Assign Role stay on
+          screen when the window is short. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <h3 className="text-xl font-bold text-gray-900">Assign Role</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
             <X size={24} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
               {error}
@@ -998,7 +1001,8 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
             </div>
           )}
 
-          <div className="flex space-x-3 pt-2">
+        </div>
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
             <button
               type="button"
               onClick={onClose}
@@ -1013,7 +1017,7 @@ function AssignRoleModal({ users, onClose, onSuccess }) {
             >
               {loading ? 'Saving...' : 'Assign Role'}
             </button>
-          </div>
+        </div>
         </form>
       </div>
     </div>
@@ -3268,15 +3272,18 @@ function CreateTeamModal({ onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+      {/* #350: capped with a scrolling body so Cancel and Create Team stay on
+          screen when the window is short. */}
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
           <h3 className="text-xl font-bold text-gray-900">Create New Team</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
             <X size={24} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
               {error}
@@ -3333,7 +3340,8 @@ function CreateTeamModal({ onClose, onSuccess }) {
             </div>
           </div>
 
-          <div className="flex space-x-3">
+        </div>
+        <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
             <button
               type="button"
               onClick={onClose}
@@ -3348,7 +3356,7 @@ function CreateTeamModal({ onClose, onSuccess }) {
             >
               {loading ? 'Creating...' : 'Create Team'}
             </button>
-          </div>
+        </div>
         </form>
       </div>
     </div>

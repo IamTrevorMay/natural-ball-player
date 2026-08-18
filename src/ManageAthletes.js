@@ -621,12 +621,14 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
 
       {editingPlayer && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="border-b border-gray-200 p-6 flex items-center justify-between">
+          {/* #350: capped with a scrolling body so Cancel and Save stay on
+              screen when the window is short. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="border-b border-gray-200 p-6 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900">Edit Player Info</h3>
-              <button onClick={() => setEditingPlayer(null)} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+              <button onClick={() => setEditingPlayer(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={24} /></button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Position</label>
                 <input type="text" value={editForm.position} onChange={(e) => setEditForm({...editForm, position: e.target.value})} placeholder="e.g., SS, RHP" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -653,10 +655,10 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                   </select>
                 </div>
               </div>
-              <div className="flex space-x-3 pt-2">
-                <button onClick={() => setEditingPlayer(null)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
-                <button onClick={handleEditSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm hover:bg-blue-700 transition">Save</button>
-              </div>
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
+              <button onClick={() => setEditingPlayer(null)} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Cancel</button>
+              <button onClick={handleEditSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm hover:bg-blue-700 transition">Save</button>
             </div>
           </div>
         </div>

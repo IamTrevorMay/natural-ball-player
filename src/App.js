@@ -995,6 +995,22 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
     return () => { cancelled = true; };
   }, [userId, userRole]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // #350: Escape closes these three login popups. All three are read-only —
+  // there is nothing typed in them to throw away — and all three write their
+  // "already seen" flag when they OPEN, not when they are dismissed, so
+  // closing this way loses nothing. They can stack, so close the top one
+  // first: one press per popup, in the order they render.
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      if (showBirthday) { setShowBirthday(false); return; }
+      if (showLessonReminder) { setShowLessonReminder(false); return; }
+      if (showProfileReminder) { setShowProfileReminder(false); }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [showBirthday, showLessonReminder, showProfileReminder]);
+
   const mainCounts = useMainPortalCounts(userId, effectiveRole);
   const workCounts = useWorkPortalCounts(userId, effectiveRole);
 
@@ -1105,40 +1121,50 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
 
       {/* Profile completeness reminder modal */}
       {showProfileReminder && profileIncomplete.length > 0 && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowProfileReminder(false); }}
+        >
+          {/* #350: the missing-sections list has no fixed length, and both
+              buttons sit below it. Uncapped, a long list pushed "Go to
+              Profile" and "Dismiss" off the bottom of a `fixed` overlay that
+              the page cannot scroll. The list now scrolls; the buttons sit in
+              a footer outside it and are always reachable. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-6 pt-6 pb-4 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
                   <AlertCircle size={20} className="text-amber-600" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-lg font-bold text-gray-900">Complete Your Profile</h3>
                   <p className="text-sm text-gray-500">The following sections still need to be filled out:</p>
                 </div>
               </div>
-              <ul className="space-y-2 mb-6">
+            </div>
+            <div className="px-6 overflow-y-auto flex-1 min-h-0">
+              <ul className="space-y-2 pb-4">
                 {profileIncomplete.map((item, i) => (
-                  <li key={i} className="flex items-center gap-2 text-sm text-gray-700">
-                    <X size={14} className="text-red-400 flex-shrink-0" />
-                    {item}
+                  <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                    <X size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
+                    <span className="break-words min-w-0">{item}</span>
                   </li>
                 ))}
               </ul>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => { setShowProfileReminder(false); setCurrentView('profile'); }}
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition"
-                >
-                  Go to Profile
-                </button>
-                <button
-                  onClick={() => setShowProfileReminder(false)}
-                  className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
-                >
-                  Dismiss
-                </button>
-              </div>
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex gap-3 flex-shrink-0">
+              <button
+                onClick={() => { setShowProfileReminder(false); setCurrentView('profile'); }}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+              >
+                Go to Profile
+              </button>
+              <button
+                onClick={() => setShowProfileReminder(false)}
+                className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         </div>
@@ -1146,36 +1172,44 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
 
       {/* Private-lesson reminder modal (#234) */}
       {showLessonReminder && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowLessonReminder(false); }}
+        >
+          {/* #350 sweep: same shape as the other two login popups — capped
+              height, scrolling body, buttons in a footer — so a short window
+              (a phone held sideways) can still reach them. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-6 pt-6 pb-4 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
                   <Calendar size={20} className="text-teal-600" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-lg font-bold text-gray-900">Time for a Private Lesson?</h3>
                   <p className="text-sm text-gray-500">It's been a while since your last session.</p>
                 </div>
               </div>
-              <p className="text-sm text-gray-700 mb-6">
+            </div>
+            <div className="px-6 pb-4 overflow-y-auto flex-1 min-h-0">
+              <p className="text-sm text-gray-700">
                 Staying consistent is key to development. Book a private lesson with your coach to keep
                 building on your progress.
               </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => { setShowLessonReminder(false); setCurrentView('schedule'); }}
-                  className="flex-1 bg-teal-600 text-white py-2 rounded-lg font-medium hover:bg-teal-700 transition"
-                >
-                  Book a Session
-                </button>
-                <button
-                  onClick={() => setShowLessonReminder(false)}
-                  className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
-                >
-                  Maybe Later
-                </button>
-              </div>
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex gap-3 flex-shrink-0">
+              <button
+                onClick={() => { setShowLessonReminder(false); setCurrentView('schedule'); }}
+                className="flex-1 bg-teal-600 text-white py-2 rounded-lg font-medium hover:bg-teal-700 transition"
+              >
+                Book a Session
+              </button>
+              <button
+                onClick={() => setShowLessonReminder(false)}
+                className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg font-medium hover:bg-gray-50 transition"
+              >
+                Maybe Later
+              </button>
             </div>
           </div>
         </div>
@@ -1183,29 +1217,39 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
 
       {/* Birthday popup (#210) */}
       {showBirthday && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-pink-100 rounded-full flex items-center justify-center text-2xl">🎂</div>
-                <div>
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowBirthday(false); }}
+        >
+          {/* #350: the birthday list has no upper bound and the only dismiss
+              control sits under it, so on a day with enough shared birthdays
+              this blocking popup — which every role gets at login — pushed
+              Close off the screen and made the whole app unusable until a
+              reload. The list scrolls now and Close lives in a fixed footer. */}
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-6 pt-6 pb-4 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-pink-100 rounded-full flex items-center justify-center text-2xl flex-shrink-0">🎂</div>
+                <div className="min-w-0">
                   <h3 className="text-lg font-bold text-gray-900">
                     {birthdaySelf ? 'Happy Birthday!' : 'Birthdays Today'}
                   </h3>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-gray-500 line-clamp-2 break-words">
                     {birthdaySelf
                       ? `Wishing you a great day, ${(userName || '').split(' ')[0] || 'champ'}! 🎉`
                       : 'From everyone at Naturals 🎉'}
                   </p>
                 </div>
               </div>
+            </div>
+            <div className="px-6 pb-4 overflow-y-auto flex-1 min-h-0">
               {birthdaySelf && (
                 <p className="text-sm text-gray-700 mb-4">
                   🎉 Everyone at Naturals Baseball wishes you a fantastic birthday. Have a great one!
                 </p>
               )}
               {birthdayPlayers.length > 0 && (
-                <div className="mb-4">
+                <div>
                   <p className="text-sm font-semibold text-gray-700 mb-2">Players celebrating today:</p>
                   <ul className="space-y-1">
                     {birthdayPlayers.map(p => (
@@ -1221,7 +1265,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                           <button
                             type="button"
                             onClick={() => { setShowBirthday(false); openProfileFrom('dashboard')(p.id); }}
-                            className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5"
+                            className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1.5 text-left"
                           >
                             🎉 {p.full_name}
                           </button>
@@ -1231,6 +1275,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
                   </ul>
                 </div>
               )}
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex-shrink-0">
               <button
                 type="button"
                 onClick={() => setShowBirthday(false)}
