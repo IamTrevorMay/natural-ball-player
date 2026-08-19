@@ -91,7 +91,24 @@ function deriveGateScores(byKey) {
   const verticalPowerIn = byKey.cmj != null ? byKey.cmj : byKey.vertical_jump;
   if (verticalPowerIn != null) strParts.push(lin(verticalPowerIn, 10, 26));
   if (byKey.broad_jump != null) strParts.push(lin(byKey.broad_jump, 60, 110));
-  if (byKey.grip != null) strParts.push(lin(byKey.grip, 25, 55));
+  // #354: the band was 25-55, which is the adult normal range in KILOGRAMS —
+  // but NBP records grip in POUNDS (Nicholas, at the facility, 2026-08-19: "we
+  // don't measure in kilos"). The data agrees overwhelmingly: of 307 readings
+  // on file the range is 14-180 and 247 of them (80%) are above 55, which as
+  // kilograms would be at or beyond the human record. So every one of those 247
+  // athletes was scoring a flat 100/100 on grip, and grip alone was dragging the
+  // whole strength gate up with it.
+  //
+  // The band below is the SAME band, restated in the unit the numbers are
+  // actually in: 25 kg = 55 lb, 55 kg = 121 lb. Nothing about the engine's
+  // intent changed and no stored value was touched — only the ruler it is
+  // measured against. Effect on the live roster: average grip score 89.5 -> 60.4,
+  // athletes pinned at 100/100 on grip 247 -> 84. Throwing programmes get more
+  // conservative, which is the safe direction to be wrong in.
+  //
+  // Same class of bug as #351 (a jump height read as a deadlift max) and #352
+  // (vertical jump read as a CMJ): the number was fine, the label was lying.
+  if (byKey.grip != null) strParts.push(lin(byKey.grip, 55, 121));
   // No strength metric measured at all -> null, NOT 0. The caller leaves the
   // coach's existing slider value untouched rather than gating on a fake score.
   const str = strParts.length ? clamp(avg(strParts)) : null;
