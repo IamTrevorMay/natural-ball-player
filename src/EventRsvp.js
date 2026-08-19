@@ -58,6 +58,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory } from './userDirectory';
 import { Check, X, HelpCircle, Users, Bell, AlertTriangle, Calendar as CalendarIcon } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { expandRecurringEvents } from './scheduleUtils';
@@ -263,18 +264,23 @@ export async function saveMyRsvp(occurrence, userId, response, note = null) {
 }
 
 // Team roster (athletes only — staff on the team are not counted as
-// non-responders). team_members / users are readable by any authenticated user.
+// non-responders). `team_members` is readable by any authenticated user;
+// names come from `user_directory` rather than an embed on `users`, because a
+// blocked embed returns row.users = null on every row and the RSVP board then
+// shows a confident "0 going / 1 no response" — the athlete's own row — with
+// no error to say the rest of the team went missing.
 export async function fetchTeamPlayers(teamIds) {
   const ids = (teamIds || []).filter(Boolean);
   if (ids.length === 0) return [];
   const { data, error } = await supabase
     .from('team_members')
-    .select('user_id, team_id, users:user_id(id, full_name, role, avatar_url)')
+    .select('user_id, team_id')
     .in('team_id', ids);
   if (error) { console.error('fetchTeamPlayers: team_members query failed:', error); return []; }
+  const directory = await fetchUserDirectory((data || []).map(r => r.user_id));
   const byId = new Map();
   (data || []).forEach(row => {
-    const u = row.users;
+    const u = directory.get(row.user_id);
     if (!u || u.role === 'admin' || u.role === 'coach') return;
     byId.set(u.id, u);
   });

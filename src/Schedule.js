@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory, readDirectory } from './userDirectory';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog, LayoutGrid } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots, upsertFacilityException, deleteFacilityOccurrence, deleteFacilitySeries, deleteFacilityFuture, countFacilitySeriesImpact, countSignupsForEvents, facilitySeriesDeleteWarning, DELETE_CANCELLED } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
@@ -107,7 +108,7 @@ async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slo
     // Strength & Conditioning skill tag.)
     let coach = slotCoach;
     if ((!coach || !Array.isArray(coach.skills)) && slotCoachId) {
-      const { data } = await supabase.from('users').select('id, skills').eq('id', slotCoachId).maybeSingle();
+      const { data } = await readDirectory('staff_directory', (t) => supabase.from(t).select('id, skills').eq('id', slotCoachId).maybeSingle());
       coach = data || coach;
     }
     const bookingIsLifting = isLiftingCoach(coach);
@@ -133,7 +134,7 @@ async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slo
     const coachIds = [...new Set(rows.map(r => r.training_slots?.coach_id).filter(Boolean))];
     let skillsByCoach = {};
     if (coachIds.length > 0) {
-      const { data: coachRows } = await supabase.from('users').select('id, skills').in('id', coachIds);
+      const { data: coachRows } = await readDirectory('staff_directory', (t) => supabase.from(t).select('id, skills').in('id', coachIds));
       (coachRows || []).forEach(c => { skillsByCoach[c.id] = c.skills; });
     }
     let liftingCount = 0;
@@ -744,7 +745,10 @@ export default function Schedule({ userId, userRole }) {
 
   const fetchFacilityEvents = async () => {
     const { rangeStart, rangeEnd, startStr, endStr } = monthWeekRange(selectedDate);
-    const facSelect = '*, athlete:athlete_id(full_name), coach:coach_id(full_name)';
+    // No embeds onto `users` — see src/userDirectory.js. The athlete and coach
+    // names are attached from the directory just before setState instead, so a
+    // blocked embed cannot silently drop the "Coach:" line.
+    const facSelect = '*';
     let nrQuery = supabase.from('facility_events').select(facSelect).eq('is_recurring', false).is('recurrence_parent_id', null).gte('event_date', startStr).lte('event_date', endStr);
     let masterQuery = supabase.from('facility_events').select(facSelect).eq('is_recurring', true).is('recurrence_parent_id', null);
     let exceptionsQuery = supabase.from('facility_events').select(facSelect).not('recurrence_parent_id', 'is', null).gte('event_date', startStr).lte('event_date', endStr);
@@ -781,7 +785,14 @@ export default function Schedule({ userId, userRole }) {
         combined = [...combined, ...(signedUpEvents || [])];
       }
     }
-    setFacilityEvents(combined);
+    const facPeople = await fetchUserDirectory(
+      combined.flatMap(e => [e.athlete_id, e.coach_id])
+    );
+    setFacilityEvents(combined.map(e => ({
+      ...e,
+      athlete: e.athlete_id ? (facPeople.get(e.athlete_id) || null) : null,
+      coach: e.coach_id ? (facPeople.get(e.coach_id) || null) : null,
+    })));
   };
 
   // #289: the write half of a LaneView drag — extracted from the inline
@@ -1136,8 +1147,14 @@ export default function Schedule({ userId, userRole }) {
     setPendingSlotTimeMove({ slot, newStartTime });
   };
 
+  // Reads `staff_directory`, not `users`. This is the single most important
+  // line in the privacy change: athletes DO get the Facility tab, and opening
+  // it fires this. Against a locked `users` table it would return [], the
+  // coach drawer would read "No coaches cover All", no coach could be picked,
+  // and booking would be dead facility-wide with no error message anywhere.
   const fetchCoaches = async () => {
-    const { data } = await supabase.from('users').select('id, full_name, email, title, avatar_url, role, skills, show_on_facility_schedule').in('role', ['coach', 'admin']).order('full_name');
+    const { data, error } = await readDirectory('staff_directory', (t) => supabase.from(t).select('id, full_name, email, title, avatar_url, role, skills, show_on_facility_schedule').in('role', ['coach', 'admin']).order('full_name'));
+    if (error) console.error('fetchCoaches failed:', error);
     setCoaches(data || []);
   };
 

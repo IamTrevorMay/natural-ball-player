@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory } from './userDirectory';
 import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X, ExternalLink } from 'lucide-react';
 
 const EMBED_HOST_ALLOWLIST = new Set([
@@ -80,17 +81,20 @@ export default function KnowledgeBase({ userId, userRole }) {
   };
 
   const fetchArticles = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('knowledge_articles')
       .select(`
         *,
-        author:author_id(full_name),
         category:category_id(name, color)
       `)
       .eq('is_published', true)
       .order('created_at', { ascending: false });
-    
-    if (data) setArticles(data);
+    if (error) { console.error('fetchArticles failed:', error); return; }
+    // The author byline used to be an embed on `users`. A blocked embed returns
+    // author: null with no error, so the byline would just quietly vanish from
+    // every article. Same object shape, so the render below is untouched.
+    const authors = await fetchUserDirectory((data || []).map(a => a.author_id));
+    setArticles((data || []).map(a => ({ ...a, author: authors.get(a.author_id) || null })));
   };
 
   const handleArticleClick = async (article) => {
