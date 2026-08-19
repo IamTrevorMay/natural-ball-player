@@ -445,11 +445,33 @@ function CatalogTab() {
   );
 }
 
-function PurchasesTab() {
+// #358: staff can settle a purchase by hand.
+//
+// WHY THIS EXISTS. A purchase made through the portal's own checkout link now
+// marks itself paid — Square's webhook matches on square_order_id and flips the
+// row (proven live 2026-08-19: created 21:42, paid 21:45, no human involved).
+// But most money at NBP arrives another way: a Square invoice sent from the
+// dashboard, or a card at the front desk. Those payments carry an order id that
+// the portal has never seen, so they can never match. 140 purchases sat
+// 'pending' for two months for exactly this reason.
+//
+// There is NO key that links a Square invoice to a portal purchase —
+// square_customer_id is NULL on every one of those rows — so this cannot be
+// automated. A person has to confirm it. That is what these two buttons are.
+//
+// CANCEL, NOT DELETE (Cordell's call, 2026-08-19). Cancelling takes the
+// purchase out of the athlete's account exactly like deleting would — every
+// "does this athlete own it" check keys off status in ('active','paid') — but
+// the row survives, so the history of what was assigned and unwound is intact.
+// The DELETE policy on store_purchases is admin-only anyway; UPDATE is open to
+// admin and coach, which is why both roles can use these.
+function PurchasesTab({ userRole }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [busyId, setBusyId] = useState(null);
+  const [note, setNote] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -463,6 +485,72 @@ function PurchasesTab() {
       setLoading(false);
     })();
   }, []);
+
+  // Only rows that are genuinely unsettled can be marked paid. A row that is
+  // already paid/active must not be re-stamped — that would overwrite a real
+  // paid_at from Square with today's date and lose when the money actually
+  // landed. 'refunded' and 'canceled' are terminal and are left alone.
+  // Cordell, 2026-08-19: "1. Admins and coaches".
+  const canAct = userRole === 'admin' || userRole === 'coach';
+
+  const canMarkPaid = (r) => ['pending', 'failed', 'past_due'].includes(r.status);
+  const canCancel   = (r) => !['canceled', 'refunded'].includes(r.status);
+
+  const money = (r) => `$${((r.discounted_price_cents ?? r.amount_cents) / 100).toFixed(2)}`;
+
+  // Both actions go through here. Every Supabase call in this file historically
+  // dropped `error` on the floor, which is how a failed write came to look
+  // exactly like a successful one (see the #272 end_time bug). Destructure it,
+  // check it, and say so on screen.
+  const applyUpdate = async (row, patch, verb) => {
+    setBusyId(row.id);
+    setNote(null);
+    const { data, error } = await supabase
+      .from('store_purchases')
+      .update(patch)
+      .eq('id', row.id)
+      .select('*, user:users!store_purchases_user_id_fkey(full_name, email)');
+    setBusyId(null);
+
+    if (error) {
+      setNote({ kind: 'error', text: `Could not ${verb}: ${error.message}` });
+      return;
+    }
+    // RLS returns success with zero rows when the policy blocks the write, so
+    // an empty array is a silent failure, not a success. Treat it as one.
+    if (!data || data.length === 0) {
+      setNote({ kind: 'error', text: `Could not ${verb} — the change was refused. You may not have permission, or the purchase no longer exists.` });
+      return;
+    }
+    setRows(prev => prev.map(r => (r.id === row.id ? data[0] : r)));
+    setNote({ kind: 'ok', text: `${row.user?.full_name || 'Purchase'} — ${row.product_name_snapshot} ${verb === 'mark this as paid' ? 'marked as paid' : 'cancelled'}.` });
+  };
+
+  const markPaid = (r) => {
+    const ok = window.confirm(
+      `Mark this as PAID?\n\n` +
+      `${r.user?.full_name || 'Unknown'} — ${r.product_name_snapshot}\n${money(r)}\n\n` +
+      `Only do this if the money has actually arrived in Square or in person. ` +
+      `The athlete will immediately be able to use it.\n\n` +
+      `This does not set an expiry date. If this pack should expire, use "Set expiration" on the athlete's packages afterwards.`
+    );
+    if (!ok) return;
+    applyUpdate(r, { status: 'paid', paid_at: new Date().toISOString() }, 'mark this as paid');
+  };
+
+  const cancelPurchase = (r) => {
+    const warnPaid = ['paid', 'active'].includes(r.status)
+      ? `\n\n\u26a0\ufe0f This one is already marked ${r.status}. Cancelling it takes it out of the athlete's account. If money was actually taken, refund it in Square as well \u2014 this button does not move any money.`
+      : '';
+    const ok = window.confirm(
+      `Cancel this purchase?\n\n` +
+      `${r.user?.full_name || 'Unknown'} — ${r.product_name_snapshot}\n${money(r)}\n\n` +
+      `It stops counting towards what the athlete owns and disappears from their account. ` +
+      `The record is kept, so this can be undone by marking it paid again.${warnPaid}`
+    );
+    if (!ok) return;
+    applyUpdate(r, { status: 'canceled' }, 'cancel this purchase');
+  };
 
   const filtered = rows.filter(r => {
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
@@ -499,6 +587,16 @@ function PurchasesTab() {
         </select>
       </div>
 
+      {note && (
+        <div className={`rounded-lg px-4 py-3 text-sm ${
+          note.kind === 'error'
+            ? 'bg-red-50 border border-red-200 text-red-800'
+            : 'bg-green-50 border border-green-200 text-green-800'
+        }`}>
+          {note.text}
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-12 text-gray-500">Loading…</div>
       ) : filtered.length === 0 ? (
@@ -514,6 +612,9 @@ function PurchasesTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kind</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                {canAct && (
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Actions</th>
+                )}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -532,6 +633,35 @@ function PurchasesTab() {
                       {r.status}
                     </span>
                   </td>
+                  {canAct && (
+                    <td className="px-4 py-2 text-sm text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-2">
+                        {canMarkPaid(r) && (
+                          <button
+                            onClick={() => markPaid(r)}
+                            disabled={busyId === r.id}
+                            title="Record that this was paid in Square or in person"
+                            className="border border-green-600 text-green-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-green-50 transition disabled:opacity-50"
+                          >
+                            {busyId === r.id ? 'Saving…' : 'Mark as paid'}
+                          </button>
+                        )}
+                        {canCancel(r) && (
+                          <button
+                            onClick={() => cancelPurchase(r)}
+                            disabled={busyId === r.id}
+                            title="Take this out of the athlete's account. The record is kept."
+                            className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50"
+                          >
+                            {busyId === r.id ? 'Saving…' : 'Cancel'}
+                          </button>
+                        )}
+                        {!canMarkPaid(r) && !canCancel(r) && (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -758,8 +888,35 @@ function PackagesTab() {
   );
 }
 
-export default function WorkStore() {
-  const [tab, setTab] = useState('catalog');
+// #358: coaches reach this screen now, but only the Purchases tab.
+//
+// Cordell asked for admins AND coaches to be able to settle a purchase. This
+// component was mounted for admins only, so honouring that meant letting
+// coaches in — but the Catalog tab creates, edits and DELETES products, and
+// Duplicate Products merges them. Handing a coach the product catalogue is a
+// far bigger change than "let a coach mark a purchase paid", and nobody asked
+// for it. So the tab row is filtered by role rather than the door being opened
+// wider than the request. Admins see all six exactly as before.
+const STORE_TABS = [
+  { key: 'catalog',    label: 'Catalog',            Icon: ShoppingBag, adminOnly: true },
+  { key: 'purchases',  label: 'Purchases',          Icon: ListChecks,  adminOnly: false },
+  { key: 'packages',   label: 'Packages',           Icon: Package,     adminOnly: true },
+  { key: 'backfill',   label: 'Backfill History',   Icon: History,     adminOnly: true },
+  { key: 'bulk-tag',   label: 'Bulk Tag Sessions',  Icon: Tag,         adminOnly: false },
+  { key: 'duplicates', label: 'Duplicate Products', Icon: Layers,      adminOnly: true },
+];
+
+export default function WorkStore({ userRole }) {
+  const isAdmin = userRole === 'admin';
+  const tabs = STORE_TABS.filter(t => isAdmin || !t.adminOnly);
+  const [tab, setTab] = useState(isAdmin ? 'catalog' : 'purchases');
+
+  // A coach must never land on an admin tab — not via a stale value, and not
+  // via a role that changes under them mid-session. Falling back to the first
+  // tab they ARE allowed beats rendering nothing, which is how a blank page
+  // with no explanation happens.
+  const activeTab = tabs.some(t => t.key === tab) ? tab : tabs[0].key;
+
   return (
     <div className="space-y-4">
       {/* QA 2026-08-15: the six tabs were a 787px un-wrapping, un-scrolling row,
@@ -770,69 +927,25 @@ export default function WorkStore() {
           and `whitespace-nowrap` stops the labels breaking mid-word. */}
       <div className="overflow-x-auto">
         <div className="flex space-x-2 min-w-max border-b border-gray-200">
-          <button
-            onClick={() => setTab('catalog')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
-              tab === 'catalog' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <ShoppingBag size={16} />
-            <span>Catalog</span>
-          </button>
-          <button
-            onClick={() => setTab('purchases')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
-              tab === 'purchases' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <ListChecks size={16} />
-            <span>Purchases</span>
-          </button>
-          <button
-            onClick={() => setTab('packages')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
-              tab === 'packages' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <Package size={16} />
-            <span>Packages</span>
-          </button>
-          <button
-            onClick={() => setTab('backfill')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
-              tab === 'backfill' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <History size={16} />
-            <span>Backfill History</span>
-          </button>
-          <button
-            onClick={() => setTab('bulk-tag')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
-              tab === 'bulk-tag' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <Tag size={16} />
-            <span>Bulk Tag Sessions</span>
-          </button>
-          {/* #276/#305: WorkStore is only mounted for admins (WorkPortal gates it),
-              and DuplicateProducts re-checks the role itself before showing data. */}
-          <button
-            onClick={() => setTab('duplicates')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
-              tab === 'duplicates' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <Layers size={16} />
-            <span>Duplicate Products</span>
-          </button>
+          {tabs.map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center space-x-2 whitespace-nowrap ${
+                activeTab === key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon size={16} />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
       </div>
-      {tab === 'catalog' ? <CatalogTab />
-        : tab === 'purchases' ? <PurchasesTab />
-        : tab === 'packages' ? <PackagesTab />
-        : tab === 'bulk-tag' ? <BulkTagSessions />
-        : tab === 'duplicates' ? <DuplicateProducts />
+      {activeTab === 'catalog' ? <CatalogTab />
+        : activeTab === 'purchases' ? <PurchasesTab userRole={userRole} />
+        : activeTab === 'packages' ? <PackagesTab />
+        : activeTab === 'bulk-tag' ? <BulkTagSessions />
+        : activeTab === 'duplicates' ? <DuplicateProducts />
         : <BackfillHistory />}
     </div>
   );
