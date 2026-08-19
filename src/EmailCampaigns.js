@@ -13,13 +13,18 @@ import { formatUserError } from './errorMessage';
  * Preview and Send) and the live recipient count repeated in every step
  * header.
  *
- * ⚠️ Phase 1 has NO Send Blast button — deliberately, not as an oversight.
- * There are 937 real email addresses behind this screen. The only send in
- * Phase 1 is "Send Test", which emails exactly one person: the logged-in
- * admin, through the existing single-recipient send-email function. The
- * blast path (its own edge function, idempotent per-recipient tracking,
- * type-the-count confirmation) is Phase 2, built only after this ships and
- * the email_* tables exist.
+ * ⚠️ Phase 2 adds Send Blast — the only irreversible button in the app.
+ * There are 937 real email addresses behind this screen. The protections,
+ * in order: the recipient list is snapshotted into email_campaign_recipients
+ * BEFORE anything sends (frozen at commit time — a signup mid-send changes
+ * nothing); the admin must TYPE the exact recipient count to confirm; the
+ * send-campaign edge function is admin-only, reads recipients server-side
+ * by campaign id (never from the browser), verifies the snapshot matches
+ * the confirmed count, skips blacklisted addresses (recorded as 'skipped'),
+ * writes per-recipient results as it goes, and is idempotent — re-invoking
+ * skips everyone already sent, so a double click or a retry cannot
+ * double-send. Every campaign email carries a per-recipient unsubscribe
+ * link. "Send Test" (one email, to the admin, via send-email) is unchanged.
  *
  * The recipient COUNT and the recipient LIST must never diverge, so both
  * derive from the same query builder (buildRecipientQuery) — the count is
@@ -79,6 +84,11 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
   const [sendingTest, setSendingTest] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [myProfile, setMyProfile] = useState(null);
+
+  // Step 4 — Send Blast (#281 Phase 2). One state machine so a second run
+  // cannot start while one is in flight: null → 'confirm' → 'snapshotting'
+  // → 'sending' → 'done' | 'error'.
+  const [blast, setBlast] = useState(null); // { phase, confirmText, confirmedCount, campaignId, tally, error }
 
   useEffect(() => {
     (async () => {
@@ -232,6 +242,124 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
       setTestResult({ type: 'error', message: err.message || 'Network error' });
     } finally {
       setSendingTest(false);
+    }
+  };
+
+  // ---- Send Blast (#281 Phase 2) -------------------------------------
+  const blastBusy = !!blast && ['snapshotting', 'sending'].includes(blast.phase);
+  const canOpenBlastConfirm = !!subject.trim() && !bodyIsEmpty && (count || 0) >= 1 && !blastBusy;
+
+  const readTally = async (campaignId) => {
+    const { data, error } = await supabase
+      .from('email_campaign_recipients')
+      .select('status')
+      .eq('campaign_id', campaignId)
+      .range(0, 9999);
+    if (error) { console.error('EmailCampaigns: tally query failed:', error); return null; }
+    const tally = { sent: 0, failed: 0, skipped: 0, pending: 0, total: (data || []).length };
+    (data || []).forEach(r => { if (tally[r.status] !== undefined) tally[r.status] += 1; });
+    return tally;
+  };
+
+  const invokeSendCampaign = async (campaignId, { retryFailed = false } = {}) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+    const res = await fetch(`${supabaseUrl}/functions/v1/send-campaign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ campaignId, retryFailed }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* non-JSON body */ }
+    if (!res.ok) throw new Error(data.error || `send-campaign returned status ${res.status}`);
+    return data;
+  };
+
+  // Drives 'sending': invokes the function (re-invoking on { resume: true } —
+  // idempotency makes resumption safe) while polling live tallies from the
+  // database, which is the source of truth for progress.
+  const runSend = async (campaignId, { retryFailed = false } = {}) => {
+    setBlast(prev => ({ ...prev, phase: 'sending', campaignId, error: null }));
+    const poll = setInterval(async () => {
+      const tally = await readTally(campaignId);
+      if (tally) setBlast(prev => (prev && prev.campaignId === campaignId ? { ...prev, tally } : prev));
+    }, 1500);
+    try {
+      let result = await invokeSendCampaign(campaignId, { retryFailed });
+      let hops = 0;
+      while (result.resume && hops < 20) {
+        result = await invokeSendCampaign(campaignId);
+        hops += 1;
+      }
+      const tally = await readTally(campaignId);
+      setBlast(prev => ({ ...prev, phase: 'done', tally: tally || prev?.tally || null }));
+    } catch (err) {
+      const tally = await readTally(campaignId);
+      setBlast(prev => ({ ...prev, phase: 'error', error: err.message, tally: tally || prev?.tally || null }));
+    } finally {
+      clearInterval(poll);
+    }
+  };
+
+  // The commit point. Everything before the invoke is reversible; the order
+  // here is the safety: re-verify the count, freeze the snapshot, and only
+  // then hand the campaign id (nothing else) to the server.
+  const handleConfirmedBlast = async () => {
+    const confirmedCount = blast?.confirmedCount;
+    setBlast(prev => ({ ...prev, phase: 'snapshotting', error: null }));
+    let campaignId = null;
+    try {
+      // 1. The list must still match the number the admin typed.
+      const { count: liveCount, error: recountError } = await buildRecipientQuery('id', { head: true });
+      if (recountError) throw new Error(`Could not re-verify the recipient count: ${formatUserError(recountError)}`);
+      if (liveCount !== confirmedCount) {
+        throw new Error(`The recipient list changed (now ${liveCount}, you confirmed ${confirmedCount}). Nothing was sent — please re-check and confirm again.`);
+      }
+
+      // 2. Freeze the list — same query the count came from.
+      const { data: recipients, error: listError } = await buildRecipientQuery('id, email').range(0, 9999);
+      if (listError) throw new Error(`Could not load the recipient list: ${formatUserError(listError)}`);
+      if (!recipients || recipients.length !== confirmedCount) {
+        throw new Error(`Recipient list loaded ${recipients?.length ?? 0} rows but the confirmed count is ${confirmedCount}. Nothing was sent.`);
+      }
+
+      // 3. The campaign row the server will trust.
+      const { data: campaign, error: campaignError } = await supabase
+        .from('email_campaigns')
+        .insert({
+          created_by: userId,
+          subject: subject.trim(),
+          body_html: DOMPurify.sanitize(bodyHtml),
+          return_email: returnEmail || null,
+          recipient_filter: { category, filters },
+          recipient_count: confirmedCount,
+          status: 'draft',
+        })
+        .select('id')
+        .single();
+      if (campaignError) throw new Error(`Could not create the campaign: ${formatUserError(campaignError)}`);
+      campaignId = campaign.id;
+
+      // 4. Snapshot rows (unsubscribe tokens are generated by the database).
+      for (let i = 0; i < recipients.length; i += 500) {
+        const chunk = recipients.slice(i, i + 500).map(r => ({ campaign_id: campaignId, user_id: r.id, email: r.email }));
+        const { error: insertError } = await supabase.from('email_campaign_recipients').insert(chunk);
+        if (insertError) throw new Error(`Could not snapshot recipients: ${formatUserError(insertError)}`);
+      }
+
+      // 5. Send. From here on the server owns the run.
+      await runSend(campaignId);
+    } catch (err) {
+      // A failed snapshot must not leave a half-frozen draft behind.
+      if (campaignId) {
+        const { error: cleanupError } = await supabase.from('email_campaigns').delete().eq('id', campaignId).eq('status', 'draft');
+        if (cleanupError) console.error('EmailCampaigns: draft cleanup failed:', cleanupError);
+      }
+      setBlast(prev => ({ ...prev, phase: 'error', error: err.message }));
     }
   };
 
@@ -433,11 +561,66 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
               <div className="prose prose-sm max-w-none bg-white rounded-lg border border-gray-200 p-5" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(bodyHtml) }} />
             )}
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-            <span className="font-semibold">Phase 1:</span> sending a blast is not built yet — on purpose. The only send here is a
-            test to your own address ({myProfile?.email || 'your account email'}). The blast path ships separately with its own
-            per-recipient tracking and a type-the-count confirmation.
-          </div>
+          {!blast && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
+              <span className="font-semibold">Send Blast is irreversible.</span> It emails every one of the {countLabel} recipients
+              above and cannot be recalled. Confirming requires typing the exact recipient count. Send yourself a test first
+              ({myProfile?.email || 'your account email'}).
+            </div>
+          )}
+          {blast && ['snapshotting', 'sending'].includes(blast.phase) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800 space-y-1">
+              <p className="font-semibold">{blast.phase === 'snapshotting' ? 'Freezing the recipient list…' : 'Sending…'}</p>
+              {blast.tally && (
+                <p>
+                  {blast.tally.sent} sent · {blast.tally.failed} failed · {blast.tally.skipped} skipped ·{' '}
+                  {blast.tally.pending} remaining of {blast.tally.total}
+                </p>
+              )}
+              <p className="text-xs">Leave this screen open until it finishes. A second send cannot start while this runs.</p>
+            </div>
+          )}
+          {blast && blast.phase === 'done' && blast.tally && (
+            <div className={`rounded-lg px-4 py-3 text-sm space-y-2 ${blast.tally.failed > 0 ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-green-50 border border-green-200 text-green-800'}`}>
+              <p className="font-semibold">
+                Blast finished: {blast.tally.sent} sent, {blast.tally.failed} failed, {blast.tally.skipped} skipped
+                {blast.tally.skipped > 0 ? ' (blacklisted)' : ''}.
+              </p>
+              <div className="flex items-center space-x-3">
+                <button type="button" onClick={() => onSectionChange('history')} className="text-sm font-medium underline">
+                  View in Campaign History
+                </button>
+                {blast.tally.failed > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => runSend(blast.campaignId, { retryFailed: true })}
+                    className="text-sm font-medium underline"
+                  >
+                    Retry failed only ({blast.tally.failed})
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {blast && blast.phase === 'error' && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800 space-y-2">
+              <p><span className="font-semibold">The blast did not complete:</span> {blast.error}</p>
+              {blast.tally && (
+                <p>{blast.tally.sent} sent · {blast.tally.failed} failed · {blast.tally.skipped} skipped · {blast.tally.pending} still pending of {blast.tally.total}.</p>
+              )}
+              {blast.campaignId ? (
+                <button
+                  type="button"
+                  onClick={() => runSend(blast.campaignId)}
+                  className="text-sm font-medium underline"
+                >
+                  Resume this campaign (skips everyone already sent)
+                </button>
+              ) : (
+                <p className="text-xs">Nothing was sent. Fix the issue and confirm again.</p>
+              )}
+            </div>
+          )}
           {testResult && (
             <div className={`rounded-lg px-4 py-3 text-sm ${testResult.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
               {testResult.message}
@@ -466,6 +649,19 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
           >
             {sendingTest ? 'Sending test…' : 'Send Test'}
           </button>
+          {step === 4 && (
+            <button
+              type="button"
+              onClick={() => setBlast({ phase: 'confirm', confirmText: '', confirmedCount: count, campaignId: null, tally: null, error: null })}
+              disabled={!canOpenBlastConfirm}
+              title={canOpenBlastConfirm
+                ? `Sends to all ${count} recipients — requires typing the count to confirm`
+                : 'Needs a subject, a message, and at least 1 recipient'}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {blastBusy ? 'Sending…' : 'Send Blast'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setStep(s => Math.min(4, s + 1))}
@@ -521,6 +717,50 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
           {section === 'failed' && renderPlaceholder('Failed Emails', 'Addresses that bounced or complained land here and are skipped by future blasts. Populated automatically once the blast path (Phase 2) exists.')}
         </div>
       </div>
+
+      {/* #281 Phase 2: the last thing between a mis-click and the whole list —
+          the admin must TYPE the exact recipient count. */}
+      {blast && blast.phase === 'confirm' && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Send this blast?</h3>
+            <p className="text-sm text-gray-700 mb-1">
+              This sends to <span className="font-bold">{blast.confirmedCount} recipients</span> ({activeCategoryLabel}).
+              <span className="font-semibold"> It cannot be undone.</span>
+            </p>
+            <p className="text-sm text-gray-500 mb-4">Type the recipient count to confirm.</p>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoFocus
+              value={blast.confirmText}
+              onChange={(e) => setBlast(prev => ({ ...prev, confirmText: e.target.value }))}
+              placeholder={String(blast.confirmedCount)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 mb-1"
+            />
+            {blast.confirmText.trim() !== '' && blast.confirmText.trim() !== String(blast.confirmedCount) && (
+              <p className="text-xs text-red-600 mb-2">That does not match the recipient count.</p>
+            )}
+            <div className="flex justify-end space-x-3 mt-4">
+              <button
+                type="button"
+                onClick={() => setBlast(null)}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmedBlast}
+                disabled={blast.confirmText.trim() !== String(blast.confirmedCount)}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Send to {blast.confirmedCount} recipients
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
