@@ -3,7 +3,7 @@ import {
   Briefcase, Home, Calendar, MessageSquare, DollarSign,
   FileText, Users, Map, ArrowLeftRight, Menu, X,
   Upload, CheckSquare, Megaphone, FolderOpen, ChevronDown, ChevronRight,
-  ShoppingBag, UserPlus, BarChart3, Tag, Send
+  ShoppingBag, UserPlus, BarChart3, Tag, Send, ListChecks
 } from 'lucide-react';
 import WorkHome from './WorkHome';
 import WorkDirectory from './WorkDirectory';
@@ -192,8 +192,12 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
         return <WorkMyFinancesHub userId={userId} userRole={userRole} />;
       case 'work-admin-invoices':
         return userRole === 'admin' ? <WorkInvoices userId={userId} userRole={userRole} /> : <ComingSoon viewKey={currentView} />;
+      // #358: coaches get in too, but WorkStore filters its own tabs by role —
+      // a coach sees Purchases and Bulk Tag Sessions, not the product catalogue.
       case 'work-admin-store':
-        return userRole === 'admin' ? <WorkStore /> : <ComingSoon viewKey={currentView} />;
+        return (userRole === 'admin' || userRole === 'coach')
+          ? <WorkStore userRole={userRole} />
+          : <ComingSoon viewKey={currentView} />;
       // #311: BulkTagSessions renders directly — it's already a standalone,
       // zero-prop component (imported into WorkStore.js, not defined there),
       // so this reaches it without pulling in WorkStore's catalog/purchases/
@@ -346,6 +350,16 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
             second, redundant path to the same tool. */}
         {userRole === 'coach' && (
           <NavItem id="work-bulk-tag" icon={Tag} label="Bulk Tag Sessions" />
+        )}
+        {/* #358: coach-only door to the Purchases tab, so a coach can settle a
+            purchase that was paid in Square or in person. Same pattern as
+            Bulk Tag Sessions above. Admins reach it under Admin > Store, which
+            is why this stays out of their nav — one path each, no duplicates.
+            WorkStore hides the Catalog/Packages/Backfill/Duplicates tabs from
+            coaches, so this opens on Purchases and shows nothing else they
+            should not have. */}
+        {userRole === 'coach' && (
+          <NavItem id="work-admin-store" icon={ListChecks} label="Purchases" />
         )}
 
         {isAdmin && (
