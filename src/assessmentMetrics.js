@@ -72,7 +72,9 @@ export const ASSESSMENT_METRICS = [
   { key: 'dl',           label: 'Trap-bar deadlift (× BW)',         group: 'Strength & Power', unit: '× BW' },
   { key: 'back_squat',   label: 'Back squat 1RM',                   group: 'Strength & Power', unit: 'lb' },
   { key: 'bench',        label: 'Bench press 1RM',                  group: 'Strength & Power', unit: 'lb' },
-  { key: 'grip',         label: 'Grip strength',                    group: 'Strength & Power', unit: 'kg' },
+  // #354: POUNDS, not kg. The unit shown here is what coaches see beside the
+  // box when they enter a reading, so a wrong label here teaches wrong data in.
+  { key: 'grip',         label: 'Grip strength',                    group: 'Strength & Power', unit: 'lb' },
 
   // ---- Mobility / Screen ----
   { key: 'hipir',              label: 'Hip internal rotation',   group: 'Mobility / Screen', unit: '°' },
