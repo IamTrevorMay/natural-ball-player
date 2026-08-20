@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory, readDirectory } from './userDirectory';
 import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip, Search } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
@@ -396,7 +397,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchAssessmentData();
     fetchPtVisits();
     fetchCommunicationLogs();
-    supabase.from('users').select('id, full_name').in('role', ['coach', 'admin']).order('full_name').then(({ data }) => {
+    readDirectory('staff_directory', (t) => supabase.from(t).select('id, full_name').in('role', ['coach', 'admin']).order('full_name')).then(({ data }) => {
       if (!cancelled) setAllCoaches(data || []);
     }).catch((e) => console.error('coach list fetch failed:', e));
     return () => { cancelled = true; };
@@ -412,7 +413,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     // rapid userData change doesn't write a stale trainer name into state.
     const trainerId = userData?._profile?.trainer_id;
     if (trainerId) {
-      supabase.from('users').select('full_name').eq('id', trainerId).single().then(({ data }) => {
+      readDirectory('staff_directory', (t) => supabase.from(t).select('full_name').eq('id', trainerId).maybeSingle()).then(({ data }) => {
         if (!cancelled && data) setTrainerName(data.full_name);
       }).catch((e) => console.error('trainer name fetch failed:', e));
     } else {
@@ -1026,11 +1027,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     try {
       const { data, error } = await supabase
         .from('pt_visits')
-        .select('*, author:created_by(full_name)')
+        .select('*')
         .eq('player_id', userId)
         .order('visit_date', { ascending: false });
       if (error) throw error;
-      setPtVisits(data || []);
+      // Athletes read their own PT visits, so this runs for them too.
+      const ptAuthors = await fetchUserDirectory((data || []).map(v => v.created_by));
+      setPtVisits((data || []).map(v => ({ ...v, author: ptAuthors.get(v.created_by) || null })));
     } catch (error) {
       console.error('Error fetching PT visits:', error);
     }
@@ -1558,12 +1561,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setAssessmentTemplates(templates || []);
 
       // Fetch completed submissions for this player
-      const { data: subs } = await supabase
+      const { data: subs, error: subsError } = await supabase
         .from('assessment_submissions')
-        .select('*, assessment_templates(name, schema), assessor:users!assessment_submissions_assessed_by_fkey(full_name)')
+        .select('*, assessment_templates(name, schema)')
         .eq('player_id', userId)
         .order('created_at', { ascending: false });
-      setAssessmentSubmissions(subs || []);
+      if (subsError) console.error('assessment submissions fetch failed:', subsError);
+      // "Assessed by" used to embed `users`. An athlete reads their own
+      // submissions, so this runs for them — a blocked embed would print
+      // "Assessed by Unknown" on every assessment with no error anywhere.
+      const assessors = await fetchUserDirectory((subs || []).map(s => s.assessed_by));
+      setAssessmentSubmissions((subs || []).map(s => ({
+        ...s, assessor: assessors.get(s.assessed_by) || null,
+      })));
 
       // Fetch medical history status
       const { data: mh } = await supabase

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory } from './userDirectory';
 import { Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTriangle } from 'lucide-react';
 import WhoopCommunityCodeCard from './WhoopCommunityCode';
 // #277: "My RSVPs" — upcoming team events with this player's current answer,
@@ -190,7 +191,7 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView, 
       if (convIds.length > 0) {
         const { data: allMessages } = await supabase
           .from('messages')
-          .select('id, content, created_at, sender_id, users:sender_id(full_name)')
+          .select('id, content, created_at, sender_id')
           .in('conversation_id', convIds)
           .neq('sender_id', userId)
           .order('created_at', { ascending: false })
@@ -207,11 +208,16 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView, 
           readIds = new Set((reads || []).map(r => r.message_id));
         }
 
-        (allMessages || []).filter(m => !readIds.has(m.id)).slice(0, 5).forEach(m => {
+        // Sender names come from user_directory rather than an embed on
+        // `users`, which would silently degrade every notification to
+        // "Someone sent you a message".
+        const unread = (allMessages || []).filter(m => !readIds.has(m.id)).slice(0, 5);
+        const senders = await fetchUserDirectory(unread.map(m => m.sender_id));
+        unread.forEach(m => {
           notifs.push({
             id: m.id,
             type: 'message',
-            text: `${m.users?.full_name || 'Someone'} sent you a message`,
+            text: `${senders.get(m.sender_id)?.full_name || 'Someone'} sent you a message`,
             detail: m.content?.substring(0, 60) || '',
             time: m.created_at,
           });

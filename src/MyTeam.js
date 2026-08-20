@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory, readDirectory } from './userDirectory';
 import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio, CheckCircle } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 import { formatUserError } from './errorMessage';
@@ -48,12 +49,31 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
 
   const fetchProspects = async (teamId) => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('prospects')
-        .select('*, users:player_id(full_name, email)')
+        .select('*')
         .eq('team_id', teamId)
         .order('created_at', { ascending: false });
-      setProspects(data || []);
+      if (error) { console.error('Error fetching prospects:', error); return; }
+
+      // The embed here only ever supplied `users.email`, for the "Email
+      // prospect" button — which is already inside a staff-only `canEdit`
+      // block. The fetch was NOT gated though, so athletes on the team were
+      // being sent their teammates' email addresses in the payload for a
+      // button they can't see. Fetch it for staff only.
+      const isStaffViewer = userRole === 'admin' || userRole === 'coach';
+      const prospectIds = (data || []).map(p => p.player_id).filter(Boolean);
+      let emailByUser = new Map();
+      if (isStaffViewer && prospectIds.length > 0) {
+        const { data: contacts, error: contactsError } = await supabase
+          .from('users').select('id, email').in('id', prospectIds);
+        if (contactsError) console.error('Error fetching prospect emails:', contactsError);
+        else emailByUser = new Map((contacts || []).map(u => [u.id, u.email]));
+      }
+      setProspects((data || []).map(p => ({
+        ...p,
+        users: emailByUser.has(p.player_id) ? { email: emailByUser.get(p.player_id) } : null,
+      })));
     } catch (err) {
       console.error('Error fetching prospects:', err);
     }
@@ -142,62 +162,85 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
       if (team) setTeamData(team);
 
       // Athlete privacy: PlayerCard renders neither email nor phone, so athletes
-      // must not receive their teammates' contact details at all — don't select
-      // the columns for them. Staff still get the full roster row.
+      // must not receive their teammates' contact details at all — they read the
+      // name-only directory. Staff still get the full roster row.
       const isAthleteViewer = userRole === 'player';
-      const contactCols = isAthleteViewer ? '' : '\n            email,\n            phone,';
 
-      // Get all team members in one query, then split by users.role
-      const { data: allMembers } = await supabase
+      // Three plain reads instead of one nested embed. The old shape was
+      //   team_members -> users( ... player_profiles( ... ) )
+      // which cannot survive the users lockdown: PostgREST returns the outer
+      // row with `users: null` when it may not follow the embed, so the loop
+      // below would skip every member and the Roster and Coaches tabs would
+      // quietly contain only the athlete themselves — no error, no clue why.
+      const { data: allMembers, error: membersError } = await supabase
         .from('team_members')
-        .select(`
-          user_id,
-          role,
-          users(
-            id,
-            full_name,${contactCols}
-            role,
-            player_profiles!player_profiles_user_id_fkey(
-              jersey_number,
-              position,
-              grade,
-              bats,
-              throws
-            )
-          )
-        `)
-        .eq('team_id', teamId)
-        .order('users(full_name)');
+        .select('user_id, role')
+        .eq('team_id', teamId);
+      if (membersError) console.error('MyTeam: team_members query failed:', membersError);
+
+      const memberIds = (allMembers || []).map(m => m.user_id).filter(Boolean);
+
+      // An empty team short-circuits: `.in('id', [])` is not a query worth
+      // sending, and some PostgREST versions reject the empty list outright.
+      let memberDirectory = new Map();
+      let profilesByUser = new Map();
+      if (memberIds.length > 0) {
+        // Staff still read `users` directly — that stays allowed for them after
+        // the lockdown, and they legitimately need teammate contact details.
+        // Athletes get names and roles only, exactly as PlayerCard renders.
+        const [directoryResult, profilesRes] = await Promise.all([
+          isAthleteViewer
+            ? fetchUserDirectory(memberIds)
+            : supabase.from('users').select('id, full_name, email, phone, role').in('id', memberIds)
+                .then(({ data, error }) => {
+                  if (error) console.error('MyTeam: users query failed:', error);
+                  return new Map((data || []).map(u => [u.id, u]));
+                }),
+          supabase.from('player_profiles')
+            .select('user_id, jersey_number, position, grade, bats, throws')
+            .in('user_id', memberIds),
+        ]);
+        if (profilesRes.error) console.error('MyTeam: player_profiles query failed:', profilesRes.error);
+        memberDirectory = directoryResult;
+        (profilesRes.data || []).forEach(p => {
+          if (!profilesByUser.has(p.user_id)) profilesByUser.set(p.user_id, p);
+        });
+      }
 
       if (allMembers) {
         const coachRows = [];
         const playerRows = [];
         for (const m of allMembers) {
-          // A team_members row whose users row is missing or not readable comes
-          // back as `users: null` — PostgREST still returns the outer row when the
-          // embedded join is blocked or the target row is gone. Skip it rather than
-          // dereferencing null: a roster entry with no user isn't renderable, and
-          // reading m.users.player_profiles on one white-screened the roster tab.
-          if (!m.users) continue;
-          const memberUserRole = m.users.role;
+          // A team_members row whose user is missing or not readable is skipped
+          // rather than dereferenced: a roster entry with no user isn't
+          // renderable, and reading .player_profiles on one white-screened the
+          // roster tab once already.
+          const memberUser = memberDirectory.get(m.user_id);
+          if (!memberUser) continue;
+          const memberUserRole = memberUser.role;
           if (memberUserRole === 'admin' || memberUserRole === 'coach') {
-            coachRows.push({ ...m.users, role: m.role });
+            coachRows.push({ ...memberUser, role: m.role });
           } else {
             playerRows.push({
-              ...m.users,
+              ...memberUser,
               role: m.role,
-              player_profile: m.users.player_profiles?.[0]
+              player_profile: profilesByUser.get(m.user_id)
             });
           }
         }
+        // The old query sorted with .order('users(full_name)'); with the embed
+        // gone that has to happen here or the roster comes back unordered.
+        const byFullName = (a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''));
+        coachRows.sort(byFullName);
+        playerRows.sort(byFullName);
 
         // CoachCard still shows staff work email/phone to everyone (intentional),
         // so athletes fetch those separately — for coaches only, never teammates.
         if (isAthleteViewer && coachRows.length > 0) {
-          const { data: coachContacts, error: coachContactsError } = await supabase
-            .from('users')
+          const { data: coachContacts, error: coachContactsError } = await readDirectory('staff_directory', (t) => supabase
+            .from(t)
             .select('id, email, phone')
-            .in('id', coachRows.map(c => c.id));
+            .in('id', coachRows.map(c => c.id)));
           if (coachContactsError) {
             console.error('Error fetching coach contact info:', coachContactsError);
           } else {

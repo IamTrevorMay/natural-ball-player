@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { fetchUserDirectory, readDirectory } from './userDirectory';
 import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
 import { formatUserError } from './errorMessage';
@@ -142,7 +143,7 @@ export default function Messages({ userId, userRole }) {
     const [{ data: parts }, { data: convMsgs }, { data: myReads }] = await Promise.all([
       supabase
         .from('conversation_participants')
-        .select('conversation_id, user_id, users:user_id(full_name)')
+        .select('conversation_id, user_id')
         .in('conversation_id', conversationIds),
       supabase
         .from('messages')
@@ -154,9 +155,14 @@ export default function Messages({ userId, userRole }) {
         .select('message_id')
         .eq('user_id', userId),
     ]);
+    // Peer names come from user_directory, not an embed on `users`. Without
+    // this every DM in the list is titled "Direct Message" and the threads
+    // become impossible to tell apart — with no error to explain why.
+    const partNames = await fetchUserDirectory((parts || []).map(p => p.user_id));
     const partsByConv = {};
     (parts || []).forEach(p => {
-      (partsByConv[p.conversation_id] = partsByConv[p.conversation_id] || []).push(p);
+      const withUser = { ...p, users: partNames.get(p.user_id) || null };
+      (partsByConv[p.conversation_id] = partsByConv[p.conversation_id] || []).push(withUser);
     });
     const readSet = new Set((myReads || []).map(r => r.message_id));
     const unreadByConv = {};
@@ -235,11 +241,11 @@ export default function Messages({ userId, userRole }) {
     const participantsWithUsers = [];
     if (participants) {
       for (const p of participants) {
-        const { data: user } = await supabase
-          .from('users')
+        const { data: user } = await readDirectory('user_directory', (t) => supabase
+          .from(t)
           .select('id, full_name, role')
           .eq('id', p.user_id)
-          .single();
+          .maybeSingle());
         if (user) {
           participantsWithUsers.push({ user_id: p.user_id, users: user });
         }
@@ -255,11 +261,11 @@ export default function Messages({ userId, userRole }) {
     const messagesWithSenders = [];
     if (messages) {
       for (const msg of messages) {
-        const { data: sender } = await supabase
-          .from('users')
+        const { data: sender } = await readDirectory('user_directory', (t) => supabase
+          .from(t)
           .select('id, full_name, role')
           .eq('id', msg.sender_id)
-          .single();
+          .maybeSingle());
         messagesWithSenders.push({
           ...msg,
           sender: sender || { id: msg.sender_id, full_name: 'Unknown', role: 'unknown' }
