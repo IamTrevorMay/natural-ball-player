@@ -16,7 +16,7 @@ const STATUS_COLORS = {
   paid:     'bg-green-100 text-green-700',
   active:   'bg-green-100 text-green-700',
   pending:  'bg-yellow-100 text-yellow-800',
-  past_due: 'bg-orange-100 text-orange-800',
+  past_due: 'bg-slate-100 text-slate-700',
   failed:   'bg-red-100 text-red-700',
   refunded: 'bg-gray-100 text-gray-700',
   canceled: 'bg-gray-100 text-gray-700',
@@ -580,7 +580,7 @@ function PurchasesTab({ userRole }) {
           <option value="pending">Pending</option>
           <option value="paid">Paid</option>
           <option value="active">Active</option>
-          <option value="past_due">Past due</option>
+          <option value="past_due">Paused</option>
           <option value="failed">Failed</option>
           <option value="canceled">Canceled</option>
           <option value="refunded">Refunded</option>
@@ -680,11 +680,19 @@ function PurchasesTab({ userRole }) {
 // reads as a system state rather than a fact about money. Same wording as
 // PackagesModal.js and the profile pill in Profile.js so the three screens
 // can't tell different stories.
+// 🔴 `past_due` does NOT mean the family owes money. Every writer maps it from
+// Square's PAUSED and nothing else — square-subscriptions-backfill:53,
+// square-backfill-resolve:52, square-webhook:195. Square has no past-due
+// subscription status at all. So these are subscriptions somebody deliberately
+// paused (an athlete taking the season off), and calling them "Payment needs
+// updating" in orange told staff — and the athlete, via the profile pill — that
+// a bill was outstanding when nothing was owed. 53 families were labelled this
+// way. The status key is left alone; only the words and the colour change.
 const PKG_STATUS_LABELS = {
   active:   'Active',
   paid:     'Paid',
   pending:  'Awaiting payment',
-  past_due: 'Payment needs updating',
+  past_due: 'Paused',
   failed:   'Payment failed',
   canceled: 'Canceled',
   refunded: 'Refunded',

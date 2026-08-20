@@ -1999,8 +1999,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   label = total > 1 ? `Package Active (${total})` : 'Package Active';
                   cls = 'bg-green-50 text-green-700 border-green-200';
                 } else if (s === 'past_due') {
-                  label = 'Payment Needs Updated';
-                  cls = 'bg-orange-50 text-orange-700 border-orange-200';
+                  // Square PAUSED, not an unpaid bill — see WorkStore.js. This pill
+                  // is on the athlete's OWN profile, so the old orange "Payment
+                  // Needs Updated" was telling a family they owed money when the
+                  // subscription had simply been paused.
+                  label = 'Package Paused';
+                  cls = 'bg-slate-50 text-slate-700 border-slate-200';
                 } else if (s === 'pending') {
                   // Neutral for the athlete ("your pack is on your account"),
                   // explicit for staff ("we have no confirmation, and that is a
