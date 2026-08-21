@@ -27,7 +27,9 @@ function StatusPill({ status }) {
     // that no confirmation has reached the portal. Staff screens use #340's
     // "Awaiting payment" (PackagesModal/Profile) — same claim, staff voice.
     pending:  { cls: 'bg-yellow-100 text-yellow-800',icon: Clock,       label: 'Payment not confirmed' },
-    past_due: { cls: 'bg-orange-100 text-orange-800',icon: AlertCircle, label: 'Past due' },
+    // See the note on PKG_STATUS_LABELS in WorkStore.js: this maps from Square's
+    // PAUSED, never from an unpaid bill. Neutral colour, no alarm icon.
+    past_due: { cls: 'bg-slate-100 text-slate-700',  icon: Clock,       label: 'Paused' },
     failed:   { cls: 'bg-red-100 text-red-700',      icon: AlertCircle, label: 'Failed' },
     canceled: { cls: 'bg-gray-100 text-gray-700',    icon: X,           label: 'Canceled' },
     refunded: { cls: 'bg-gray-100 text-gray-700',    icon: X,           label: 'Refunded' },

@@ -12,7 +12,7 @@ const STATUS_STYLES = {
   active:   'bg-green-50 text-green-700 border-green-200',
   paid:     'bg-green-50 text-green-700 border-green-200',
   pending:  'bg-yellow-50 text-yellow-700 border-yellow-200',
-  past_due: 'bg-orange-50 text-orange-700 border-orange-200',
+  past_due: 'bg-slate-50 text-slate-700 border-slate-200',
   failed:   'bg-red-50 text-red-700 border-red-200',
   canceled: 'bg-gray-100 text-gray-500 border-gray-200',
   refunded: 'bg-gray-100 text-gray-500 border-gray-200',
@@ -25,7 +25,7 @@ const STATUS_LABELS = {
   active:   'Active',
   paid:     'Paid',
   pending:  'Awaiting payment',
-  past_due: 'Payment needs updating',
+  past_due: 'Paused',            // Square PAUSED — not an unpaid bill. See WorkStore.js.
   failed:   'Payment failed',
   canceled: 'Canceled',
   refunded: 'Refunded',
