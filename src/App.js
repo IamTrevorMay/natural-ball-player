@@ -21,6 +21,7 @@ import FacilityFinePage from './FacilityFinePage';
 import LetterOfIntentPage from './LetterOfIntentPage';
 import WorkPortalShell from './WorkPortal';
 import PublicBookingPage from './PublicBookingPage';
+import UnsubscribePage from './UnsubscribePage';
 import PublicPortal from './PublicPortal';
 import NotificationBell, { deletePendingPayment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
@@ -309,6 +310,14 @@ export default function App() {
   // loading gates so outside customers reach /book without ever seeing login.
   if (window.location.pathname.startsWith('/book')) {
     return <PublicBookingPage />;
+  }
+
+  // Public, unauthenticated unsubscribe route (#281). Same placement and for
+  // the same reason: this is opened from a link in an email by a parent who
+  // is not logged in and never will be. An unsubscribe that asks you to sign
+  // in is not an unsubscribe.
+  if (window.location.pathname.startsWith('/unsubscribe')) {
+    return <UnsubscribePage />;
   }
 
   if (loading) {

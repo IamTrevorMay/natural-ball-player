@@ -62,6 +62,9 @@ const PAGE = 1000;                   // paginated read size — must be <= db-ma
 const FROM = "The Natural Ballplayer <admin@thenaturalballplayer.com>";
 const REPLY_TO = "admin@thenaturalballplayer.com";
 const SITE_URL = "https://www.thenaturalballplayer.com";
+// The app's own domain — where the unsubscribe confirmation page lives.
+// NOT the same as SITE_URL above; see the two-domain note on #281.
+const APP_URL = "https://www.thenatural-app.com";
 
 // CAN-SPAM requires a physical postal address in commercial email.
 // Supplied by Cordell on #281, 2026-08-22. This is the facility's own
@@ -72,7 +75,20 @@ const POSTAL_ADDRESS = "The Natural Ballplayer &middot; 13424 NE 126th Pl, Kirkl
 // which are common in family names (o'brien@...).
 const EMAIL_RE = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,}$/;
 
-function unsubscribeUrl(supabaseUrl: string, token: string): string {
+// Two different unsubscribe URLs, on purpose — do not collapse them.
+//
+// The FOOTER LINK a human clicks goes to the app, because the page a person
+// sees has to be a real web page. Supabase Edge Functions rewrite text/html
+// to text/plain, so a confirmation page served from the function arrives as
+// raw source code. It shipped that way once; see src/UnsubscribePage.js.
+function unsubscribePageUrl(token: string): string {
+  return `${APP_URL}/unsubscribe?token=${token}`;
+}
+
+// The LIST-UNSUBSCRIBE HEADER points at the function itself, because Gmail
+// and Yahoo POST to it directly and want a machine endpoint, not a page.
+// That is RFC 8058 one-click, and it is the exit most people actually use.
+function unsubscribeApiUrl(supabaseUrl: string, token: string): string {
   return `${supabaseUrl}/functions/v1/unsubscribe?token=${token}`;
 }
 
@@ -311,7 +327,8 @@ Deno.serve(async (req) => {
     };
 
     const payloadFor = (row: Row) => {
-      const unsub = unsubscribeUrl(supabaseUrl, row.unsubscribe_token);
+      const unsub = unsubscribePageUrl(row.unsubscribe_token);
+      const unsubApi = unsubscribeApiUrl(supabaseUrl, row.unsubscribe_token);
       return {
         from: FROM,
         reply_to: REPLY_TO,
@@ -322,7 +339,7 @@ Deno.serve(async (req) => {
         headers: {
           // RFC 2369 requires the angle brackets. RFC 8058 one-click needs
           // both headers AND a POST-handling endpoint — we have both.
-          "List-Unsubscribe": `<${unsub}>`,
+          "List-Unsubscribe": `<${unsubApi}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         },
       };
