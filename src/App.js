@@ -1310,13 +1310,13 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
       <div className="mb-4">
         <div className="flex items-center space-x-2">
           <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain" />
-          <h1 className="text-xl font-bold text-blue-400">Natural Ball Player</h1>
+          <h1 className="text-xl font-bold text-blue-200">Natural Ball Player</h1>
         </div>
         <div className="flex items-center space-x-3 mt-2">
           {userAvatar ? (
             <img src={userAvatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
           ) : (
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+            <div className="w-8 h-8 bg-blue-200 rounded-full flex items-center justify-center text-blue-900 text-xs font-bold">
               {userName?.charAt(0) || '?'}
             </div>
           )}
@@ -1331,7 +1331,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('dashboard')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'dashboard' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'dashboard' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <BarChart3 size={18} />
@@ -1344,7 +1344,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('profile')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'profile' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'profile' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <Users size={18} />
@@ -1369,7 +1369,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <button
                 onClick={() => setCurrentView('waiver')}
                 className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-                  currentView === 'waiver' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  currentView === 'waiver' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
                 }`}
               >
                 <FileText size={16} />
@@ -1381,7 +1381,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <button
                 onClick={() => setCurrentView('contract')}
                 className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-                  currentView === 'contract' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  currentView === 'contract' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
                 }`}
               >
                 <FileText size={16} />
@@ -1393,7 +1393,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <button
                 onClick={() => setCurrentView('loi')}
                 className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-                  currentView === 'loi' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  currentView === 'loi' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
                 }`}
               >
                 <FileText size={16} />
@@ -1405,7 +1405,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               <button
                 onClick={() => setCurrentView('facility-fine')}
                 className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-                  currentView === 'facility-fine' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                  currentView === 'facility-fine' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
                 }`}
               >
                 <FileText size={16} />
@@ -1421,7 +1421,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('team')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'team' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'team' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <Users size={18} />
@@ -1431,7 +1431,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('schedule')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'schedule' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'schedule' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <Calendar size={18} />
@@ -1441,7 +1441,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('fields')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'fields' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'fields' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <MapPin size={18} />
@@ -1451,7 +1451,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('knowledge')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'knowledge' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'knowledge' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <BookOpen size={18} />
@@ -1461,7 +1461,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         <button
           onClick={() => setCurrentView('messages')}
           className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'messages' ? 'bg-blue-600' : 'hover:bg-gray-800'
+            currentView === 'messages' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
           }`}
         >
           <MessageSquare size={18} />
@@ -1478,7 +1478,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             <button
               onClick={() => setEmailCampaignExpanded(!emailCampaignExpanded)}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'email-campaigns' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                currentView === 'email-campaigns' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
               }`}
             >
               <Mail size={18} />
@@ -1513,7 +1513,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             <button
               onClick={() => setCurrentView('training-groups')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'training-groups' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                currentView === 'training-groups' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
               }`}
             >
               <Layers size={18} />
@@ -1525,7 +1525,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
                 <button
                   onClick={() => setCurrentView('manage-coaches')}
                   className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                    currentView === 'manage-coaches' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                    currentView === 'manage-coaches' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
                   }`}
                 >
                   <UserCog size={18} />
@@ -1537,7 +1537,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             <button
               onClick={() => setCurrentView('coach-tools')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'coach-tools' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                currentView === 'coach-tools' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
               }`}
             >
               <Wrench size={18} />
@@ -1546,7 +1546,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             <button
               onClick={() => setCurrentView('programming')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'programming' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                currentView === 'programming' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
               }`}
             >
               <Dumbbell size={18} />
@@ -1556,7 +1556,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             <button
               onClick={() => setCurrentView('settings')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'settings' ? 'bg-blue-600' : 'hover:bg-gray-800'
+                currentView === 'settings' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
               }`}
             >
               <Settings size={18} />
@@ -1581,7 +1581,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         {(userRole === 'coach' || userRole === 'admin') && onSwitchPortal && (
           <button
             onClick={onSwitchPortal}
-            className="w-full flex items-center justify-center space-x-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition text-sm"
+            className="w-full flex items-center justify-center space-x-2 bg-indigo-200 text-indigo-900 px-4 py-2 rounded-lg hover:bg-indigo-300 transition text-sm"
           >
             <Briefcase size={16} />
             <span>Switch to Work Portal</span>

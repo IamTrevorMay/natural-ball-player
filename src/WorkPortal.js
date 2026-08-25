@@ -282,7 +282,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
     <button
       onClick={() => setCurrentView(id)}
       className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-600' : 'hover:bg-gray-800'
+        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-200 text-indigo-900' : 'hover:bg-gray-800'
       }`}
     >
       <Icon size={18} />
@@ -294,7 +294,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
     <button
       onClick={() => setCurrentView(id)}
       className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm ${
-        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-600' : 'hover:bg-gray-800'
+        currentView === id || matchIds?.includes(currentView) ? 'bg-indigo-200 text-indigo-900' : 'hover:bg-gray-800'
       }`}
     >
       <Icon size={16} />
@@ -310,13 +310,13 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
         <div className="min-w-0">
           <div className="flex items-center space-x-2">
             <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain flex-shrink-0" />
-            <h1 className="text-xl font-bold text-indigo-400 truncate">NBP Work Portal</h1>
+            <h1 className="text-xl font-bold text-indigo-200 truncate">NBP Work Portal</h1>
           </div>
           <div className="flex items-center space-x-3 mt-2">
             {userAvatar ? (
               <img src={userAvatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
             ) : (
-              <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+              <div className="w-8 h-8 bg-indigo-200 rounded-full flex items-center justify-center text-indigo-900 text-xs font-bold">
                 {userName?.charAt(0) || '?'}
               </div>
             )}
@@ -390,7 +390,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
       <div className="mt-auto pt-3 space-y-1.5">
         <button
           onClick={onSwitchPortal}
-          className="w-full flex items-center justify-center space-x-2 bg-indigo-600 text-white px-3 py-2 rounded-lg hover:bg-indigo-700 transition text-sm"
+          className="w-full flex items-center justify-center space-x-2 bg-indigo-200 text-indigo-900 px-3 py-2 rounded-lg hover:bg-indigo-300 transition text-sm"
         >
           <ArrowLeftRight size={16} />
           <span>Switch to Main Portal</span>

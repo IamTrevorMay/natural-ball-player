@@ -1343,7 +1343,7 @@ export function TrainingTab({ teams, players }) {
 
 // Aligned with ProgramLibrarySidebar FOLDER_COLORS and Schedule CATEGORY_BAR (#179).
 const categoryColors = {
-  hitting: 'bg-blue-500 text-white',
+  hitting: 'bg-teal-500 text-white',
   pitching: 'bg-green-500 text-white',
   fielding: 'bg-green-500 text-white',
   conditioning: 'bg-yellow-500 text-white',

@@ -16,3 +16,32 @@
 .animate-slideDown {
   animation: slideDown 0.3s ease-out;
 }
+
+/* --------------------------------------------------------------------------
+   Link affordance after the 2026-08 brand change (#364).
+
+   The accent used to be a saturated blue, so `text-blue-600` on white was
+   obviously a link. The brand palette is ink/cream/white, so that same class
+   is now near-black - the contrast is fine but nothing signals "clickable"
+   any more. Rather than edit 354 call sites across 58 files, underline the
+   link-styled text globally. Icon-only controls carry no text, so an
+   underline on them is invisible.
+   -------------------------------------------------------------------------- */
+a[class*="text-blue-"],
+a[class*="text-indigo-"],
+button[class*="text-blue-"],
+button[class*="text-indigo-"] {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+/* Solid-fill buttons are already obviously buttons - don't underline those. */
+a[class*="bg-blue-"][class*="text-white"],
+a[class*="bg-indigo-"][class*="text-white"],
+button[class*="bg-blue-"][class*="text-white"],
+button[class*="bg-indigo-"][class*="text-white"],
+a[class*="bg-blue-6"], a[class*="bg-indigo-6"],
+button[class*="bg-blue-6"], button[class*="bg-indigo-6"] {
+  text-decoration: none;
+}

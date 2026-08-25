@@ -72,7 +72,7 @@ function meetsAge(dob, min) {
 
 const PT_STATUS_OPTIONS = ['Active', 'Pending Eval', 'In Treatment', 'Maintenance', 'Discharged'];
 const PT_STATUS_COLORS = {
-  'Active': 'bg-blue-100 text-blue-700',
+  'Active': 'bg-sky-100 text-sky-700',
   'Pending Eval': 'bg-yellow-100 text-yellow-700',
   'In Treatment': 'bg-orange-100 text-orange-700',
   'Maintenance': 'bg-green-100 text-green-700',
@@ -166,7 +166,7 @@ export async function fetchPackageStatus(userId) {
 }
 
 const PROGRAM_HEADER_COLOR = {
-  hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
+  hitting:  { bg: 'bg-teal-100',   text: 'text-teal-600' },
   pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
   warmup:   { bg: 'bg-purple-100', text: 'text-purple-600' },
   general:  { bg: 'bg-orange-100', text: 'text-orange-600' },

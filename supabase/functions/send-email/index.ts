@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
 <div style="white-space:pre-wrap;font-size:15px;line-height:1.6;">${body.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>
 <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px;">
 <p style="font-size:13px;color:#6b7280;text-align:center;">
-<a href="https://www.thenatural-app.com" style="color:#4f46e5;text-decoration:none;font-weight:600;">Log in to The Natural</a><br>
+<a href="https://www.thenatural-app.com" style="color:#2C1B2E;text-decoration:none;font-weight:600;">Log in to The Natural</a><br>
 <span style="font-size:11px;color:#9ca3af;">www.thenatural-app.com</span>
 </p>
 </body>

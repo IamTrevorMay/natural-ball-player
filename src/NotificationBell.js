@@ -315,7 +315,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
 function PortalTag({ kind }) {
   return (
     <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex items-center space-x-1 flex-shrink-0 ${
-      kind === 'work' ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'
+      kind === 'work' ? 'bg-indigo-800 text-indigo-50' : 'bg-blue-100 text-blue-700'
     }`}>
       {kind === 'work' ? <Briefcase size={10} /> : <Home size={10} />}
       <ArrowLeftRight size={9} />

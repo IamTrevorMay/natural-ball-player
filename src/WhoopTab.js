@@ -148,8 +148,8 @@ function SleepStageBar({ sleep }) {
 
   const stages = [
     { label: 'REM', ms: sleep.rem_duration_ms || 0, color: 'bg-cyan-500' },
-    { label: 'Deep', ms: sleep.sws_duration_ms || 0, color: 'bg-blue-600' },
-    { label: 'Light', ms: sleep.light_duration_ms || 0, color: 'bg-blue-300' },
+    { label: 'Deep', ms: sleep.sws_duration_ms || 0, color: 'bg-cyan-700' },
+    { label: 'Light', ms: sleep.light_duration_ms || 0, color: 'bg-cyan-300' },
     { label: 'Awake', ms: sleep.awake_duration_ms || 0, color: 'bg-gray-300' },
   ];
 

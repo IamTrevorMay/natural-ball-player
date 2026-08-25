@@ -63,8 +63,8 @@ const FOLDER_COLORS = {
   'Outfield':  { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
   'Pitching':  { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
   'Submarine': { bg: 'bg-green-500', text: 'text-green-700', light: 'bg-green-50', border: 'border-green-200', dot: 'bg-green-400' },
-  // Blue — hitting
-  'Hitting': { bg: 'bg-blue-500', text: 'text-blue-700', light: 'bg-blue-50', border: 'border-blue-200', dot: 'bg-blue-400' },
+  // Teal — hitting
+  'Hitting': { bg: 'bg-teal-500', text: 'text-teal-700', light: 'bg-teal-50', border: 'border-teal-200', dot: 'bg-teal-400' },
   // Yellow — cardio
   'Cardio': { bg: 'bg-yellow-500', text: 'text-yellow-700', light: 'bg-yellow-50', border: 'border-yellow-200', dot: 'bg-yellow-400' },
 };

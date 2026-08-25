@@ -12,12 +12,12 @@ const SUB_STATUS_OPTIONS = ['Catcher', 'Infielder', 'Outfielder', 'Pitcher'];
 const LEVEL_COLORS = {
   '8u': 'bg-sky-400 text-white',
   '9u': 'bg-sky-500 text-white',
-  '10u': 'bg-blue-400 text-white',
-  '11u': 'bg-blue-500 text-white',
-  '12u': 'bg-blue-600 text-white',
-  '13u': 'bg-indigo-400 text-white',
-  '14u': 'bg-indigo-500 text-white',
-  '15u': 'bg-indigo-600 text-white',
+  '10u': 'bg-sky-600 text-white',
+  '11u': 'bg-sky-700 text-white',
+  '12u': 'bg-cyan-500 text-white',
+  '13u': 'bg-cyan-600 text-white',
+  '14u': 'bg-cyan-700 text-white',
+  '15u': 'bg-cyan-800 text-white',
   '16u': 'bg-violet-500 text-white',
   '17u': 'bg-violet-600 text-white',
   '18u': 'bg-purple-600 text-white',
@@ -35,7 +35,7 @@ const STATUS_COLORS = {
   'Active': 'bg-green-500 text-white',
   'Remote': 'bg-orange-500 text-white',
   'Inactive': 'bg-gray-500 text-white',
-  'On-Site': 'bg-blue-500 text-white',
+  'On-Site': 'bg-sky-600 text-white',
   'Archived': 'bg-red-500 text-white',
 };
 
@@ -43,7 +43,7 @@ const OFFER_STATUS_OPTIONS = ['Offered', 'Accepted', 'Meeting Set Up', 'Training
 const OFFER_STATUS_COLORS = {
   'Offered': 'bg-yellow-500 text-white',
   'Accepted': 'bg-green-600 text-white',
-  'Meeting Set Up': 'bg-blue-500 text-white',
+  'Meeting Set Up': 'bg-sky-500 text-white',
   'Training Only': 'bg-purple-500 text-white',
   'Playing For Other Org': 'bg-gray-500 text-white',
 };

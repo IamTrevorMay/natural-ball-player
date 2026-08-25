@@ -44,7 +44,7 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // Saturated bar backgrounds keyed by the event's color (facility_events.color /
 // the booking Type color). Used for the month-grid event bars.
 const TYPE_BAR = {
-  teal: 'bg-teal-600', blue: 'bg-blue-700', purple: 'bg-purple-700', pink: 'bg-pink-600',
+  teal: 'bg-teal-600', blue: 'bg-sky-700', purple: 'bg-purple-700', pink: 'bg-pink-600',
   red: 'bg-red-700', orange: 'bg-orange-600', yellow: 'bg-yellow-600', green: 'bg-green-600', gray: 'bg-gray-700',
 };
 const barColor = (c) => TYPE_BAR[c] || TYPE_BAR.teal;

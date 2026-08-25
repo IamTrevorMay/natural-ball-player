@@ -14,7 +14,7 @@ const DOC_TYPE_LABEL = Object.fromEntries(DOC_TYPES.map(t => [t.value, t.label])
 
 const DOC_TYPE_COLOR = {
   paystub: 'bg-green-100 text-green-700',
-  w2: 'bg-blue-100 text-blue-700',
+  w2: 'bg-sky-100 text-sky-700',
   '1099': 'bg-purple-100 text-purple-700',
   other: 'bg-gray-100 text-gray-700',
 };

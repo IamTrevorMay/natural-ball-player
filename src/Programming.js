@@ -71,7 +71,7 @@ export default function Programming({ userId, userRole }) {
       <button
         key={key}
         onClick={() => setView(key)}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition whitespace-nowrap flex-shrink-0 ${
           active ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
         }`}
       >
@@ -106,7 +106,7 @@ export default function Programming({ userId, userRole }) {
       )}
 
       {/* View toggle: Programs | Generate | Videos */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 overflow-x-auto pb-1 -mb-1">
         {viewBtn('programs', FolderOpen, 'Programs')}
         {viewBtn('generate', Wand2, 'Generate')}
         {viewBtn('videos', Link2, 'Videos')}
