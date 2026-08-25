@@ -2013,8 +2013,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     ? (pending > 1 ? `Payment Not Confirmed (${pending})` : 'Payment Not Confirmed')
                     : (pending > 1 ? `Package Assigned (${pending})` : 'Package Assigned');
                   hint = staffView
-                    ? `${pending} package${pending === 1 ? '' : 's'} with no payment confirmed in the portal. Square payment confirmations are not currently syncing, so ${pending === 1 ? 'it' : 'they'} may already have been paid — check Square before following up.`
-                    : 'This package is on your account. If you have already paid, no action is needed — payment confirmations from Square are not currently syncing into the portal.';
+                    ? `${pending} package${pending === 1 ? '' : 's'} with no payment confirmed in the portal. Portal checkouts confirm themselves automatically now, but invoices sent from Square and payments taken at the desk never reach the portal — check Square before following up.`
+                    : 'This package is on your account. If you paid by invoice or in person, no action is needed — those payments do not show up here automatically.';
                   cls = 'bg-yellow-50 text-yellow-700 border-yellow-200';
                 } else if (total > 0) {
                   // Every row is cancelled / refunded / failed. Saying "No
@@ -2043,7 +2043,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     </button>
                     {showAthleteReassurance && (
                       <span className="mt-1 max-w-[230px] text-right text-[11px] leading-tight text-gray-500">
-                        Already paid? No action needed — payment confirmations from Square aren&apos;t reaching the portal right now.
+                        Paid by invoice or in person? No action needed — those don&apos;t show up here automatically.
                       </span>
                     )}
                   </div>

@@ -1571,7 +1571,7 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
         {canSwitchRole && onSwitchRole && otherRole && (
           <button
             onClick={onSwitchRole}
-            className="w-full flex items-center justify-center space-x-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition text-sm"
+            className="w-full flex items-center justify-center space-x-2 bg-blue-200 text-blue-900 px-4 py-2 rounded-lg hover:bg-blue-300 transition text-sm font-medium"
             title={`Currently viewing as ${userRole}`}
           >
             <UserCog size={16} />
