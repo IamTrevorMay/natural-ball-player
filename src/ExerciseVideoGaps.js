@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabaseClient';
 import {
   Video, Search, AlertTriangle, CheckCircle2, Loader2, Download, X, Ban,
-  ExternalLink, Check, RefreshCw, Info, Undo2,
+  ExternalLink, Check, RefreshCw, Info, Undo2, Lock, ShieldAlert,
 } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import {
@@ -145,6 +145,62 @@ function validateVideoUrl(raw) {
 }
 
 // ---------------------------------------------------------------------------
+// Row-level security: workout_templates is owner-gated.
+//
+// Measured on the live database:
+//     UPDATE  qual: (created_by = auth.uid())  with_check: (created_by = auth.uid())
+//
+// 868 of 872 templates belong to one admin, 3 have created_by = NULL (nobody
+// can ever update those), 1 belongs to a second admin. So for almost everyone,
+// an UPDATE here comes back 200/204 with NO error and NO rows — PostgREST does
+// not consider "the policy matched nothing" an error.
+//
+// Reporting that as success is the exact silent-failure class that has already
+// cost this project a two-day production outage, so this screen never infers
+// success from the absence of an error. Every write asks for .select('id') back
+// and ZERO RETURNED ROWS IS A BLOCK.
+//
+// The policy itself is not this screen's to change: no migration here, and none
+// suggested. The UI just says plainly that template edits belong to whoever
+// created the template.
+// ---------------------------------------------------------------------------
+
+export const OWNERSHIP = {
+  EDITABLE: 'editable',   // created_by === me — the policy will allow it
+  OTHER: 'other_owner',   // someone else made it — the policy will refuse
+  ORPHAN: 'no_owner',     // created_by IS NULL — nobody can ever update it
+  UNKNOWN: 'unknown',     // we could not resolve the current user; attempt and prove
+};
+
+export const RLS_PLAIN_SENTENCE =
+  'Workout templates can only be edited by the coach who created them. Whether to change that is an admin decision, not something this screen can do.';
+
+/**
+ * What a Supabase write ACTUALLY did, given the response.
+ *
+ * Callers must pass the `data` from a write that ended in .select(...), and
+ * `expected` = how many rows the statement targeted.
+ *
+ *   error present        -> 'errored'
+ *   no error, 0 rows     -> 'blocked'  (RLS silently matched nothing)
+ *   no error, < expected -> 'partial'  (some rows refused)
+ *   no error, >= expected-> 'written'
+ *
+ * `data` of null/undefined with no error means the server returned no
+ * representation at all, which we also treat as blocked rather than assumed.
+ *
+ * @returns {{ outcome: 'errored'|'blocked'|'partial'|'written', written: number, blocked: number }}
+ */
+export function classifyWriteOutcome({ error, data, expected = 1 }) {
+  const target = Math.max(0, Number(expected) || 0);
+  if (error) return { outcome: 'errored', written: 0, blocked: 0 };
+  const returned = Array.isArray(data) ? data.length : 0;
+  if (returned === 0) return { outcome: 'blocked', written: 0, blocked: target };
+  if (returned < target) return { outcome: 'partial', written: returned, blocked: target - returned };
+  return { outcome: 'written', written: returned, blocked: 0 };
+}
+
+// ---------------------------------------------------------------------------
 // Data access — every read is SELECT only, and every error is surfaced.
 //
 // This codebase has a documented production bug caused by ignoring a Supabase
@@ -240,7 +296,14 @@ const TIER_OPTIONS = [
 const EMPTY_ROWS = [];
 
 const pct = (score) => `${Math.round(score * 100)}%`;
-const plural = (n, word, suffix = 's') => `${n.toLocaleString()} ${word}${n === 1 ? '' : suffix}`;
+// Pluralise properly: 'entry' -> 'entries', not 'entryies'. Callers pass the
+// singular; an explicit plural form can be given as the third argument.
+const plural = (n, word, pluralForm) => {
+  if (n === 1) return `${n.toLocaleString()} ${word}`;
+  const many = pluralForm
+    || (/[^aeiou]y$/i.test(word) ? `${word.slice(0, -1)}ies` : `${word}s`);
+  return `${n.toLocaleString()} ${many}`;
+};
 
 function csvCell(value) {
   const s = value == null ? '' : String(value);
@@ -272,6 +335,7 @@ export default function ExerciseVideoGaps({ userRole }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [templates, setTemplates] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
   const [programRows, setProgramRows] = useState([]);
   const [library, setLibrary] = useState([]);
 
@@ -305,8 +369,16 @@ export default function ExerciseVideoGaps({ userRole }) {
     setLoadError('');
     setApplyResult(null);
     try {
+      // Who am I? workout_templates.created_by is compared against this to work
+      // out, BEFORE anything is staged, which templates this user can actually
+      // write to. A null user id is not fatal — ownership just becomes UNKNOWN
+      // and every write is attempted and then proved.
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr) console.error('Could not resolve the current user:', authErr);
+      setCurrentUserId(authData?.user?.id || null);
+
       const [templateRows, exerciseRows, videoRows] = await Promise.all([
-        fetchAllRows('workout_templates', 'id, name, folder, exercises', 'id'),
+        fetchAllRows('workout_templates', 'id, name, folder, exercises, created_by', 'id'),
         fetchAllRows('training_exercises', 'id, name, video_url, day_id', 'id'),
         fetchAllRows('exercise_videos', 'name, name_key, video_url', 'name_key'),
       ]);
@@ -323,6 +395,18 @@ export default function ExerciseVideoGaps({ userRole }) {
   }, [isStaff]);
 
   useEffect(() => { load(); }, [load]);
+
+  // --- who can write what --------------------------------------------------
+  const templateOwnership = useMemo(() => {
+    const map = new Map();
+    templates.forEach((t) => {
+      const owner = t.created_by || null;
+      if (!owner) map.set(t.id, OWNERSHIP.ORPHAN);
+      else if (!currentUserId) map.set(t.id, OWNERSHIP.UNKNOWN);
+      else map.set(t.id, owner === currentUserId ? OWNERSHIP.EDITABLE : OWNERSHIP.OTHER);
+    });
+    return map;
+  }, [templates, currentUserId]);
 
   // --- collect the raw gaps ------------------------------------------------
   const gaps = useMemo(() => {
@@ -341,6 +425,7 @@ export default function ExerciseVideoGaps({ userRole }) {
           templateId: t.id,
           templateName: t.name || '(untitled template)',
           index,
+          ownership: templateOwnership.get(t.id) || OWNERSHIP.UNKNOWN,
         });
       });
     });
@@ -354,10 +439,13 @@ export default function ExerciseVideoGaps({ userRole }) {
         folder: 'Assigned programs',
         exerciseId: row.id,
         dayId: row.day_id,
+        // training_exercises is governed by the "Coaches can…" policies, not by
+        // ownership — but the write is still proved rather than assumed.
+        ownership: OWNERSHIP.EDITABLE,
       });
     });
     return out;
-  }, [templates, programRows]);
+  }, [templates, programRows, templateOwnership]);
 
   // --- compute the report --------------------------------------------------
   // Yielded through a timeout so React paints the "Matching…" state first: the
@@ -387,6 +475,68 @@ export default function ExerciseVideoGaps({ userRole }) {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
+  // Facility-wide picture of what this user is actually allowed to write.
+  const ownershipStats = useMemo(() => {
+    let editableEntries = 0;
+    let otherEntries = 0;
+    let orphanEntries = 0;
+    let unknownEntries = 0;
+    let programEntries = 0;
+    const editableTemplates = new Set();
+    const otherTemplates = new Set();
+    const orphanTemplates = new Set();
+    gaps.forEach((g) => {
+      if (g.source !== 'template') { programEntries += 1; return; }
+      if (g.ownership === OWNERSHIP.OTHER) { otherEntries += 1; otherTemplates.add(g.templateId); }
+      else if (g.ownership === OWNERSHIP.ORPHAN) { orphanEntries += 1; orphanTemplates.add(g.templateId); }
+      else if (g.ownership === OWNERSHIP.UNKNOWN) { unknownEntries += 1; editableTemplates.add(g.templateId); }
+      else { editableEntries += 1; editableTemplates.add(g.templateId); }
+    });
+    const attemptableEntries = editableEntries + unknownEntries;
+    return {
+      editableEntries,
+      unknownEntries,
+      attemptableEntries,
+      otherEntries,
+      orphanEntries,
+      programEntries,
+      blockedEntries: otherEntries + orphanEntries,
+      editableTemplates: editableTemplates.size,
+      otherTemplates: otherTemplates.size,
+      orphanTemplates: orphanTemplates.size,
+      // Nothing in any template is writable by this user. The Apply button must
+      // not pretend otherwise.
+      noTemplateAccess: attemptableEntries === 0 && (otherEntries + orphanEntries) > 0,
+      ownerUnknown: !currentUserId,
+    };
+  }, [gaps, currentUserId]);
+
+  // Per gap-row: how many of its occurrences this user can actually write.
+  const rowWritability = useMemo(() => {
+    const map = new Map();
+    rows.forEach((row) => {
+      let templateWritable = 0;
+      let blockedOther = 0;
+      let blockedOrphan = 0;
+      let programEntries = 0;
+      (row.refs || []).forEach((ref) => {
+        if (ref.source !== 'template') { programEntries += 1; return; }
+        if (ref.ownership === OWNERSHIP.OTHER) blockedOther += 1;
+        else if (ref.ownership === OWNERSHIP.ORPHAN) blockedOrphan += 1;
+        else templateWritable += 1;
+      });
+      map.set(row.key, {
+        templateWritable,
+        blockedOther,
+        blockedOrphan,
+        programEntries,
+        writableTotal: templateWritable + programEntries,
+        blockedTotal: blockedOther + blockedOrphan,
+      });
+    });
+    return map;
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((row) => {
@@ -414,6 +564,7 @@ export default function ExerciseVideoGaps({ userRole }) {
       return;
     }
     setManualErrors((prev) => { const next = { ...prev }; delete next[row.key]; return next; });
+    const w = rowWritability.get(row.key);
     setStaged((prev) => ({
       ...prev,
       [row.key]: {
@@ -424,9 +575,15 @@ export default function ExerciseVideoGaps({ userRole }) {
         occurrences: row.occurrences,
         templateCount: row.templateCount,
         programCount: row.programCount,
+        // Split at stage time so the sticky bar can never claim to be about to
+        // write entries that RLS will refuse.
+        writableEntries: w ? w.writableTotal : row.occurrences,
+        blockedEntries: w ? w.blockedTotal : 0,
+        writableTemplateEntries: w ? w.templateWritable : row.templateCount,
+        programEntries: w ? w.programEntries : row.programCount,
       },
     }));
-  }, []);
+  }, [rowWritability]);
 
   const stageExclude = useCallback((row) => {
     setStaged((prev) => ({
@@ -450,24 +607,32 @@ export default function ExerciseVideoGaps({ userRole }) {
     let linkNames = 0;
     let templateEntries = 0;
     let programEntries = 0;
+    let blockedEntries = 0;
+    let fullyBlockedNames = 0;
     let excludeNames = 0;
     let excludeEntries = 0;
-    entries.forEach(([, s]) => {
-      if (s.action === 'link') {
+    entries.forEach(([, item]) => {
+      if (item.action === 'link') {
         linkNames += 1;
-        templateEntries += s.templateCount;
-        programEntries += s.programCount;
+        templateEntries += item.writableTemplateEntries || 0;
+        programEntries += item.programEntries || 0;
+        blockedEntries += item.blockedEntries || 0;
+        if ((item.writableEntries || 0) === 0) fullyBlockedNames += 1;
       } else {
         excludeNames += 1;
-        excludeEntries += s.occurrences;
+        excludeEntries += item.occurrences;
       }
     });
     return {
       total: entries.length,
       linkNames,
+      // Counts below are WRITABLE entries only — blockedEntries is reported
+      // alongside, never folded in.
       templateEntries,
       programEntries,
       linkEntries: templateEntries + programEntries,
+      blockedEntries,
+      fullyBlockedNames,
       excludeNames,
       excludeEntries,
     };
@@ -483,21 +648,42 @@ export default function ExerciseVideoGaps({ userRole }) {
     const excludeKeys = Object.entries(staged).filter(([, s]) => s.action === 'exclude').map(([k]) => k);
     const urlByKey = new Map(linkStagings.map(([k, s]) => [k, s.url]));
 
-    // Which template rows and which program rows could possibly be touched.
+    // Which template rows and which program rows could possibly be touched —
+    // and which of them the owner-only UPDATE policy will refuse outright.
+    // Those are skipped rather than fired off: a request that comes back
+    // 200-with-zero-rows tells the user nothing, and counting it as a write
+    // would be a lie.
     const candidateTemplateIds = new Set();
     const candidateProgramIds = [];
+    const blockedOtherTemplates = new Set();
+    const blockedOrphanTemplates = new Set();
+    let templateEntriesBlockedOther = 0;
+    let templateEntriesBlockedOrphan = 0;
     gaps.forEach((gap) => {
       const key = normalizeExerciseName(gap.name);
       if (!urlByKey.has(key)) return;
-      if (gap.source === 'template') candidateTemplateIds.add(gap.templateId);
-      else candidateProgramIds.push(gap.exerciseId);
+      if (gap.source !== 'template') { candidateProgramIds.push(gap.exerciseId); return; }
+      if (gap.ownership === OWNERSHIP.OTHER) {
+        templateEntriesBlockedOther += 1;
+        blockedOtherTemplates.add(gap.templateId);
+        return;
+      }
+      if (gap.ownership === OWNERSHIP.ORPHAN) {
+        templateEntriesBlockedOrphan += 1;
+        blockedOrphanTemplates.add(gap.templateId);
+        return;
+      }
+      candidateTemplateIds.add(gap.templateId);
     });
 
     const templateIds = Array.from(candidateTemplateIds);
     const failures = [];
+    const blockedUnexpectedTemplates = new Set();
     let templatesUpdated = 0;
     let templateEntriesWritten = 0;
+    let templateEntriesBlockedUnexpected = 0;
     let programRowsWritten = 0;
+    let programRowsBlocked = 0;
 
     const totalSteps = templateIds.length + Math.ceil(candidateProgramIds.length / WRITE_BATCH_SIZE) + 1;
     let done = 0;
@@ -541,13 +727,23 @@ export default function ExerciseVideoGaps({ userRole }) {
             return { ...item, link: url };
           });
           if (changed === 0) { tick(); continue; }
-          const { error: updErr } = await supabase
+          // .select('id') is what makes this honest: without it a policy-refused
+          // UPDATE is indistinguishable from a successful one.
+          const { data: updated, error: updErr } = await supabase
             .from('workout_templates')
             .update({ exercises: next })
-            .eq('id', tpl.id);
-          if (updErr) {
+            .eq('id', tpl.id)
+            .select('id');
+          const outcome = classifyWriteOutcome({ error: updErr, data: updated, expected: 1 });
+          if (outcome.outcome === 'errored') {
             console.error('Updating workout template failed:', tpl.id, updErr);
             failures.push({ what: `template "${tpl.name || tpl.id}"`, message: formatUserError(updErr) });
+          } else if (outcome.outcome === 'blocked') {
+            // We believed this one was ours and the database disagreed. Never
+            // report it as written.
+            console.warn('Update refused by row-level security (0 rows) for template', tpl.id);
+            blockedUnexpectedTemplates.add(tpl.id);
+            templateEntriesBlockedUnexpected += changed;
           } else {
             templatesUpdated += 1;
             templateEntriesWritten += changed;
@@ -581,15 +777,24 @@ export default function ExerciseVideoGaps({ userRole }) {
           else byUrl.set(url, [row.id]);
         });
         for (const [url, ids] of byUrl) {
-          const { error: updErr } = await supabase
+          // Same proof here. training_exercises is governed by the "Coaches
+          // can…" policies rather than by ownership, so this should always come
+          // back full — but it costs one column to know instead of assume.
+          const { data: updatedRows, error: updErr } = await supabase
             .from('training_exercises')
             .update({ video_url: url })
-            .in('id', ids);
-          if (updErr) {
+            .in('id', ids)
+            .select('id');
+          const outcome = classifyWriteOutcome({ error: updErr, data: updatedRows, expected: ids.length });
+          if (outcome.outcome === 'errored') {
             console.error('Updating training exercises failed:', updErr);
             failures.push({ what: `${ids.length} assigned program row(s)`, message: formatUserError(updErr) });
           } else {
-            programRowsWritten += ids.length;
+            if (outcome.blocked > 0) {
+              console.warn('Row-level security refused', outcome.blocked, 'training_exercises row(s)');
+            }
+            programRowsWritten += outcome.written;
+            programRowsBlocked += outcome.blocked;
           }
         }
         tick();
@@ -612,11 +817,24 @@ export default function ExerciseVideoGaps({ userRole }) {
       // before. (DuplicateProducts.js hit exactly this and says so too.)
       await load();
 
+      const templateEntriesBlocked =
+        templateEntriesBlockedOther + templateEntriesBlockedOrphan + templateEntriesBlockedUnexpected;
+      const templatesBlocked =
+        blockedOtherTemplates.size + blockedOrphanTemplates.size + blockedUnexpectedTemplates.size;
+
       setApplyResult({
-        ok: failures.length === 0,
+        // "ok" means everything staged actually landed. A blocked write is not
+        // an error, but it is emphatically not a success either.
+        ok: failures.length === 0 && templateEntriesBlocked === 0 && programRowsBlocked === 0,
         templatesUpdated,
         templateEntriesWritten,
+        templateEntriesBlockedOther,
+        templateEntriesBlockedOrphan,
+        templateEntriesBlockedUnexpected,
+        templateEntriesBlocked,
+        templatesBlocked,
         programRowsWritten,
+        programRowsBlocked,
         excludedNames: excludeKeys.length,
         exclusionsSaved,
         failures,
@@ -627,7 +845,15 @@ export default function ExerciseVideoGaps({ userRole }) {
         ok: false,
         templatesUpdated,
         templateEntriesWritten,
+        templateEntriesBlockedOther,
+        templateEntriesBlockedOrphan,
+        templateEntriesBlockedUnexpected,
+        templateEntriesBlocked:
+          templateEntriesBlockedOther + templateEntriesBlockedOrphan + templateEntriesBlockedUnexpected,
+        templatesBlocked:
+          blockedOtherTemplates.size + blockedOrphanTemplates.size + blockedUnexpectedTemplates.size,
         programRowsWritten,
+        programRowsBlocked,
         excludedNames: 0,
         exclusionsSaved: true,
         failures: [...failures, { what: 'the run', message: formatUserError(e) }],
@@ -788,13 +1014,13 @@ export default function ExerciseVideoGaps({ userRole }) {
             tone="good"
             value={summary.coverableHighNames.toLocaleString()}
             label="Fillable from the library now"
-            detail={`${MATCH_TIERS.high.label.toLowerCase()} (≥ ${MATCH_TIERS.high.min}) — covers ${plural(summary.coverableHighOccurrences, 'entry', 'ies')}. A further ${summary.needsReviewNames.toLocaleString()} need a human to confirm.`}
+            detail={`${MATCH_TIERS.high.label.toLowerCase()} (≥ ${MATCH_TIERS.high.min}) — covers ${plural(summary.coverableHighOccurrences, 'entry')}. A further ${summary.needsReviewNames.toLocaleString()} need a human to confirm.`}
           />
           <StatCard
             tone="bad"
             value={summary.needsNewVideoNames.toLocaleString()}
             label="Need a video that does not exist"
-            detail={`Nothing in the library is close enough. Someone has to film or find these — ${plural(summary.needsNewVideoOccurrences, 'entry', 'ies')} depend on them.`}
+            detail={`Nothing in the library is close enough. Someone has to film or find these — ${plural(summary.needsNewVideoOccurrences, 'entry')} depend on them.`}
           />
         </div>
 
@@ -821,9 +1047,67 @@ export default function ExerciseVideoGaps({ userRole }) {
           </div>
         </div>
 
+        {/* --- what this user is actually allowed to write --- */}
+        <div
+          className={`mt-3 rounded-lg border p-3 text-sm flex items-start gap-2 ${
+            ownershipStats.noTemplateAccess
+              ? 'border-red-300 bg-red-50 text-red-900'
+              : ownershipStats.blockedEntries > 0
+                ? 'border-amber-200 bg-amber-50 text-amber-900'
+                : 'border-gray-200 bg-gray-50 text-gray-700'
+          }`}
+          role="status"
+        >
+          {ownershipStats.noTemplateAccess
+            ? <Lock size={15} className="mt-0.5 shrink-0" />
+            : <ShieldAlert size={15} className="mt-0.5 shrink-0" />}
+          <div className="space-y-1">
+            {ownershipStats.noTemplateAccess ? (
+              <p className="font-semibold">
+                You cannot save changes to any of these workout templates. Every one of the{' '}
+                {ownershipStats.blockedEntries.toLocaleString()} template entries below was created by
+                someone else{ownershipStats.orphanEntries > 0 ? ' or has no owner recorded' : ''}.
+              </p>
+            ) : (
+              <p>
+                <span className="font-semibold">
+                  {plural(ownershipStats.attemptableEntries, 'template entry')}
+                </span>{' '}
+                {ownershipStats.attemptableEntries === 1 ? 'is' : 'are'} in templates you can edit
+                ({plural(ownershipStats.editableTemplates, 'template')}).
+                {ownershipStats.otherEntries > 0 && (
+                  <> {plural(ownershipStats.otherEntries, 'entry')} sit in{' '}
+                  {plural(ownershipStats.otherTemplates, 'template')} created by someone else and
+                  cannot be saved from this account.</>
+                )}
+                {ownershipStats.orphanEntries > 0 && (
+                  <> {plural(ownershipStats.orphanEntries, 'entry')} sit in{' '}
+                  {plural(ownershipStats.orphanTemplates, 'template')} with no owner recorded, which
+                  nobody can update.</>
+                )}
+              </p>
+            )}
+            <p>{RLS_PLAIN_SENTENCE}</p>
+            {ownershipStats.programEntries > 0 && (
+              <p>
+                The {plural(ownershipStats.programEntries, 'assigned-program row')} below{' '}
+                {ownershipStats.programEntries === 1 ? 'is' : 'are'} not owner-gated, so those can be
+                saved either way.
+              </p>
+            )}
+            {ownershipStats.ownerUnknown && (
+              <p className="font-medium">
+                Your user account could not be read, so nothing could be checked in advance. Writes
+                will still be attempted and each one verified — anything the database refuses is
+                reported as blocked, never as saved.
+              </p>
+            )}
+          </div>
+        </div>
+
         {summary.unusableOccurrences > 0 && (
           <p className="mt-2 text-xs text-gray-500">
-            {plural(summary.unusableOccurrences, 'entry', 'ies')} had a name that is blank or pure
+            {plural(summary.unusableOccurrences, 'entry')} had a name that is blank or pure
             punctuation and were left out of the report entirely.
           </p>
         )}
@@ -867,10 +1151,18 @@ export default function ExerciseVideoGaps({ userRole }) {
         >
           <p className="font-medium flex items-center gap-2">
             {applyResult.ok ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-            {applyResult.ok ? 'Changes applied.' : 'Applied with failures.'}
+            {applyResult.ok
+              ? 'Changes applied.'
+              : (applyResult.failures.length > 0
+                ? 'Applied with failures.'
+                : 'Partly applied — some changes were blocked.')}
           </p>
-          <ul className="mt-2 space-y-0.5 list-disc list-inside">
-            <li>{plural(applyResult.templateEntriesWritten, 'workout entry', 'ies')} linked across {plural(applyResult.templatesUpdated, 'template')}.</li>
+
+          {/* Written, blocked and errored are three different things and are
+              never merged into one "succeeded/failed" number. */}
+          <p className="mt-2 font-medium">Written</p>
+          <ul className="space-y-0.5 list-disc list-inside">
+            <li>{plural(applyResult.templateEntriesWritten, 'workout entry')} linked across {plural(applyResult.templatesUpdated, 'template')}.</li>
             <li>{plural(applyResult.programRowsWritten, 'assigned-program row')} linked.</li>
             {applyResult.excludedNames > 0 && (
               <li>
@@ -879,9 +1171,46 @@ export default function ExerciseVideoGaps({ userRole }) {
               </li>
             )}
           </ul>
+
+          {(applyResult.templateEntriesBlocked > 0 || applyResult.programRowsBlocked > 0) && (
+            <div className="mt-2">
+              <p className="font-medium flex items-center gap-1.5">
+                <Lock size={14} /> Blocked by permissions — not saved, and not an error
+              </p>
+              <ul className="mt-1 space-y-0.5 list-disc list-inside">
+                {applyResult.templateEntriesBlockedOther > 0 && (
+                  <li>
+                    {plural(applyResult.templateEntriesBlockedOther, 'workout entry')} in templates created
+                    by someone else. Nothing was sent for these.
+                  </li>
+                )}
+                {applyResult.templateEntriesBlockedOrphan > 0 && (
+                  <li>
+                    {plural(applyResult.templateEntriesBlockedOrphan, 'workout entry')} in templates with no
+                    owner recorded, which nobody can update.
+                  </li>
+                )}
+                {applyResult.templateEntriesBlockedUnexpected > 0 && (
+                  <li>
+                    {plural(applyResult.templateEntriesBlockedUnexpected, 'workout entry')} the database
+                    refused even though this account appeared to own the template — the update returned
+                    zero rows. Treated as not saved.
+                  </li>
+                )}
+                {applyResult.programRowsBlocked > 0 && (
+                  <li>
+                    {plural(applyResult.programRowsBlocked, 'assigned-program row')} returned zero rows on
+                    update and were not saved.
+                  </li>
+                )}
+              </ul>
+              <p className="mt-1 text-xs">{RLS_PLAIN_SENTENCE}</p>
+            </div>
+          )}
+
           {applyResult.failures.length > 0 && (
             <div className="mt-2">
-              <p className="font-medium">{plural(applyResult.failures.length, 'failure')}:</p>
+              <p className="font-medium">Errored — {plural(applyResult.failures.length, 'failure')}:</p>
               <ul className="mt-1 space-y-0.5 list-disc list-inside">
                 {applyResult.failures.slice(0, 8).map((f, i) => (
                   <li key={i}>{f.what}: {f.message}</li>
@@ -982,6 +1311,9 @@ export default function ExerciseVideoGaps({ userRole }) {
               <tbody className="divide-y divide-gray-100">
                 {visibleRows.map((row) => {
                   const stagedRow = staged[row.key];
+                  const w = rowWritability.get(row.key)
+                    || { writableTotal: row.occurrences, blockedTotal: 0, blockedOther: 0, blockedOrphan: 0 };
+                  const fullyBlocked = w.writableTotal === 0 && w.blockedTotal > 0;
                   return (
                     <tr key={row.key} className={stagedRow ? 'bg-blue-50/40 align-top' : 'align-top'}>
                       <td className="px-4 py-3">
@@ -1003,6 +1335,19 @@ export default function ExerciseVideoGaps({ userRole }) {
                         <p className="font-medium">{row.occurrences.toLocaleString()} place{row.occurrences === 1 ? '' : 's'}</p>
                         <p className="text-xs text-gray-500">{row.templateCount.toLocaleString()} workout entr{row.templateCount === 1 ? 'y' : 'ies'}</p>
                         <p className="text-xs text-gray-500">{row.programCount.toLocaleString()} program row{row.programCount === 1 ? '' : 's'}</p>
+                        {w.blockedTotal > 0 && (
+                          <p className={`mt-1 inline-flex items-start gap-1 rounded border px-1.5 py-0.5 text-[11px] ${fullyBlocked ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}>
+                            <Lock size={11} className="mt-px shrink-0" />
+                            <span>
+                              {fullyBlocked
+                                ? "You can't save any of these"
+                                : `${w.blockedTotal.toLocaleString()} of ${row.occurrences.toLocaleString()} can't be saved`}
+                              {w.blockedOrphan > 0 && w.blockedOther === 0
+                                ? ' — no template owner'
+                                : ' — template owned by someone else'}
+                            </span>
+                          </p>
+                        )}
                       </td>
 
                       <td className="px-4 py-3 min-w-[18rem]">
@@ -1078,10 +1423,26 @@ export default function ExerciseVideoGaps({ userRole }) {
                         {stagedRow ? (
                           <div className="space-y-1">
                             {stagedRow.action === 'link' ? (
-                              <p className="text-xs text-gray-800">
-                                <span className="font-medium">Will link</span> {plural(stagedRow.occurrences, 'entry', 'ies')} to{' '}
-                                <span className="break-all">{stagedRow.matchName}</span>
-                              </p>
+                              <div className="text-xs text-gray-800 space-y-0.5">
+                                {(stagedRow.writableEntries || 0) > 0 ? (
+                                  <p>
+                                    <span className="font-medium">Will link</span>{' '}
+                                    {plural(stagedRow.writableEntries, 'entry')} to{' '}
+                                    <span className="break-all">{stagedRow.matchName}</span>
+                                  </p>
+                                ) : (
+                                  <p className="text-red-700">
+                                    <span className="font-medium">Will not save</span> — you don't own
+                                    {' '}{stagedRow.blockedEntries === 1 ? 'this template' : 'these templates'}.
+                                  </p>
+                                )}
+                                {(stagedRow.blockedEntries || 0) > 0 && (stagedRow.writableEntries || 0) > 0 && (
+                                  <p className="text-amber-800">
+                                    {plural(stagedRow.blockedEntries, 'entry')} will not save — owned by
+                                    someone else.
+                                  </p>
+                                )}
+                              </div>
                             ) : (
                               <p className="text-xs text-gray-800">
                                 <span className="font-medium">Will hide</span> as “not a movement” (this browser only)
@@ -1133,13 +1494,23 @@ export default function ExerciseVideoGaps({ userRole }) {
           <div className="mx-auto max-w-7xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-gray-800" role="status">
               <p className="font-medium">
-                {plural(stagedStats.total, 'name')} staged, affecting {plural(stagedStats.linkEntries, 'entry', 'ies')}.
+                {plural(stagedStats.total, 'name')} staged, affecting{' '}
+                {plural(stagedStats.linkEntries, 'writable entry')}.
               </p>
               <p className="text-xs text-gray-500">
                 {stagedStats.linkNames.toLocaleString()} to link ({stagedStats.templateEntries.toLocaleString()} workout entries,{' '}
                 {stagedStats.programEntries.toLocaleString()} program rows) ·{' '}
                 {stagedStats.excludeNames.toLocaleString()} to hide locally. Nothing is written yet.
               </p>
+              {stagedStats.blockedEntries > 0 && (
+                <p className="text-xs text-red-700 flex items-center gap-1 mt-0.5">
+                  <Lock size={11} className="shrink-0" />
+                  {plural(stagedStats.blockedEntries, 'further entry')} cannot be written from this
+                  account and {stagedStats.blockedEntries === 1 ? 'is' : 'are'} excluded from that count
+                  {stagedStats.fullyBlockedNames > 0
+                    && ` (${plural(stagedStats.fullyBlockedNames, 'staged name')} will save nothing at all)`}.
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1153,8 +1524,11 @@ export default function ExerciseVideoGaps({ userRole }) {
               <button
                 type="button"
                 onClick={() => setConfirmOpen(true)}
-                disabled={applying}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                disabled={applying || (stagedStats.linkEntries === 0 && stagedStats.excludeNames === 0)}
+                title={stagedStats.linkEntries === 0 && stagedStats.excludeNames === 0
+                  ? 'Nothing staged here can be written from this account.'
+                  : undefined}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
               >
                 {applying ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                 {applying ? 'Applying…' : 'Apply changes'}
@@ -1214,6 +1588,14 @@ export default function ExerciseVideoGaps({ userRole }) {
                   <strong>{stagedStats.programEntries.toLocaleString()}</strong> assigned-program row
                   {stagedStats.programEntries === 1 ? '' : 's'} will get a video_url.
                 </li>
+                {stagedStats.blockedEntries > 0 && (
+                  <li className="text-red-700">
+                    <strong>{stagedStats.blockedEntries.toLocaleString()}</strong> further entr
+                    {stagedStats.blockedEntries === 1 ? 'y' : 'ies'} will <strong>not</strong> be
+                    written: they live in templates this account cannot edit. Nothing will be sent for
+                    them.
+                  </li>
+                )}
                 <li>
                   <strong>{stagedStats.excludeNames.toLocaleString()}</strong> name
                   {stagedStats.excludeNames === 1 ? '' : 's'} will be hidden as “not a movement” —
@@ -1224,6 +1606,10 @@ export default function ExerciseVideoGaps({ userRole }) {
                 Entries that already have a link are never overwritten, so the real number written may be
                 lower if someone filled one in since this screen loaded. Re-running is safe: it only fills
                 what is still empty.
+              </p>
+              <p className="text-gray-600">
+                {RLS_PLAIN_SENTENCE} Every write is checked against what the database actually changed,
+                so the report afterwards distinguishes saved from blocked.
               </p>
               <div className="rounded border border-gray-200 bg-gray-50 p-2 max-h-48 overflow-y-auto">
                 <ul className="space-y-1 text-xs text-gray-700">

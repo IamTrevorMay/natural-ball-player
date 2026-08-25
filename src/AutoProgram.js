@@ -391,6 +391,288 @@ const DOMAINS = [
   { key: 'nutrition', label: 'Nutrition & Meals', icon: Utensils, area: null, accent: 'text-emerald-600' },
 ];
 
+/* ========================= BATCHED DATABASE WRITES =========================
+   One athlete's Auto-Program used to be ~224 HTTP requests: a round-trip per
+   training_days row and another per day's exercises, times three domains, plus
+   the meal plan. On facility wifi that is slow, and every one of those requests
+   is another chance to fail half-way and leave an orphaned program behind.
+
+   PostgREST accepts an array in a single .insert([...]), so each domain is now
+   a fixed handful of round-trips: program row, all days, all exercises, the
+   assignment. All four domains together are ~16 requests.
+
+   Two rules these helpers exist to enforce:
+     1. EVERY call destructures `error`. `const { data } = await supabase...`
+        is banned in this codebase — a failed query that looked like empty data
+        ran in production for two days.
+     2. A batched insert's returned rows come back in NO GUARANTEED ORDER. Never
+        zip them to the local rows by array index. Match on a stable field
+        (training_days.day_number) or, where the table has none, on the full
+        content of the row.
+   ========================================================================= */
+
+// Chunk size for a single .insert([...]) call. ~100 days / ~300 exercises fit in
+// one request comfortably; this only exists so an unusually long program (or a
+// future roster mode) degrades into a few requests instead of one enormous one.
+export const INSERT_CHUNK_ROWS = 500;
+
+const chunkRows = (rows, size = INSERT_CHUNK_ROWS) => {
+  const out = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+};
+
+// Fire-and-check insert: no rows come back, so nothing needs matching.
+async function insertAll(table, rows) {
+  for (const batch of chunkRows(rows)) {
+    // eslint-disable-next-line no-await-in-loop
+    const { error } = await supabase.from(table).insert(batch);
+    if (error) throw error;
+  }
+}
+
+// Insert and read the rows back. Refuses to continue on a short/absent return:
+// a missing row means some local row has no id, and guessing is how exercises
+// end up filed under the wrong day.
+async function insertAllReturning(table, rows, columns) {
+  const back = [];
+  for (const batch of chunkRows(rows)) {
+    // eslint-disable-next-line no-await-in-loop
+    const { data, error } = await supabase.from(table).insert(batch).select(columns);
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length !== batch.length) {
+      throw new Error(`${table} returned ${Array.isArray(data) ? data.length : 'no'} row(s) for the ${batch.length} sent — refusing to guess which id belongs to which row.`);
+    }
+    back.push(...data);
+  }
+  return back;
+}
+
+// Normalizes one value into a comparison key component. NUMERIC columns can come
+// back as "20.50" where we sent 20.5, so numbers are compared as numbers.
+const keyPart = (v) => {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return String(v);
+  const n = Number(v);
+  return v !== '' && Number.isFinite(n) ? String(n) : String(v);
+};
+const contentKey = (row, fields) => fields.map((f) => keyPart(row[f])).join('|~|');
+
+/* --------------------------------------------------------------------------
+   saveTrainingProgram — training_programs -> training_days -> training_exercises
+   -> training_program_assignments. Row shapes are byte-identical to the ones
+   ProgramGenerator.save() / ThrowingGenerator.save() / HittingGenerator.save()
+   already write.
+
+   Requests: 1 (program) + 1 (all days) + 1 (all exercises, 0 if none) +
+   1 (assignment, when assigning) = 3-4.
+
+   ROLLBACK. complete_database_schema.sql declares
+     training_days.program_id                UUID REFERENCES training_programs(id) ON DELETE CASCADE
+     training_exercises.day_id               UUID REFERENCES training_days(id)     ON DELETE CASCADE
+     training_program_assignments.program_id UUID REFERENCES training_programs(id) ON DELETE CASCADE
+   so deleting the one program row takes its days, exercises and assignment with
+   it. Cleanup is a single DELETE. If that DELETE itself fails we say exactly
+   what is still there and where to find it — we never claim a rollback that did
+   not happen.
+   -------------------------------------------------------------------------- */
+export async function saveTrainingProgram({
+  name, description, durationWeeks, rows,
+  authorId, playerId, startDate, endDate, onStep,
+}) {
+  const step = (m) => { if (onStep) onStep(m); };
+
+  step('Creating the program…');
+  const { data: prog, error: pErr } = await supabase
+    .from('training_programs')
+    .insert({ name, description, duration_weeks: durationWeeks, created_by: authorId })
+    .select('id')
+    .single();
+  if (pErr) throw pErr;
+  if (!prog || !prog.id) throw new Error('training_programs insert returned no id — nothing else was written.');
+
+  const programId = prog.id;
+  let stage = 'the training days';
+  let daysWritten = 0;
+  let exercisesWritten = 0;
+
+  try {
+    // day_number is the row's own ABSOLUTE calendar-day offset, not a loop index
+    // — rest days emit no row, so the two are not the same number. All three
+    // engines emit at most one row per calendar day, so day_number is unique
+    // within a program, which is what makes it a safe join key below.
+    step(`Writing ${rows.length} day(s)…`);
+    const dayRows = await insertAllReturning(
+      'training_days',
+      rows.map((d) => ({ program_id: programId, day_number: d.day_number, title: d.title, notes: d.notes })),
+      'id, day_number',
+    );
+    daysWritten = dayRows.length;
+
+    // Match returned rows back to local days BY day_number, never by index.
+    const idByDayNumber = new Map();
+    for (const r of dayRows) {
+      if (idByDayNumber.has(r.day_number)) {
+        throw new Error(`two training_days rows came back for day_number ${r.day_number} — cannot tell which day an exercise belongs to.`);
+      }
+      idByDayNumber.set(r.day_number, r.id);
+    }
+
+    stage = 'the exercises';
+    const exerciseRows = [];
+    for (const d of rows) {
+      const dayId = idByDayNumber.get(d.day_number);
+      if (!dayId) throw new Error(`no training_days row came back for day_number ${d.day_number} — its exercises have nowhere to go.`);
+      for (const x of d.exercises) {
+        exerciseRows.push({
+          day_id: dayId, category: x.category, name: x.name,
+          description: x.description, reps: x.reps, sort_order: x.sort_order,
+          video_url: x.video_url || null,
+        });
+      }
+    }
+    step(`Writing ${exerciseRows.length} exercise(s)…`);
+    await insertAll('training_exercises', exerciseRows);
+    exercisesWritten = exerciseRows.length;
+
+    if (playerId) {
+      stage = 'the assignment';
+      step('Assigning to the athlete…');
+      const { error: aErr } = await supabase.from('training_program_assignments').insert({
+        program_id: programId, player_id: playerId,
+        start_date: startDate, end_date: endDate,
+        assigned_by: authorId,
+      });
+      if (aErr) throw aErr;
+    }
+  } catch (e) {
+    const base = e.message || 'The save failed.';
+    step('Rolling back…');
+    // .select('id') is not decoration: a DELETE that RLS silently filters out
+    // returns 200 with NO error and NO rows. Reading the deleted rows back is
+    // the only way to know the cleanup actually happened before we claim it did.
+    const { data: deleted, error: delErr } = await supabase
+      .from('training_programs').delete().eq('id', programId).select('id');
+    const cleanupFailed = delErr ? delErr.message
+      : (!Array.isArray(deleted) || deleted.length === 0)
+        ? 'the delete removed no rows — most likely a row-level-security policy blocked it'
+        : null;
+    if (cleanupFailed) {
+      throw new Error(`${base} — failed while writing ${stage}, AND THE CLEANUP ALSO FAILED (${cleanupFailed}). The program "${name}" (id ${programId}) is STILL in the database with ${daysWritten} day(s) and ${exercisesWritten} exercise(s) and no assignment. Find it in Programming → Programs and delete it by hand.`);
+    }
+    throw new Error(`${base} — failed while writing ${stage}. Nothing was left behind: "${name}" was deleted, and its days and exercises cascade from it. Nothing was assigned. Fix the cause and save again.`);
+  }
+
+  return { programId, daysWritten, exercisesWritten };
+}
+
+/* --------------------------------------------------------------------------
+   saveMealPlan — meal_plans -> meals -> meal_plan_items -> meal_plan_assignments.
+   Row shapes are byte-identical to NutritionGenerator.save().
+
+   Requests: 1 (plan) + 1 (all meals) + 1 (all items) + 1 (assignment) = 3-4.
+
+   ROLLBACK. meal_plan_items cascades from BOTH meal_plans and meals, and
+   meal_plan_assignments cascades from meal_plans — but `meals` rows are
+   free-standing library rows that nothing cascades to. So cleanup deletes the
+   meals we just created AND the plan row: deleting the plan alone would leave
+   orphaned meals sitting in the meal library.
+   -------------------------------------------------------------------------- */
+export async function saveMealPlan({
+  name, description, meals, authorId, playerId, startDate, onStep,
+}) {
+  const step = (m) => { if (onStep) onStep(m); };
+
+  step('Creating the meal plan…');
+  const { data: mp, error: pErr } = await supabase
+    .from('meal_plans')
+    .insert({ name, description, created_by: authorId })
+    .select('id')
+    .single();
+  if (pErr) throw pErr;
+  if (!mp || !mp.id) throw new Error('meal_plans insert returned no id — nothing else was written.');
+
+  const mealPlanId = mp.id;
+  const MEAL_KEY_FIELDS = ['name', 'meal_type', 'description', 'calories', 'protein_g', 'carbs_g', 'fat_g'];
+  let stage = 'the meals';
+  let mealIds = [];
+
+  try {
+    step(`Writing ${meals.length} meal(s)…`);
+    const mealRows = await insertAllReturning(
+      'meals',
+      meals.map((m) => ({
+        name: m.name, description: m.description, meal_type: m.meal_type,
+        calories: m.calories, protein_g: m.protein_g, carbs_g: m.carbs_g, fat_g: m.fat_g,
+        created_by: authorId,
+      })),
+      `id, ${MEAL_KEY_FIELDS.join(', ')}`,
+    );
+    mealIds = mealRows.map((r) => r.id);
+
+    // `meals` has no natural key to join on, so match returned rows back to the
+    // local ones by their full CONTENT, popping ids off a per-key queue. Two
+    // meals that collide on this key are byte-identical rows, so either id is
+    // the right answer for either slot — but the index of the *local* array
+    // still decides sort_order, which is what the plan's ordering depends on.
+    const idsByKey = new Map();
+    for (const r of mealRows) {
+      const k = contentKey(r, MEAL_KEY_FIELDS);
+      if (!idsByKey.has(k)) idsByKey.set(k, []);
+      idsByKey.get(k).push(r.id);
+    }
+    const orderedIds = meals.map((m, i) => {
+      const queue = idsByKey.get(contentKey(m, MEAL_KEY_FIELDS));
+      if (!queue || !queue.length) throw new Error(`the meals insert returned no row matching meal ${i + 1} ("${m.name}") — refusing to guess its id.`);
+      return queue.shift();
+    });
+
+    stage = 'the plan items';
+    step(`Linking ${orderedIds.length} meal(s) to the plan…`);
+    await insertAll('meal_plan_items', orderedIds.map((mealId, i) => ({
+      meal_plan_id: mealPlanId, meal_id: mealId, sort_order: i,
+    })));
+
+    if (playerId) {
+      stage = 'the assignment';
+      step('Assigning to the athlete…');
+      const { error: aErr } = await supabase.from('meal_plan_assignments').insert({
+        meal_plan_id: mealPlanId, player_id: playerId,
+        start_date: startDate, assigned_by: authorId,
+      });
+      if (aErr) throw aErr;
+    }
+  } catch (e) {
+    const base = e.message || 'The save failed.';
+    step('Rolling back…');
+    const leftovers = [];
+    // As above: read the deleted rows back. A DELETE filtered out by RLS looks
+    // exactly like a successful one unless you count what came back.
+    for (const batch of chunkRows(mealIds)) {
+      // eslint-disable-next-line no-await-in-loop
+      const { data: goneMeals, error: mDelErr } = await supabase
+        .from('meals').delete().in('id', batch).select('id');
+      const why = mDelErr ? mDelErr.message
+        : (!Array.isArray(goneMeals) || goneMeals.length !== batch.length)
+          ? 'the delete removed no rows — most likely a row-level-security policy blocked it'
+          : null;
+      if (why) leftovers.push(`${batch.length} row(s) in meals (ids ${batch.join(', ')}) — ${why}`);
+    }
+    const { data: gonePlan, error: pDelErr } = await supabase
+      .from('meal_plans').delete().eq('id', mealPlanId).select('id');
+    const planWhy = pDelErr ? pDelErr.message
+      : (!Array.isArray(gonePlan) || gonePlan.length === 0)
+        ? 'the delete removed no rows — most likely a row-level-security policy blocked it'
+        : null;
+    if (planWhy) leftovers.push(`the meal plan "${name}" (id ${mealPlanId}) — ${planWhy}`);
+    if (leftovers.length) {
+      throw new Error(`${base} — failed while writing ${stage}, AND THE CLEANUP ALSO FAILED. Still in the database: ${leftovers.join('; ')}. Delete these by hand under Programming → Meal Plans. Nothing was assigned.`);
+    }
+    throw new Error(`${base} — failed while writing ${stage}. Nothing was left behind: the plan "${name}", its items and the ${mealIds.length} meal(s) just created were all deleted. Nothing was assigned. Fix the cause and save again.`);
+  }
+
+  return { mealPlanId, written: meals.length };
+}
 /* ================================ component =============================== */
 
 export default function AutoProgram({ userId, userRole }) {
@@ -972,100 +1254,12 @@ export default function AutoProgram({ userId, userRole }) {
      reports its own success or failure — one domain failing never hides or
      rolls back another. The row shapes below are the ones the four existing
      generators already write; no new columns, no new tables.
+
+     The writes are BATCHED (see saveTrainingProgram / saveMealPlan above): a
+     three-domain save is ~13 requests instead of ~224, and every step that can
+     fail now cleans up after itself.
      ====================================================================== */
   const endDateFor = (weeksN) => iso(new Date(new Date(shared.programStart + 'T00:00:00').getTime() + weeksN * 7 * 24 * 60 * 60 * 1000));
-
-  // training_programs -> training_days -> training_exercises -> assignment.
-  // Mirrors ProgramGenerator.save() / ThrowingGenerator.save() / HittingGenerator.save().
-  const saveTrainingProgram = async ({ name, description, durationWeeks, rows }) => {
-    const { data: prog, error: pErr } = await supabase
-      .from('training_programs')
-      .insert({ name, description, duration_weeks: durationWeeks, created_by: authorId })
-      .select('id')
-      .single();
-    if (pErr) throw pErr;
-
-    let daysWritten = 0;
-    try {
-      for (let i = 0; i < rows.length; i += 1) {
-        const d = rows[i];
-        // day_number is the row's own ABSOLUTE calendar-day offset, not the loop
-        // index — rest days emit no row, so the two are not the same number.
-        const { data: dayRow, error: dErr } = await supabase
-          .from('training_days')
-          .insert({ program_id: prog.id, day_number: d.day_number, title: d.title, notes: d.notes })
-          .select('id')
-          .single();
-        if (dErr) throw dErr;
-        if (d.exercises.length) {
-          const { error: exErr } = await supabase.from('training_exercises').insert(
-            d.exercises.map((x) => ({
-              day_id: dayRow.id, category: x.category, name: x.name,
-              description: x.description, reps: x.reps, sort_order: x.sort_order,
-              video_url: x.video_url || null,
-            })),
-          );
-          if (exErr) throw exErr;
-        }
-        daysWritten += 1;
-      }
-      if (assignAthlete && selectedId) {
-        const { error: aErr } = await supabase.from('training_program_assignments').insert({
-          program_id: prog.id, player_id: selectedId,
-          start_date: shared.programStart, end_date: endDateFor(durationWeeks),
-          assigned_by: authorId,
-        });
-        if (aErr) throw aErr;
-      }
-    } catch (e) {
-      // Be explicit: the program row exists and is PARTIALLY populated. Saying
-      // nothing here is how a half-written program gets assigned to an athlete.
-      const err = new Error(`${e.message} — "${name}" was created with ${daysWritten} of ${rows.length} day(s) written and is NOT assigned. Delete it in Programming → Programs and try again.`);
-      throw err;
-    }
-    return { programId: prog.id, daysWritten };
-  };
-
-  // meal_plans -> meals -> meal_plan_items -> meal_plan_assignments.
-  // Mirrors NutritionGenerator.save().
-  const saveMealPlan = async ({ name, description, meals }) => {
-    const { data: mp, error: pErr } = await supabase
-      .from('meal_plans')
-      .insert({ name, description, created_by: authorId })
-      .select('id')
-      .single();
-    if (pErr) throw pErr;
-    let written = 0;
-    try {
-      for (let i = 0; i < meals.length; i += 1) {
-        const m = meals[i];
-        const { data: mealRow, error: mErr } = await supabase
-          .from('meals')
-          .insert({
-            name: m.name, description: m.description, meal_type: m.meal_type,
-            calories: m.calories, protein_g: m.protein_g, carbs_g: m.carbs_g, fat_g: m.fat_g,
-            created_by: authorId,
-          })
-          .select('id')
-          .single();
-        if (mErr) throw mErr;
-        const { error: iErr } = await supabase.from('meal_plan_items')
-          .insert({ meal_plan_id: mp.id, meal_id: mealRow.id, sort_order: i });
-        if (iErr) throw iErr;
-        written += 1;
-      }
-      if (assignAthlete && selectedId) {
-        const { error: aErr } = await supabase.from('meal_plan_assignments').insert({
-          meal_plan_id: mp.id, player_id: selectedId,
-          start_date: shared.programStart, assigned_by: authorId,
-        });
-        if (aErr) throw aErr;
-      }
-    } catch (e) {
-      throw new Error(`${e.message} — "${name}" was created with ${written} of ${meals.length} meal(s) written and is NOT assigned. Delete it in Programming → Meal Plans and try again.`);
-    }
-    return { mealPlanId: mp.id, written };
-  };
 
   const save = async () => {
     if (!built) return;
@@ -1073,6 +1267,9 @@ export default function AutoProgram({ userId, userRole }) {
     setError('');
     const results = {};
     const record = (k, r) => { results[k] = r; setSaveResults({ ...results }); };
+    // Progress is now per-DOMAIN STEP, not per row — there are only a handful of
+    // requests left to narrate, and "writing 104 days…" is one of them.
+    const stepper = (k) => (message) => record(k, { pending: true, message });
 
     const wantsSave = DOMAINS.filter((d) => include[d.key] && built[d.key] && !built[d.key].error);
     if (!wantsSave.length) {
@@ -1086,6 +1283,8 @@ export default function AutoProgram({ userId, userRole }) {
       return;
     }
 
+    const playerId = assignAthlete && selectedId ? selectedId : null;
+
     for (const d of wantsSave) {
       try {
         if (d.key === 'sc') {
@@ -1095,8 +1294,13 @@ export default function AutoProgram({ userId, userRole }) {
             description: `${b.program.phaseLabel} · ${b.counts.weeks}-wk progression · ${b.program.emphasis} (generated ${iso(new Date())})`,
             durationWeeks: b.counts.weeks,
             rows: b.rows,
+            authorId,
+            playerId,
+            startDate: shared.programStart,
+            endDate: endDateFor(b.counts.weeks),
+            onStep: stepper('sc'),
           });
-          record('sc', { ok: true, message: `Saved ${r.daysWritten} training day(s) across ${b.counts.weeks} week(s)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.` });
+          record('sc', { ok: true, message: `Saved ${r.daysWritten} training day(s) and ${r.exercisesWritten} exercise(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
         } else if (d.key === 'throwing') {
           const b = built.throwing;
           const phase = THROW_PHASES[shared.phaseId];
@@ -1105,8 +1309,13 @@ export default function AutoProgram({ userId, userRole }) {
             description: `${phase.label} · ${b.counts.weeks}-week ramp · ${phase.goal} (generated ${iso(new Date())})`,
             durationWeeks: b.counts.weeks,
             rows: b.rows,
+            authorId,
+            playerId,
+            startDate: shared.programStart,
+            endDate: endDateFor(b.counts.weeks),
+            onStep: stepper('throwing'),
           });
-          record('throwing', { ok: true, message: `Saved ${r.daysWritten} session(s) across ${b.counts.weeks} week(s)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.` });
+          record('throwing', { ok: true, message: `Saved ${r.daysWritten} session(s) and ${r.exercisesWritten} drill(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
         } else if (d.key === 'hitting') {
           const b = built.hitting;
           const topFindings = b.plan.findings.slice(0, 3).map((f) => f.title).join('; ');
@@ -1115,16 +1324,25 @@ export default function AutoProgram({ userId, userRole }) {
             description: `Hitting roadmap · ${HIT_LEVEL_NAME[profile.hitLevel]} · top priorities: ${topFindings || 'balanced'} (generated ${iso(new Date())})`,
             durationWeeks: b.counts.weeks,
             rows: b.rows,
+            authorId,
+            playerId,
+            startDate: shared.programStart,
+            endDate: endDateFor(b.counts.weeks),
+            onStep: stepper('hitting'),
           });
-          record('hitting', { ok: true, message: `Saved ${r.daysWritten} day(s) across ${b.counts.weeks} week(s)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.` });
+          record('hitting', { ok: true, message: `Saved ${r.daysWritten} day(s) and ${r.exercisesWritten} drill(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
         } else if (d.key === 'nutrition') {
           const b = built.nutrition;
           const r = await saveMealPlan({
             name: names.nutrition || `${selectedName} — Fuel Plan`,
             description: b.planDescription,
             meals: b.meals,
+            authorId,
+            playerId,
+            startDate: shared.programStart,
+            onStep: stepper('nutrition'),
           });
-          record('nutrition', { ok: true, message: `Saved ${r.written} meal(s)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.` });
+          record('nutrition', { ok: true, message: `Saved ${r.written} meal(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
         }
       } catch (e) {
         record(d.key, { ok: false, message: e.message || 'Save failed.' });
@@ -1921,11 +2139,19 @@ export default function AutoProgram({ userId, userRole }) {
                     return (
                       <div
                         key={d.key}
-                        className={`text-xs rounded border p-2.5 flex gap-2 ${r.ok
-                          ? 'border-green-200 bg-green-50 text-green-800'
-                          : 'border-red-300 bg-red-50 text-red-800'}`}
+                        className={`text-xs rounded border p-2.5 flex gap-2 ${r.pending
+                          ? 'border-blue-200 bg-blue-50 text-blue-800'
+                          : r.ok
+                            ? 'border-green-200 bg-green-50 text-green-800'
+                            : 'border-red-300 bg-red-50 text-red-800'}`}
                       >
-                        {r.ok ? <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+                        {/* pending = a step of THIS domain is in flight (a handful of
+                            batched requests, not one per row) */}
+                        {r.pending
+                          ? <Circle className="w-4 h-4 flex-shrink-0 mt-0.5 animate-pulse" />
+                          : r.ok
+                            ? <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                            : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
                         <span><strong>{d.label}:</strong> {r.message}</span>
                       </div>
                     );
