@@ -309,7 +309,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
       <div className="mb-4 flex items-start justify-between">
         <div className="min-w-0">
           <div className="flex items-center space-x-2">
-            <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain flex-shrink-0" />
+            <img src="/naturals-diamond.png" alt="The Naturals" className="w-8 h-8 object-contain flex-shrink-0" />
             <h1 className="text-xl font-bold text-indigo-200 truncate">NBP Work Portal</h1>
           </div>
           <div className="flex items-center space-x-3 mt-2">

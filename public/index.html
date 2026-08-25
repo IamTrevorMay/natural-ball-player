@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#1A091B" />
     <meta name="description" content="Natural Ball Player Training Portal" />
+    <!-- #366: the Naturals diamond. There was no favicon at all before this,
+         so the browser tab showed a blank page icon. .ico first for older
+         browsers, then the PNGs modern ones prefer; apple-touch-icon is the
+         one iOS uses when a parent saves the portal to their home screen, and
+         it is the only one on a cream plate because iOS ignores transparency
+         and would otherwise put the dark outline on a black square. -->
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/naturals-diamond-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/naturals-diamond-16.png" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>Natural Ball Player</title>
   </head>
   <body>

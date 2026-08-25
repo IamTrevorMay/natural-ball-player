@@ -52,7 +52,7 @@ export default function PublicPortal({ userId, userName, onLogout }) {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain" />
+            <img src="/naturals-diamond.png" alt="The Naturals" className="w-8 h-8 object-contain" />
             <span className="font-bold text-gray-900 hidden sm:inline">Natural Ball Player</span>
           </div>
           <nav className="flex items-center gap-1">
