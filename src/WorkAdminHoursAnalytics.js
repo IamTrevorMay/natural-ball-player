@@ -18,8 +18,8 @@ import { formatUserError } from './errorMessage';
 const TYPE_LABEL = { pto: 'PTO', sick: 'Sick', unpaid: 'Unpaid', other: 'Other' };
 const TYPE_ORDER = ['pto', 'sick', 'unpaid', 'other'];
 
-const COLOR_APPROVED = '#4f46e5'; // indigo-600, the app accent
-const COLOR_PENDING = '#a5b4fc';  // indigo-300
+const COLOR_APPROVED = '#2C1B2E'; // brand ink (Naturals logo black)
+const COLOR_PENDING = '#CFC29E';  // brand cream, one step down
 
 // --- date helpers -----------------------------------------------------------
 // Matches the rest of the app: dates are plain `YYYY-MM-DD` strings and are

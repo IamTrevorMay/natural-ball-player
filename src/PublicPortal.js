@@ -26,7 +26,7 @@ const STATUS_META = {
   confirmed: { label: 'Confirmed', cls: 'bg-green-100 text-green-700', Icon: CheckCircle },
   pending_payment: { label: 'Payment pending', cls: 'bg-amber-100 text-amber-700', Icon: Clock },
   canceled: { label: 'Canceled', cls: 'bg-gray-100 text-gray-600', Icon: XCircle },
-  refunded: { label: 'Refunded', cls: 'bg-blue-100 text-blue-700', Icon: RotateCcw },
+  refunded: { label: 'Refunded', cls: 'bg-sky-100 text-sky-700', Icon: RotateCcw },
 };
 
 export default function PublicPortal({ userId, userName, onLogout }) {

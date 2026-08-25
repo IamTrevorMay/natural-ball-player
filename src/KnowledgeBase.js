@@ -1,13 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { fetchUserDirectory } from './userDirectory';
-import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X, ExternalLink } from 'lucide-react';
+import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X, ExternalLink, AlertTriangle } from 'lucide-react';
 
+// Hosts we will accept a pasted link *from*. Being on this list is necessary
+// but not sufficient — every host below has an explicit coercion branch in
+// toSafeEmbedUrl(), and anything that does not match one of those shapes is
+// rejected. `youtu.be` is an input-only host: YouTube's own Share button hands
+// out youtu.be links, but they cannot be framed, so they are always converted.
 const EMBED_HOST_ALLOWLIST = new Set([
   'www.youtube.com',
   'youtube.com',
   'www.youtube-nocookie.com',
   'youtube-nocookie.com',
+  'youtu.be',
   'player.vimeo.com',
   'vimeo.com',
   'www.loom.com',
@@ -24,36 +30,153 @@ const CATEGORY_COLORS = {
   yellow: { solid: 'bg-yellow-600 text-white', soft: 'bg-yellow-100 text-yellow-700' },
   green: { solid: 'bg-green-600 text-white', soft: 'bg-green-100 text-green-700' },
   teal: { solid: 'bg-teal-600 text-white', soft: 'bg-teal-100 text-teal-700' },
-  blue: { solid: 'bg-blue-600 text-white', soft: 'bg-blue-100 text-blue-700' },
-  indigo: { solid: 'bg-indigo-600 text-white', soft: 'bg-indigo-100 text-indigo-700' },
+  blue: { solid: 'bg-sky-600 text-white', soft: 'bg-sky-100 text-sky-700' },
+  indigo: { solid: 'bg-violet-600 text-white', soft: 'bg-violet-100 text-violet-700' },
   purple: { solid: 'bg-purple-600 text-white', soft: 'bg-purple-100 text-purple-700' },
   pink: { solid: 'bg-pink-600 text-white', soft: 'bg-pink-100 text-pink-700' },
   gray: { solid: 'bg-gray-600 text-white', soft: 'bg-gray-100 text-gray-700' },
 };
 const catColor = (color) => CATEGORY_COLORS[color] || CATEGORY_COLORS.gray;
 
-function toSafeEmbedUrl(raw) {
+// #274: a link that passes validation but cannot be framed is worse than a
+// rejected one — it saves cleanly, then renders a blank/refused iframe that
+// nobody notices for months. So there is no fall-through here: every accepted
+// host is coerced into a known-embeddable URL, and everything else is null.
+
+const YOUTUBE_ID_RE = /^[\w-]{6,20}$/;
+const VIMEO_ID_RE = /^\d{5,12}$/;
+const VIMEO_HASH_RE = /^[A-Za-z0-9]{6,20}$/;
+const LOOM_ID_RE = /^[A-Za-z0-9]{8,64}$/;
+
+// Accepts YouTube's timestamp forms: `123`, `90s`, `1m30s`, `1h2m3s`.
+function parseStartSeconds(value) {
+  if (!value) return null;
+  const v = String(value).trim().toLowerCase();
+  if (/^\d+$/.test(v)) {
+    const n = parseInt(v, 10);
+    return n > 0 ? n : null;
+  }
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(v);
+  if (!m || (!m[1] && !m[2] && !m[3])) return null;
+  const total = parseInt(m[1] || '0', 10) * 3600 + parseInt(m[2] || '0', 10) * 60 + parseInt(m[3] || '0', 10);
+  return total > 0 ? total : null;
+}
+
+function youTubeEmbed(id, startSeconds) {
+  if (!id || !YOUTUBE_ID_RE.test(id)) return null;
+  const base = `https://www.youtube-nocookie.com/embed/${id}`;
+  return startSeconds ? `${base}?start=${startSeconds}` : base;
+}
+
+// Parses + allowlists, or returns null. Shared by toSafeEmbedUrl and the
+// "open it yourself" anchors so a raw href can never reach the DOM.
+function parseAllowedUrl(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return null;
+  let u;
   try {
-    const u = new URL(raw.trim());
-    if (u.protocol !== 'https:') return null;
-    if (!EMBED_HOST_ALLOWLIST.has(u.host.toLowerCase())) return null;
-    // Coerce common share URLs into their embed equivalents
-    if (u.host.endsWith('youtube.com') && u.pathname === '/watch') {
-      const id = u.searchParams.get('v');
-      if (!id || !/^[\w-]{6,20}$/.test(id)) return null;
-      return `https://www.youtube-nocookie.com/embed/${id}`;
-    }
-    if (u.host === 'youtu.be') return null;
-    if (u.host.endsWith('vimeo.com') && u.host !== 'player.vimeo.com') {
-      const id = u.pathname.replace(/^\/+/, '').split('/')[0];
-      if (!/^\d{5,12}$/.test(id)) return null;
-      return `https://player.vimeo.com/video/${id}`;
-    }
-    return u.toString();
+    u = new URL(raw.trim());
   } catch {
     return null;
   }
+  if (u.protocol !== 'https:') return null;
+  if (!EMBED_HOST_ALLOWLIST.has(u.host.toLowerCase())) return null;
+  return u;
+}
+
+function toSafeEmbedUrl(raw) {
+  const u = parseAllowedUrl(raw);
+  if (!u) return null;
+  const host = u.host.toLowerCase();
+  const segments = u.pathname.split('/').filter(Boolean);
+  const start = parseStartSeconds(u.searchParams.get('t') || u.searchParams.get('start'));
+
+  // youtu.be/ID — the Share-button form. Input only; never framed directly.
+  if (host === 'youtu.be') {
+    if (segments.length !== 1) return null;
+    return youTubeEmbed(segments[0], start);
+  }
+
+  // youtube.com and youtube-nocookie.com: /watch?v=ID, /shorts/ID, /live/ID,
+  // /embed/ID. Everything else (playlists, channels, /results, bare /) is out.
+  if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+    if (u.pathname === '/watch') return youTubeEmbed(u.searchParams.get('v'), start);
+    if (segments.length === 2 && (segments[0] === 'shorts' || segments[0] === 'live' || segments[0] === 'embed')) {
+      return youTubeEmbed(segments[1], start);
+    }
+    return null;
+  }
+
+  // player.vimeo.com/video/ID — already an embed URL. The `h` param is the
+  // unlisted-video token, so it has to survive.
+  if (host === 'player.vimeo.com') {
+    if (segments.length !== 2 || segments[0] !== 'video' || !VIMEO_ID_RE.test(segments[1])) return null;
+    const h = u.searchParams.get('h');
+    return h && VIMEO_HASH_RE.test(h)
+      ? `https://player.vimeo.com/video/${segments[1]}?h=${h}`
+      : `https://player.vimeo.com/video/${segments[1]}`;
+  }
+
+  // vimeo.com/ID, or vimeo.com/ID/HASH for an unlisted video.
+  if (host === 'vimeo.com') {
+    if (!segments.length || !VIMEO_ID_RE.test(segments[0])) return null;
+    if (segments.length === 1) return `https://player.vimeo.com/video/${segments[0]}`;
+    if (segments.length === 2 && VIMEO_HASH_RE.test(segments[1])) {
+      return `https://player.vimeo.com/video/${segments[0]}?h=${segments[1]}`;
+    }
+    return null;
+  }
+
+  // loom.com/share/ID (the Share-button form) and loom.com/embed/ID.
+  if (host === 'loom.com' || host === 'www.loom.com') {
+    if (segments.length !== 2) return null;
+    if (segments[0] !== 'share' && segments[0] !== 'embed') return null;
+    if (!LOOM_ID_RE.test(segments[1])) return null;
+    return `https://www.loom.com/embed/${segments[1]}`;
+  }
+
+  return null;
+}
+
+// An href we are willing to put in the DOM: https, allowlisted host, nothing
+// else. Used for the "open it yourself" fallback links, which do not need the
+// URL to be *embeddable* — only safe.
+function toSafeExternalUrl(raw) {
+  const u = parseAllowedUrl(raw);
+  return u ? u.toString() : null;
+}
+
+// "Open in YouTube" reads wrong on a Vimeo link, and the fallback link is now
+// shown for hosts other than YouTube.
+function externalLinkLabel(raw) {
+  const u = parseAllowedUrl(raw);
+  if (!u) return 'Open video link';
+  const host = u.host.toLowerCase();
+  if (host.endsWith('vimeo.com')) return 'Open in Vimeo';
+  if (host.endsWith('loom.com')) return 'Open in Loom';
+  return 'Open in YouTube';
+}
+
+// Names what is actually wrong with a pasted link, for a single save-time
+// alert(). (No modal: this project has a history of modals putting their own
+// buttons off-screen.)
+const ACCEPTED_FORMS_HINT =
+  'Accepted: youtube.com/watch?v=…, youtu.be/…, youtube.com/shorts/… or /live/…, vimeo.com/123456789, or loom.com/share/… .';
+
+function describeVideoUrlProblem(raw) {
+  const trimmed = (raw || '').trim();
+  let u;
+  try {
+    u = new URL(trimmed);
+  } catch {
+    return `That doesn't look like a web address. ${ACCEPTED_FORMS_HINT}`;
+  }
+  if (u.protocol !== 'https:') {
+    return `Only https links can be embedded — this one starts with "${u.protocol}//". ${ACCEPTED_FORMS_HINT}`;
+  }
+  if (!EMBED_HOST_ALLOWLIST.has(u.host.toLowerCase())) {
+    return `${u.host} isn't a supported video host — only YouTube, Vimeo and Loom links can be embedded. ${ACCEPTED_FORMS_HINT}`;
+  }
+  return `That ${u.host} link isn't a form we can embed — playlists, channel pages, search results and "members only" links won't play here. ${ACCEPTED_FORMS_HINT}`;
 }
 
 export default function KnowledgeBase({ userId, userRole }) {
@@ -256,7 +379,7 @@ function SituationalView({ userRole }) {
   const saveVideoUrl = async (play) => {
     const raw = videoDraft.trim();
     if (raw && !toSafeEmbedUrl(raw)) {
-      alert('That link can\'t be embedded. Paste a standard YouTube link (https://www.youtube.com/watch?v=...), or a Vimeo/Loom link.');
+      alert(describeVideoUrlProblem(raw));
       return;
     }
     setSavingVideo(true);
@@ -366,6 +489,12 @@ function SituationalView({ userRole }) {
                   <div className="space-y-3">
                     {group.items.map((play, i) => {
                       const embedUrl = toSafeEmbedUrl(play.video_url);
+                      // A stored link that is not embeddable used to render as
+                      // nothing at all — indistinguishable from "no video", which
+                      // is how a dead link survives for months (#274). Show the
+                      // external link to everyone and tell staff it needs fixing.
+                      const externalUrl = toSafeExternalUrl(play.video_url);
+                      const unembeddable = !!play.video_url && !embedUrl;
                       const videoOpen = openVideoId === play.id;
                       const editingVideo = editingVideoId === play.id;
                       return (
@@ -417,6 +546,27 @@ function SituationalView({ userRole }) {
                                   </button>
                                 </div>
                               )}
+                              {unembeddable && !editingVideo && (
+                                <div className="mt-2 space-y-1">
+                                  {externalUrl && (
+                                    <a
+                                      href={externalUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition"
+                                    >
+                                      <ExternalLink size={12} />
+                                      <span>{externalLinkLabel(play.video_url)}</span>
+                                    </a>
+                                  )}
+                                  {isStaff && (
+                                    <div className="flex items-start gap-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded px-2 py-1 text-[11px]">
+                                      <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                                      <span>This link can't be embedded — click the pencil to replace it.</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                               {embedUrl && !editingVideo && (
                                 <button
                                   onClick={() => setOpenVideoId(videoOpen ? null : play.id)}
@@ -438,15 +588,17 @@ function SituationalView({ userRole }) {
                                       allowFullScreen
                                     />
                                   </div>
-                                  <a
-                                    href={play.video_url}
-                                    target="_blank"
-                                    rel="noreferrer noopener"
-                                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition"
-                                  >
-                                    <ExternalLink size={10} />
-                                    Open in YouTube
-                                  </a>
+                                  {externalUrl && (
+                                    <a
+                                      href={externalUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition"
+                                    >
+                                      <ExternalLink size={10} />
+                                      {externalLinkLabel(play.video_url)}
+                                    </a>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -815,17 +967,25 @@ function ArticleView({ article, onBack }) {
           const safeEmbed = toSafeEmbedUrl(article.video_url);
           if (!safeEmbed) {
             if (article.video_url) {
+              // Never put the raw stored value in an href — same bug class as
+              // #274's situational anchor. If it is not https + allowlisted it
+              // is shown as plain text, not as something clickable.
+              const externalUrl = toSafeExternalUrl(article.video_url);
               return (
                 <div className="mb-8 text-sm text-gray-500">
                   Video link is not from a supported host — open it manually:{' '}
-                  <a
-                    href={article.video_url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="text-blue-600 underline break-all"
-                  >
-                    {article.video_url}
-                  </a>
+                  {externalUrl ? (
+                    <a
+                      href={externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 underline break-all"
+                    >
+                      {article.video_url}
+                    </a>
+                  ) : (
+                    <span className="break-all">{article.video_url}</span>
+                  )}
                 </div>
               );
             }

@@ -8,15 +8,31 @@ import { supabase } from './supabaseClient';
 let cachedVideos = null;
 let inFlightPromise = null;
 
+// PostgREST caps an unbounded select at 1,000 rows. The library is larger
+// than that (~1,275 and growing), so a plain .select() silently returned a
+// truncated list and the name input's "no video for this exercise yet" hint
+// was wrong for every exercise past the cap. Page through explicitly.
+const PAGE_SIZE = 1000;
+
 async function fetchExerciseVideos() {
-  const { data, error } = await supabase.from('exercise_videos').select('name, name_key, video_url');
-  if (error) {
-    // A failed lookup must never block a coach from saving a workout — the
-    // name input just falls back to a plain text field with no suggestions.
-    console.error('exerciseVideos: fetch failed:', error);
-    return [];
+  const all = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('exercise_videos')
+      .select('name, name_key, video_url')
+      .order('name_key')
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      // A failed lookup must never block a coach from saving a workout — the
+      // name input just falls back to a plain text field with no suggestions.
+      // Keep whatever pages already arrived rather than throwing them away.
+      console.error('exerciseVideos: fetch failed:', error);
+      return all;
+    }
+    const rows = data || [];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) return all;
   }
-  return data || [];
 }
 
 export function useExerciseVideos() {

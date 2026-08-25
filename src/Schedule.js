@@ -2901,7 +2901,7 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
       // back to title heuristic for legacy rows that don't have it yet.
       const cat = (typeof event === 'object' && event?.category) || getWorkoutCategory(typeof event === 'string' ? '' : event?.title);
       switch(cat) {
-        case 'hitting': return 'bg-blue-500 text-white border-blue-600';
+        case 'hitting': return 'bg-teal-500 text-white border-teal-600';
         case 'pitching': return 'bg-green-500 text-white border-green-600';
         case 'fielding': return 'bg-green-500 text-white border-green-600';
         case 'strength': return 'bg-orange-500 text-white border-orange-600';
@@ -3168,7 +3168,7 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
       // Match MonthView palette: read explicit category first (#191).
       const cat = (typeof ev === 'object' && ev?.category) || getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
       switch(cat) {
-        case 'hitting': return 'border-l-4 border-blue-600 bg-blue-100';
+        case 'hitting': return 'border-l-4 border-teal-600 bg-teal-100';
         case 'pitching': return 'border-l-4 border-green-600 bg-green-100';
         case 'fielding': return 'border-l-4 border-green-600 bg-green-100';
         case 'strength': return 'border-l-4 border-orange-600 bg-orange-100';
@@ -3632,7 +3632,17 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
           if (!e.currentTarget.contains(e.relatedTarget)) setHoveredCell(null);
         }}
         className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-b-lg max-w-full"
-        style={{ maxHeight: 'calc(100vh - 230px)' }}
+        style={{
+          // 230px is a magic number: it's the chrome stacked above this grid
+          // (app header + page heading + view tabs + the date bar and the
+          // mirrored scrollbar right above the table). Re-tune it if any of
+          // that changes height.
+          // max() puts a floor under the subtraction. On a short viewport the
+          // bare calc() shrinks toward zero, and below ~230px of viewport
+          // height it goes negative and collapses the grid entirely with no
+          // scroll region — so never less than 240px of scrollable grid.
+          maxHeight: 'max(240px, calc(100vh - 230px))',
+        }}
       >
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: laneCol + slotWidth * timeSlots.length, minWidth: LANE_COL_WIDTH + 8 * timeSlots.length }}>
           <colgroup>
@@ -3798,11 +3808,11 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               <tr>
                 <td
                   colSpan={timeSlots.length + 1}
-                  className="bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 sticky left-0"
+                  className="bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-700 sticky left-0 z-10"
                 >
                   <span className="mr-3">Staff Schedule</span>
                   <span className="inline-flex items-center gap-3 font-normal align-middle">
-                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-indigo-300 inline-block" />Shift</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-400 inline-block" />Shift</span>
                     <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-teal-300 inline-block" />Session</span>
                     <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-300 inline-block" />Facility event</span>
                   </span>
@@ -3810,7 +3820,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     <button
                       type="button"
                       onClick={() => setShowManageCoaches(true)}
-                      className="ml-3 inline-flex items-center gap-1 rounded border border-indigo-300 bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 align-middle"
+                      className="ml-3 inline-flex items-center gap-1 rounded border border-sky-400 bg-white px-2 py-0.5 min-h-[24px] text-[10px] font-medium text-sky-800 hover:bg-sky-100 align-middle"
                     >
                       <UserCog size={12} /> Manage coaches
                     </button>
@@ -3822,7 +3832,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
             {visibleCoaches.map((coach) => {
               // Color/label per source so a coach's row reads at a glance.
               const KIND_STYLES = {
-                shift: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+                shift: 'bg-sky-100 text-sky-800 border-sky-400',
                 slot: 'bg-teal-100 text-teal-800 border-teal-300',
                 facility: 'bg-amber-100 text-amber-800 border-amber-300',
               };
@@ -5531,7 +5541,7 @@ const CATEGORY_LABEL = {
 // program library matches what the athlete sees on their workout view (#179).
 const CATEGORY_BAR = {
   warmup: 'bg-purple-500',
-  hitting: 'bg-blue-500',
+  hitting: 'bg-teal-500',
   pitching: 'bg-green-500',
   fielding: 'bg-green-500',
   conditioning: 'bg-yellow-500',
@@ -5543,7 +5553,7 @@ const CATEGORY_BAR = {
 };
 
 const WORKOUT_HEADER_COLOR = {
-  hitting:  { bg: 'bg-blue-100',   text: 'text-blue-600' },
+  hitting:  { bg: 'bg-teal-100',   text: 'text-teal-600' },
   pitching: { bg: 'bg-green-100',  text: 'text-green-600' },
   warmup:   { bg: 'bg-purple-100', text: 'text-purple-600' },
   general:  { bg: 'bg-orange-100', text: 'text-orange-600' },
@@ -6050,7 +6060,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     if (eventType === 'workout') {
       const cat = (typeof ev === 'object' && ev?.category) || getWorkoutCategory(typeof ev === 'string' ? '' : ev?.title);
       switch(cat) {
-        case 'hitting': return 'from-blue-50 to-blue-100 border-blue-200';
+        case 'hitting': return 'from-teal-50 to-teal-100 border-teal-200';
         case 'pitching': return 'from-green-50 to-green-100 border-green-200';
         case 'fielding': return 'from-green-50 to-green-100 border-green-200';
         case 'strength': return 'from-orange-50 to-orange-100 border-orange-200';
@@ -6732,7 +6742,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
 
 const FACILITY_EVENT_COLORS = [
   { key: 'teal',   label: 'Teal',   month: 'bg-teal-100 text-teal-700 border-teal-200',     week: 'border-l-4 border-teal-500 bg-teal-50',     lane: 'bg-teal-100 border border-teal-300 text-teal-900',     detail: 'bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200',     dot: 'bg-teal-500' },
-  { key: 'blue',   label: 'Blue',   month: 'bg-blue-100 text-blue-700 border-blue-200',     week: 'border-l-4 border-blue-500 bg-blue-50',     lane: 'bg-blue-100 border border-blue-300 text-blue-900',     detail: 'bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200',     dot: 'bg-blue-500' },
+  { key: 'blue',   label: 'Blue',   month: 'bg-sky-100 text-sky-700 border-sky-200',        week: 'border-l-4 border-sky-500 bg-sky-50',       lane: 'bg-sky-100 border border-sky-300 text-sky-900',        detail: 'bg-gradient-to-br from-sky-50 to-sky-100 border-2 border-sky-200',        dot: 'bg-sky-500' },
   { key: 'purple', label: 'Purple', month: 'bg-purple-100 text-purple-700 border-purple-200', week: 'border-l-4 border-purple-500 bg-purple-50', lane: 'bg-purple-100 border border-purple-300 text-purple-900', detail: 'bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200', dot: 'bg-purple-500' },
   { key: 'pink',   label: 'Pink',   month: 'bg-pink-100 text-pink-700 border-pink-200',     week: 'border-l-4 border-pink-500 bg-pink-50',     lane: 'bg-pink-100 border border-pink-300 text-pink-900',     detail: 'bg-gradient-to-br from-pink-50 to-pink-100 border-2 border-pink-200',     dot: 'bg-pink-500' },
   { key: 'red',    label: 'Red',    month: 'bg-red-100 text-red-700 border-red-200',        week: 'border-l-4 border-red-500 bg-red-50',       lane: 'bg-red-100 border border-red-300 text-red-900',        detail: 'bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200',        dot: 'bg-red-500' },
@@ -6763,7 +6773,7 @@ function getFacilityColorClasses(colorKey, variant = 'month') {
 }
 
 const PLAYER_OVERLAY_PALETTE = [
-  { month: 'bg-blue-100 text-blue-700 border-blue-300',     week: 'border-l-4 border-blue-500 bg-blue-50',     dot: 'bg-blue-500' },
+  { month: 'bg-sky-100 text-sky-700 border-sky-300',        week: 'border-l-4 border-sky-500 bg-sky-50',       dot: 'bg-sky-500' },
   { month: 'bg-rose-100 text-rose-700 border-rose-300',     week: 'border-l-4 border-rose-500 bg-rose-50',     dot: 'bg-rose-500' },
   { month: 'bg-amber-100 text-amber-800 border-amber-300',  week: 'border-l-4 border-amber-500 bg-amber-50',   dot: 'bg-amber-500' },
   { month: 'bg-violet-100 text-violet-700 border-violet-300', week: 'border-l-4 border-violet-500 bg-violet-50', dot: 'bg-violet-500' },

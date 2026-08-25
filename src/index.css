@@ -16,3 +16,34 @@
 .animate-slideDown {
   animation: slideDown 0.3s ease-out;
 }
+
+/* --------------------------------------------------------------------------
+   Link affordance after the 2026-08 brand change (#364).
+
+   The accent used to be a saturated blue, so `text-blue-600` on white was
+   obviously a link. The brand palette is ink/cream/white, so that same class
+   is now near-black - the contrast is fine, but nothing signals "clickable"
+   any more. Rather than edit 354 call sites across 58 files, underline the
+   link-styled text here.
+
+   The exclusions matter as much as the rule. A first attempt underlined
+   anything carrying a text-blue-* class and caught far too much: active
+   sidebar nav pills, portal-switch buttons, filled category pills, and
+   active tabs - which already carry a bottom border, so they came out
+   double-underlined. So: only underline elements that are text-only. Any
+   `bg-*` class means it is a filled control, and any `border-*` class means
+   it is a tab or a bordered chip. Both are already obviously interactive and
+   neither wants an underline.
+
+   The trade-off is deliberate: a plain link that happens to carry a
+   `hover:bg-*` class misses its underline. Under-reaching here is much
+   cheaper than over-reaching.
+   -------------------------------------------------------------------------- */
+a[class*="text-blue-"]:not([class*="bg-"]):not([class*="border-"]),
+a[class*="text-indigo-"]:not([class*="bg-"]):not([class*="border-"]),
+button[class*="text-blue-"]:not([class*="bg-"]):not([class*="border-"]),
+button[class*="text-indigo-"]:not([class*="bg-"]):not([class*="border-"]) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}

@@ -54,7 +54,7 @@ function SkillsCell({ skills, isAdmin, onToggle }) {
 const STATUS_COLORS = {
   'Active': 'bg-green-500 text-white',
   'Remote': 'bg-orange-500 text-white',
-  'On-Site': 'bg-blue-500 text-white',
+  'On-Site': 'bg-sky-700 text-white',
   'Inactive': 'bg-gray-500 text-white',
   'Archived': 'bg-red-500 text-white',
 };
