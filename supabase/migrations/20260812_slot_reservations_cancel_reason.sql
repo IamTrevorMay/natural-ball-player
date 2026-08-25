@@ -5,9 +5,19 @@
 --
 -- WHAT THIS ADDS:
 --   Three nullable columns on slot_reservations:
---     cancel_reason     text        — 'sick' | 'other' (whatever the app writes)
---     cancel_reason_by  uuid        — who chose the reason (the cancelling player)
+--     cancel_reason     text        — whatever the app writes; see below
+--     cancel_reason_by  uuid        — who chose the reason
 --     cancel_reason_at  timestamptz — when
+--
+--   #306 follow-up (comments only — the DDL below is untouched and this file
+--   has still never been run). Cordell ruled that "admins and coaches only
+--   choose if a cancellation was sick", so the values the app writes are now:
+--     'athlete_cancelled' — the athlete cancelled; nobody has reviewed it
+--     'sick'              — an admin or coach decided it was illness/injury
+--   'other' was the old athlete-chosen "something else came up" value. It is
+--   read as equivalent to 'athlete_cancelled' and is never written any more.
+--   cancel_reason_by is now the athlete on their own cancellation and the
+--   staff member on a decision, whoever wrote the value last.
 --   No default, no backfill — every existing cancelled reservation simply
 --   has no reason on file, which is accurate (nobody was ever asked before
 --   this shipped).
@@ -16,7 +26,10 @@
 --   Cordell: "The session should only go back into their package if it was
 --   a sick cancel. If it's not a sick cancel the session will count
 --   against the package." The app needs somewhere to record which one it
---   was, captured at the moment of cancellation.
+--   was. #306 later moved WHO records it: the reason is written twice over a
+--   cancellation's life — once by the athlete when they cancel, and again by
+--   an admin or coach when they decide. The loose text column below already
+--   supports that, which is why #306 needed no migration of its own.
 --
 -- WHAT THIS DOES NOT CHANGE:
 --   - No CHECK constraint on cancel_reason. Deliberately loose (text, not

@@ -1451,7 +1451,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   };
 
   // #306: "Sick cancels: N" — staff-only, no automatic blocking, just a
-  // count so a human can notice a pattern. Separate from fetchAttendanceData
+  // count so a human can notice a pattern. Counting cancel_reason = 'sick' is
+  // still the right query after the decision moved to staff, and a better
+  // number than it was: only an admin or coach can write that value now. Separate from fetchAttendanceData
   // above on purpose: that query explicitly excludes cancelled reservations
   // (.neq('status', 'cancelled')) and other things already depend on it
   // staying that way (see its own comment) — this is its own small query,
@@ -2079,10 +2081,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               )}
               {/* #306: staff-only, no automatic blocking — just visible so a
                   human can notice a pattern. Hidden (not "0") until the
-                  cancel_reason migration has actually run. */}
+                  cancel_reason migration has actually run.
+                  The number means something stronger than it used to. When the
+                  athlete pressed their own "I'm sick / injured" button this
+                  counted self-declared illness; now 'sick' is only ever written
+                  by an admin or coach on the Cancellations tab, so this counts
+                  the ones staff agreed with. The tooltip says so, because "sick
+                  cancels" on its own reads as the athlete's claim. */}
               {userData.role === 'player' && (userRole === 'admin' || userRole === 'coach') && sickCancelCount !== null && (
                 <span
-                  title="Cancelled sessions marked sick/injured — released back to the player's package"
+                  title="Cancelled sessions an admin or coach agreed were sick or injured, so the session went back to the athlete's package. Athletes cannot set this themselves. Cancellations nobody has decided on yet are not counted here — they are on the Cancellations tab in Store."
                   className="px-3 py-1 rounded-full text-xs font-medium border bg-gray-50 text-gray-600 border-gray-200"
                 >
                   Sick cancels: {sickCancelCount}

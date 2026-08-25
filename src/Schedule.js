@@ -14,6 +14,8 @@ import { COACH_SKILL_OPTIONS } from './skillOptions';
 import { capsForPurchases, isLiftingCoach, weekRangeForDate, capWarningMessage } from './bookingCaps';
 import { CreateUserModal } from './AdminSettings';
 import { familyKey, familyLabel, sameFamily } from './productFamily';
+import { applySessionUsage } from './sessionUsage';
+import { CANCEL_REASON_ATHLETE } from './cancelReasons';
 // #277: per-occurrence RSVP (Going / Not going / Maybe) + coach roster & nudge.
 import { EventRsvpSection } from './EventRsvp';
 
@@ -5860,9 +5862,10 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   const [planMeals, setPlanMeals] = useState(null); // fuel-plan assignment: full meal breakdown
   const [slotReservations, setSlotReservations] = useState([]);
   const [slotResLoading, setSlotResLoading] = useState(false);
-  // #306: "why are you cancelling" — shown after the player commits to
-  // cancelling, before it's actually written.
-  const [showCancelReason, setShowCancelReason] = useState(false);
+  // #306: the "are you sure, this uses the session" step, shown after the
+  // player presses Cancel and before anything is written. It used to be the
+  // sick/not-sick picker; the reason is no longer the athlete's to choose.
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [formData, setFormData] = useState({
     title: event.title || event.opponent || '',
     event_date: event.event_date,
@@ -6096,11 +6099,11 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
   // and a click that STARTED inside the card does not dismiss it (so dragging a
   // text selection out of the card is safe).
   // Escape and a backdrop click always step back ONE layer, never straight out:
-  // the delete confirmation and the "why are you cancelling?" picker both sit on
+  // the delete confirmation and the cancel confirmation both sit on
   // top of this card, so dismissing them must not throw the card away too.
   const requestClose = () => {
     if (confirmDelete) { setConfirmDelete(false); return; }
-    if (showCancelReason) { setShowCancelReason(false); return; }
+    if (showCancelConfirm) { setShowCancelConfirm(false); return; }
     if (editing && !window.confirm(DISCARD_EDITS_PROMPT)) return;
     onClose();
   };
@@ -6109,13 +6112,13 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     const onEsc = (e) => {
       if (e.key !== 'Escape') return;
       if (confirmDelete) { setConfirmDelete(false); return; }
-      if (showCancelReason) { setShowCancelReason(false); return; }
+      if (showCancelConfirm) { setShowCancelConfirm(false); return; }
       if (editing && !window.confirm(DISCARD_EDITS_PROMPT)) return;
       onClose();
     };
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
-  }, [confirmDelete, showCancelReason, editing, onClose]);
+  }, [confirmDelete, showCancelConfirm, editing, onClose]);
 
   const backdropMouseDown = useRef(false);
   const backdropProps = {
@@ -6138,14 +6141,21 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
     const isPlayer = userRole === 'player';
     const withinCancelWindow = Date.now() <= startAt.getTime() - CUTOFF_MS;
 
-    // #306: sick cancel gives the session back; anything else counts against
-    // the package, same as if the player had simply not shown up. One write
-    // (status + cancel_reason together), and the actual give-back/consume is
-    // syncReservationSessionUsage — the exact function attendance-marking
-    // already uses — reused, not duplicated, just with attended flipped:
-    // sick (attended=false) releases anything already consumed; anything
-    // else (attended=true) consumes a session, same as marking Present.
-    const handleCancelReservation = async (reason) => {
+    // #306: the athlete no longer decides whether their own cancellation was
+    // "sick". Cordell: "Admins and coaches only choose if a cancellation was
+    // sick." So this writes one reason — athlete_cancelled, meaning "the
+    // athlete cancelled and nobody has looked at it yet" — and gives nothing
+    // back. Staff turn it into a sick cancel from the Cancellations tab in the
+    // Store area, which is where the give-back now happens.
+    //
+    // The package is deliberately NOT touched from here. It never really was:
+    // store_session_usage is staff-write and store_purchases is staff-update
+    // under RLS, so the old attended=true call from an athlete's own browser
+    // was refused with a 200 and an empty body every single time, and the
+    // swallowed error hid it. Rather than keep a write that cannot succeed,
+    // the deduction is a staff action on the review screen, and the athlete is
+    // told the truth: cancelling uses the session.
+    const handleCancelReservation = async () => {
       setLoading(true);
       try {
         const { data: resRow, error: findErr } = await supabase
@@ -6158,29 +6168,26 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
           .maybeSingle();
         if (findErr) throw findErr;
         if (!resRow) throw new Error('Could not find your reservation for this session.');
-        const { error: updErr } = await supabase
+        const now = new Date().toISOString();
+        const { data: updated, error: updErr } = await supabase
           .from('slot_reservations')
           .update({
             status: 'cancelled',
-            cancelled_at: new Date().toISOString(),
-            cancel_reason: reason,
+            cancelled_at: now,
+            cancel_reason: CANCEL_REASON_ATHLETE,
             cancel_reason_by: userId,
-            cancel_reason_at: new Date().toISOString(),
+            cancel_reason_at: now,
           })
-          .eq('id', resRow.id);
+          .eq('id', resRow.id)
+          .select('id');
         if (updErr) throw updErr;
-        try {
-          await syncReservationSessionUsage(
-            { id: resRow.id, player_id: userId, slot_date: event.event_date },
-            reason !== 'sick',
-            userId
-          );
-        } catch (e) {
-          // #306: same swallow-on-package-error posture syncReservationSessionUsage
-          // already documents for itself — the cancellation stands either way.
-          console.error('Session-usage sync on cancel failed:', e);
+        // A refused write comes back as success with zero rows, so an empty
+        // array here is a failure that would otherwise show as "cancelled!"
+        // while the athlete is still on the roster.
+        if (!updated || updated.length === 0) {
+          throw new Error('Nothing was saved — the cancellation was refused. You are still booked in, so please tell your coach directly.');
         }
-        alert(reason === 'sick' ? 'Session cancelled. The spot has been reopened.' : 'Session cancelled. This will count against your package.');
+        alert('Session cancelled. It uses the session from your package. If you were ill or injured, a coach or admin can give it back.');
         onDelete();
       } catch (err) {
         alert('Error cancelling session: ' + formatUserError(err));
@@ -6220,35 +6227,35 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
 
             {isPlayer ? (
               withinCancelWindow ? (
-                showCancelReason ? (
+                showCancelConfirm ? (
+                  /* #306: the athlete used to pick their own reason here, and
+                     picking "I'm sick / injured" handed the session straight
+                     back. That choice is now a staff one, so this step is a
+                     plain confirmation with the consequence stated. The copy
+                     says staff CAN give the session back, not that they will —
+                     the whole point of the change is that it is their call. */
                   <div className="space-y-2 pt-2">
-                    <p className="text-sm font-medium text-gray-700">Why are you cancelling?</p>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                      Cancelling uses the session from your package. If you are ill or injured, tell your coach — an admin or coach can give the session back.
+                    </div>
                     <button
-                      onClick={() => handleCancelReservation('sick')}
+                      onClick={handleCancelReservation}
                       disabled={loading}
                       className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50"
                     >
-                      {loading ? 'Cancelling...' : "I'm sick / injured"}
+                      {loading ? 'Cancelling...' : 'Yes, cancel this session'}
                     </button>
-                    <button
-                      onClick={() => handleCancelReservation('other')}
-                      disabled={loading}
-                      className="w-full border border-gray-300 text-gray-700 py-2.5 rounded-lg font-medium hover:bg-gray-50 transition disabled:opacity-50"
-                    >
-                      {loading ? 'Cancelling...' : 'Something else came up'}
-                    </button>
-                    <p className="text-xs text-gray-400 text-center">A sick/injured cancel reopens your spot. Anything else counts against your package.</p>
-                    <button onClick={() => setShowCancelReason(false)} disabled={loading} className="w-full text-xs text-gray-400 hover:text-gray-600 transition">Never mind</button>
+                    <button onClick={() => setShowCancelConfirm(false)} disabled={loading} className="w-full text-xs text-gray-500 hover:text-gray-700 transition">Never mind</button>
                   </div>
                 ) : (
                   <div className="space-y-2 pt-2">
                     <button
-                      onClick={() => setShowCancelReason(true)}
+                      onClick={() => setShowCancelConfirm(true)}
                       className="w-full bg-red-600 text-white py-2.5 rounded-lg font-medium hover:bg-red-700 transition"
                     >
                       Cancel this session
                     </button>
-                    <p className="text-xs text-gray-400 text-center">Cancellations are allowed up to 12 hours before the session.</p>
+                    <p className="text-xs text-gray-500 text-center">Cancellations are allowed up to 12 hours before the session.</p>
                   </div>
                 )
               ) : (
@@ -8289,54 +8296,26 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
 // session from their active package/bundle (soonest-expiring first) and log it in
 // store_session_usage tied to the reservation. Marking No-show/Cancelled/unmarking
 // releases the previously-consumed session. Monthly packages (remaining_qty null)
-// are never decremented. Package errors are swallowed so attendance still records.
+// are never decremented.
+//
+// #306: the body of this now lives in sessionUsage.js, so the staff
+// cancellation-review screen shares it instead of keeping a second copy of the
+// package ledger. The deliberate swallow stays HERE and only here — marking a
+// player present must not fail because their package is in an odd state, which
+// has been true since #233. The review screen calls applySessionUsage directly
+// and puts what it did on screen, because there giving the session back IS the
+// action being asked for.
 async function syncReservationSessionUsage(res, attended, markerId) {
   if (!res) return;
-  try {
-    const { data: existing } = await supabase
-      .from('store_session_usage')
-      .select('id, purchase_id')
-      .eq('source_type', 'training_slot')
-      .eq('source_id', res.id)
-      .limit(1);
-    const has = existing && existing[0];
-
-    if (attended && !has) {
-      const { data: pkgs } = await supabase
-        .from('store_purchases')
-        .select('id, remaining_qty, expires_at')
-        .eq('user_id', res.player_id)
-        .in('product_kind', ['package', 'bundle', 'lesson'])
-        .in('status', ['active', 'paid'])
-        .gt('remaining_qty', 0)
-        .order('expires_at', { ascending: true, nullsFirst: false });
-      const pkg = (pkgs || [])[0];
-      if (!pkg) return; // no counted package to draw from — attendance still stands
-      await supabase.from('store_session_usage').insert({
-        purchase_id: pkg.id,
-        user_id: res.player_id,
-        used_on: res.slot_date,
-        source_type: 'training_slot',
-        source_id: res.id,
-        note: 'Attended training session',
-        created_by: markerId || null,
-      });
-      await supabase.from('store_purchases')
-        .update({ remaining_qty: pkg.remaining_qty - 1 })
-        .eq('id', pkg.id);
-    } else if (!attended && has) {
-      const { data: purch } = await supabase.from('store_purchases')
-        .select('id, remaining_qty').eq('id', has.purchase_id).maybeSingle();
-      await supabase.from('store_session_usage').delete().eq('id', has.id);
-      if (purch && purch.remaining_qty != null) {
-        await supabase.from('store_purchases')
-          .update({ remaining_qty: purch.remaining_qty + 1 })
-          .eq('id', purch.id);
-      }
-    }
-  } catch (e) {
-    console.error('Session-usage sync failed:', e);
-  }
+  const result = await applySessionUsage({
+    reservationId: res.id,
+    playerId: res.player_id,
+    usedOn: res.slot_date,
+    consume: !!attended,
+    actorId: markerId,
+    note: 'Attended training session',
+  });
+  if (!result.ok) console.error('Session-usage sync failed:', result.message);
 }
 
 const ATTENDANCE_OPTIONS = [

@@ -1,8 +1,24 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, AlertTriangle } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, CalendarClock, AlertTriangle, History } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { familyLabel, frequencyOf } from './productFamily';
+import {
+  extendPackageExpiry,
+  describeExpiry,
+  previewPresetDays,
+  localDayString,
+  daysBetweenDays,
+  readExtensions,
+  latestExtension,
+  termDaysForBundleQty,
+  EXTENSION_PRESET_DAYS,
+  REASON_MAX_LENGTH,
+  EXTEND_OK,
+  EXTEND_STALE,
+  EXTEND_INVALID,
+  EXTEND_ERRORED,
+} from './packageExtension';
 
 // #235: full package history for a single player. Shows every active & past
 // package/bundle they purchased, how many sessions are left, when each session
@@ -68,6 +84,32 @@ function fmtDateOrNull(d) {
 
 function fmtDate(d) {
   return fmtDateOrNull(d) ?? '—';
+}
+
+// #306: the same job as fmtDateOrNull, for a CALENDAR DAY rather than an
+// instant. `store_session_usage.used_on` is a postgres `date`, so it arrives as
+// the bare string '2026-09-14' — and `new Date('2026-09-14')` is parsed as UTC
+// midnight, which prints as the 13th in every US timezone. The usage history
+// below has been showing every logged session one day early. Parsed at noon
+// local, the convention already used in scheduleUtils.js and bookingCaps.js.
+//
+// Instants (paid_at, created_at, expires_at) still go through fmtDateOrNull —
+// they carry a real offset and converting them to local is correct.
+// #344 uses this too, for `canceled_date` / `charged_through_date` — also bare
+// calendar days, also a whole day wrong if handed to new Date() directly, and
+// the one date a parent is actually told. Anything that is not a bare day falls
+// through to fmtDateOrNull, which is right for a real instant.
+function fmtDayOrNull(day) {
+  if (!day) return null;
+  const raw = String(day).trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return fmtDateOrNull(raw);
+  const t = new Date(`${raw.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(t.getTime())) return null;
+  return t.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function fmtDay(day) {
+  return fmtDayOrNull(day) ?? '—';
 }
 
 // #344: the two things on this screen are not the same kind of thing and must
@@ -144,20 +186,6 @@ function canCancelSubscription(p) {
   return !!p.square_subscription_id;
 }
 
-// `canceled_date` / `charged_through_date` are plain calendar days ("2025-09-14"),
-// not timestamps. new Date('2025-09-14') is parsed as UTC midnight, which in any
-// US timezone prints as the 13th — a whole day wrong on the one date a parent is
-// told. Split it by hand so the day we print is the day Square meant.
-function fmtDayOrNull(d) {
-  if (!d) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d).trim());
-  if (m) {
-    const local = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    if (Number.isNaN(local.getTime())) return null;
-    return local.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }
-  return fmtDateOrNull(d);
-}
 
 // Strictly before today, in the reader's own timezone. Only changes the tense of
 // the sentence — "billing stops on" vs "billing stopped on" — which matters
@@ -382,12 +410,298 @@ function timeLeftLabel(expiresAt) {
   return { text: `${days}d left`, cls: 'text-gray-500' };
 }
 
+// #306 — the extend panel.
+//
+// Cordell asked for one function: an admin or coach putting an expired package
+// back into use. The shape of this follows the shape of that job. It is opened
+// from one package's own row, it shows that package and that athlete, and it
+// changes exactly one row. There is deliberately no bulk mode and no way to
+// reach it from a list — the person using it is standing at the desk with one
+// family in front of them, and "extend everything that expired in June" is a
+// decision nobody has made.
+//
+// The whole panel is a preview. Nothing is written until the staff member has
+// seen the athlete, the package, the old expiry and the new one together on
+// screen, and has typed a reason.
+function ExtendExpiryPanel({ purchase, athleteName, onCancel, onExtended }) {
+  const info = describeExpiry(purchase.expires_at);
+  const today = localDayString(new Date());
+  const termDays = termDaysForBundleQty(purchase.store_products?.bundle_qty);
+
+  const [day, setDay] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState('');
+
+  const applyPreset = (days) => {
+    const p = previewPresetDays({ expiresAt: purchase.expires_at, days });
+    if (p.newDay) setDay(p.newDay);
+  };
+
+  // A package with no expiry on file is not expired and is not hiding anything
+  // — every consumer (Schedule.js's booking-cap read, the attendance draw-down,
+  // AthleteOutreach) treats a null expires_at as "never expires". Typing a date
+  // onto it would TAKE access away, which is the opposite of what this button
+  // is for. Most rows in this table are in exactly this state, so the panel has
+  // to say so plainly rather than cheerfully offering to "extend" them.
+  if (info.state === 'none') {
+    return (
+      <div className="rounded-lg border border-gray-300 bg-gray-50 p-3 space-y-2">
+        <p className="text-sm font-semibold text-gray-900">This package has no expiry date, so nothing is cutting it off.</p>
+        <p className="text-xs text-gray-600">
+          Its sessions are already usable and there is nothing to give back. Giving it a date here would
+          start a clock that does not currently exist and would eventually take the sessions away. If this
+          package is supposed to have a deadline, use <span className="font-medium">Set expiration</span> instead —
+          that is the control for putting a date on a package for the first time.
+        </p>
+        <button onClick={onCancel} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-white transition">Close</button>
+      </div>
+    );
+  }
+
+  if (info.state === 'unreadable') {
+    return (
+      <div className="rounded-lg border border-red-300 bg-red-50 p-3 space-y-2">
+        <p className="text-sm font-semibold text-red-900">The expiry date stored on this package cannot be read.</p>
+        <p className="text-xs text-red-800">
+          Nothing here can safely work out what to move it to, so extending is not offered. An admin will need
+          to look at this row directly.
+        </p>
+        <button onClick={onCancel} className="border border-red-300 text-red-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-white transition">Close</button>
+      </div>
+    );
+  }
+
+  const addedFromNow = day ? daysBetweenDays(today, day) : null;
+  const addedFromCurrent = day && info.day ? daysBetweenDays(info.day, day) : null;
+  const reasonText = reason.trim();
+
+  // Refused before the write rather than after. Both of these are "you did not
+  // mean to press this": a date on or before today leaves the athlete just as
+  // locked out as they are now, and a date before the current expiry shortens
+  // the package instead of extending it.
+  let blockedBecause = null;
+  if (day && addedFromNow != null && addedFromNow <= 0) {
+    blockedBecause = 'That date is today or earlier, so the package would still be expired. Pick a date in the future.';
+  } else if (day && addedFromCurrent != null && addedFromCurrent <= 0) {
+    blockedBecause = 'That date is on or before the expiry it already has, which would shorten the package rather than extend it.';
+  }
+
+  const ready = !!day && !!reasonText && !blockedBecause && !busy;
+
+  const submit = async () => {
+    setBusy(true);
+    setFailure('');
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      // The uuid is the audit key. The name is a snapshot alongside it so the
+      // history stays readable years later without a join that a future policy
+      // change might refuse.
+      let actorName = user?.user_metadata?.full_name || null;
+      if (user?.id) {
+        const { data: me } = await supabase.from('users').select('full_name').eq('id', user.id).maybeSingle();
+        if (me?.full_name) actorName = me.full_name;
+      }
+      const res = await extendPackageExpiry({
+        purchaseId: purchase.id,
+        newDay: day,
+        expectedExpiresAt: purchase.expires_at || null,
+        reason: reasonText,
+        actorId: user?.id || null,
+        actorName,
+      });
+      if (res.code === EXTEND_OK) {
+        onExtended({ newDay: day });
+        return;
+      }
+      if (res.code === EXTEND_STALE) {
+        setFailure('Somebody else changed this package\'s expiry while this panel was open, so the dates above are out of date and nothing was written. Close this, reopen it, and check what it says now before extending.');
+      } else if (res.code === EXTEND_INVALID) {
+        setFailure(res.message || 'That could not be used.');
+      } else if (res.code === EXTEND_ERRORED) {
+        setFailure(formatUserError(res.error, 'The package could not be extended.') + ' Nothing was changed.');
+      } else {
+        setFailure(res.message);
+      }
+    } catch (e) {
+      setFailure(formatUserError(e, 'The package could not be extended.') + ' Nothing was changed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-indigo-300 bg-indigo-50 p-3 space-y-3">
+      <div className="flex items-center gap-2">
+        <CalendarClock size={16} className="text-indigo-600 flex-shrink-0" />
+        <p className="text-sm font-semibold text-gray-900">Extend this package</p>
+      </div>
+
+      {/* What is about to change, stated before it changes. Athlete, package,
+          old expiry, new expiry — all four on screen at once, because the
+          person pressing this is giving somebody back access they paid for and
+          should not have to hold any of it in their head. */}
+      <div className="rounded border border-indigo-200 bg-white p-3 space-y-2">
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <div className="text-gray-500">Athlete</div>
+            <div className="text-gray-900 font-medium truncate">{athleteName || '—'}</div>
+          </div>
+          <div>
+            <div className="text-gray-500">Package</div>
+            <div className="text-gray-900 font-medium truncate">{displayName(purchase)}</div>
+          </div>
+          <div>
+            <div className="text-gray-500">Expires now</div>
+            <div className="font-medium text-gray-900">
+              {fmtDay(info.day)}
+              <span className={info.state === 'expired' ? ' text-red-600' : ' text-gray-500'}>
+                {info.state === 'expired' ? ` — expired ${info.days}d ago` : ` — ${info.days}d left`}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="text-gray-500">Sessions left</div>
+            <div className="font-medium text-gray-900">{purchase.remaining_qty != null ? purchase.remaining_qty : 'Not recorded'}</div>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-100 pt-2">
+          <div className="text-xs text-gray-500">New expiry</div>
+          {day && !blockedBecause ? (
+            <div className="text-sm font-semibold text-gray-900">
+              {fmtDay(info.day)} → {fmtDay(day)}
+              <span className="font-normal text-gray-600"> · {addedFromNow} more day{addedFromNow === 1 ? '' : 's'} from today</span>
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500">Pick a date below.</div>
+          )}
+          {/* Adding 30 days to an expiry that passed 40 days ago produces a date
+              still in the past. The presets count from today whenever the pack
+              has already run out, and this line is where that is admitted —
+              a silent correction to a date somebody is approving is not honest. */}
+          {day && !blockedBecause && info.state === 'expired' && (
+            <p className="text-xs text-gray-600 mt-1">
+              Counted from today, not from the old expiry — that date has already passed, so adding to it
+              would have left the package expired.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-medium text-gray-700 mb-1">Give it</div>
+        <div className="flex flex-wrap gap-1.5">
+          {EXTENSION_PRESET_DAYS.map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => applyPreset(d)}
+              disabled={busy}
+              className="border border-indigo-300 bg-white text-indigo-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-indigo-100 transition disabled:opacity-50"
+            >
+              +{d} days
+            </button>
+          ))}
+          {/* The pack's own term, when the product carries one. This is the
+              preset for the case that prompted #306: a pack paid months ago,
+              given expires_at by the Square catch-up counted from the real
+              payment date, and therefore expired before anyone saw it. The
+              honest repair is the full term the family bought, starting now. */}
+          {termDays != null && (
+            <button
+              type="button"
+              onClick={() => applyPreset(termDays)}
+              disabled={busy}
+              className="border border-indigo-300 bg-white text-indigo-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-indigo-100 transition disabled:opacity-50"
+            >
+              Full term ({termDays} days)
+            </button>
+          )}
+          <input
+            type="date"
+            value={day}
+            min={today}
+            onChange={(e) => setDay(e.target.value)}
+            disabled={busy}
+            className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-800 disabled:opacity-50"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1" htmlFor={`extend-reason-${purchase.id}`}>
+          Reason (required — this is kept on the package)
+        </label>
+        <input
+          id={`extend-reason-${purchase.id}`}
+          type="text"
+          value={reason}
+          maxLength={REASON_MAX_LENGTH}
+          onChange={(e) => setReason(e.target.value)}
+          disabled={busy}
+          placeholder="e.g. paid in June, clock backdated by the Square catch-up"
+          className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs text-gray-800 disabled:opacity-50"
+        />
+      </div>
+
+      {/* Moving the date does not create sessions. Said out loud, because a
+          package can be expired AND empty, and extending an empty one looks
+          like it worked while changing nothing the athlete can use. */}
+      {purchase.remaining_qty === 0 && (
+        <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 px-2.5 py-2">
+          <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-900">
+            This package has <span className="font-semibold">no sessions left</span>. Extending the date will not
+            give any back — if sessions are owed, change the count with <span className="font-medium">Edit remaining</span> as well.
+          </p>
+        </div>
+      )}
+      {purchase.remaining_qty == null && (
+        <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 px-2.5 py-2">
+          <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-900">
+            The portal does not hold a session count for this package, so it cannot say how many sessions come
+            back. Extending still lifts the deadline; the count has to be set by hand with <span className="font-medium">Edit remaining</span>.
+          </p>
+        </div>
+      )}
+
+      {blockedBecause && <p className="text-xs text-red-700">{blockedBecause}</p>}
+      {failure && (
+        <div className="rounded border border-red-300 bg-red-50 px-2.5 py-2">
+          <p className="text-xs text-red-800">{failure}</p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={submit}
+          disabled={!ready}
+          className="bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-indigo-700 transition disabled:opacity-50"
+        >
+          {busy ? 'Extending…' : day && !blockedBecause ? `Extend to ${fmtDay(day)}` : 'Extend'}
+        </button>
+        <button onClick={onCancel} disabled={busy} className="border border-gray-300 bg-white text-gray-700 px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function PackagesModal({ userId, userName, canManage, canDelete = false, onClose }) {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState([]);
   const [usageByPurchase, setUsageByPurchase] = useState({});
   const [expanded, setExpanded] = useState({});
   const [busyId, setBusyId] = useState(null);
+  // #306: the id of the package whose extend panel is open. Exactly one at a
+  // time, by construction — there is no bulk extend and no way to get one.
+  const [extendingId, setExtendingId] = useState(null);
+  // What the last successful extension did, so the staff member gets told the
+  // write landed instead of watching the row quietly change.
+  const [extendNotice, setExtendNotice] = useState(null);
   // #344: null means "we could not establish a last-sync date" — either the
   // query failed, or store_backfill_runs is empty. It is NEVER used to mean
   // "synced just now"; the fallback wording says the date is unknown.
@@ -408,7 +722,10 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         // #344: square_subscription_id is what decides whether a row can be
         // cancelled at all. Without it there is no recurring billing to stop and
         // square-cancel-subscription rejects the call, so the button is hidden.
-        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, store_products(bundle_qty, kind)')
+        // #306: `metadata` carries the extension audit trail, so "already
+        // extended, by whom" is visible on the list itself and not only after
+        // opening the extend panel.
+        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, metadata, store_products(bundle_qty, kind)')
         .eq('user_id', userId)
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
@@ -667,6 +984,11 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
     const isOpen = !!expanded[p.id];
     const tl = timeLeftLabel(p.expires_at);
     const busy = busyId === p.id;
+    // #306: an extension is a staff member overriding what the family paid for,
+    // so it is never buried. The pill is on the collapsed row — visible without
+    // opening anything — and the full who/when/why is one click below.
+    const extensions = readExtensions(p.metadata);
+    const lastExt = latestExtension(p.metadata);
     return (
       <div key={p.id} className="border border-gray-200 rounded-lg">
         <button
@@ -683,6 +1005,14 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
                   fortnightly plan from a monthly one. */}
               {isSubscription(p) && (
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-medium border bg-indigo-50 text-indigo-700 border-indigo-200 flex-shrink-0">{frequencyLabel(p)}</span>
+              )}
+              {extensions.length > 0 && (
+                <span
+                  className="px-2 py-0.5 rounded-full text-[11px] font-medium border bg-amber-50 text-amber-800 border-amber-300 flex-shrink-0"
+                  title={`Extended by ${lastExt?.by_name || 'a staff account'} on ${fmtDate(lastExt?.at)}`}
+                >
+                  {extensions.length === 1 ? 'Extended' : `Extended ×${extensions.length}`}
+                </span>
               )}
             </div>
             {/* #340: this line used to read "Purchased {paid_at || created_at}".
@@ -728,13 +1058,64 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
                   {usage.map(u => (
                     <li key={u.id} className="flex items-center gap-2 text-xs text-gray-700">
                       <Calendar size={12} className="text-gray-400 flex-shrink-0" />
-                      <span className="font-medium">{fmtDate(u.used_on)}</span>
+                      <span className="font-medium">{fmtDay(u.used_on)}</span>
                       {u.note && <span className="text-gray-500 truncate">— {u.note}</span>}
                     </li>
                   ))}
                 </ul>
               )}
             </div>
+
+            {/* #306: the audit trail, in front of anyone who opens the package
+                — not only the person who did it and not only in the database.
+                Cordell's requirement was that it be obvious a package has been
+                extended and by whom, so who/when/why are all three here, in
+                that order, oldest first. */}
+            {extensions.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1">Extensions</div>
+                <ul className="space-y-1">
+                  {extensions.map((e, i) => (
+                    <li key={`${e.at || 'ext'}-${i}`} className="flex items-start gap-2 text-xs text-gray-700">
+                      <History size={12} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                      <span className="min-w-0">
+                        <span className="font-medium">{fmtDate(e.at)}</span>
+                        {' — '}
+                        {/* Never invents a name. A record written before a name
+                            could be resolved says so rather than showing a blank
+                            where the responsible person should be. */}
+                        {e.by_name ? e.by_name : 'a staff account (name not recorded)'}
+                        {' moved the expiry '}
+                        {e.from_day ? `from ${fmtDay(e.from_day)} ` : ''}
+                        to {fmtDay(e.to_day)}
+                        {e.added_days != null ? ` (+${e.added_days}d)` : ''}
+                        {e.reason ? <span className="text-gray-600">{' — '}{e.reason}</span> : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Admin or coach only. `canManage` is the same gate the rest of
+                this panel uses (Profile.js passes admin || coach), and the
+                database agrees independently: store_purchases' UPDATE policy is
+                restricted to those two roles, so an athlete who reached this
+                code would get zero rows back and be told the write was refused
+                rather than quietly succeeding. */}
+            {canManage && extendingId === p.id && (
+              <ExtendExpiryPanel
+                purchase={p}
+                athleteName={userName}
+                onCancel={() => setExtendingId(null)}
+                onExtended={async ({ newDay }) => {
+                  setExtendingId(null);
+                  setExtendNotice({ id: p.id, name: displayName(p), newDay });
+                  await load();
+                  setExpanded(prev => ({ ...prev, [p.id]: true }));
+                }}
+              />
+            )}
 
             {canManage && (
               <div className="space-y-3">
@@ -744,6 +1125,23 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
                   </button>
                   <button onClick={() => editRemaining(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Edit remaining</button>
                   <button onClick={() => editExpiry(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Set expiration</button>
+                  {/* #306. Separate from "Set expiration" on purpose: that one
+                      types any date onto the row and leaves no trace of why.
+                      This one only ever moves the deadline forward, shows what
+                      it is about to change first, and will not save without a
+                      reason. They are different acts and the history has to be
+                      able to tell them apart. */}
+                  <button
+                    onClick={() => setExtendingId(prev => (prev === p.id ? null : p.id))}
+                    disabled={busy}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition disabled:opacity-50 ${
+                      extendingId === p.id
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                        : 'border border-indigo-300 text-indigo-700 hover:bg-indigo-50'
+                    }`}
+                  >
+                    <CalendarClock size={12} /> Extend
+                  </button>
                 </div>
 
                 {/* #344: the real cancel. Its own block, its own colour and the
@@ -817,6 +1215,22 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         </div>
 
         <div className="p-5 overflow-y-auto flex-1 min-h-0 space-y-3">
+          {/* #306: the write is confirmed out loud. A refused write is reported
+              in the panel itself (writeOutcome.js turns "200 with zero rows"
+              into a stated failure), so this banner only ever appears when a row
+              really changed — the two outcomes never look the same. */}
+          {extendNotice && (
+            <div className="rounded-lg border border-green-300 bg-green-50 p-3 text-xs text-green-900 flex items-start justify-between gap-3">
+              <p>
+                <span className="font-semibold">Extended.</span>{' '}
+                &ldquo;{extendNotice.name}&rdquo; now expires {fmtDay(extendNotice.newDay)}
+                {userName ? ` for ${userName}` : ''}. The reason and your name are on the package.
+              </p>
+              <button onClick={() => setExtendNotice(null)} className="text-green-700 hover:text-green-900 flex-shrink-0" aria-label="Dismiss">
+                <X size={14} />
+              </button>
+            </div>
+          )}
           {!loading && unconfirmedCount > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
               <p className="font-semibold mb-1">Check Square before deleting anything here.</p>
