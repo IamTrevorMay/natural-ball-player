@@ -3632,7 +3632,17 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
           if (!e.currentTarget.contains(e.relatedTarget)) setHoveredCell(null);
         }}
         className="overflow-x-auto overflow-y-auto border border-gray-200 rounded-b-lg max-w-full"
-        style={{ maxHeight: 'calc(100vh - 230px)' }}
+        style={{
+          // 230px is a magic number: it's the chrome stacked above this grid
+          // (app header + page heading + view tabs + the date bar and the
+          // mirrored scrollbar right above the table). Re-tune it if any of
+          // that changes height.
+          // max() puts a floor under the subtraction. On a short viewport the
+          // bare calc() shrinks toward zero, and below ~230px of viewport
+          // height it goes negative and collapses the grid entirely with no
+          // scroll region — so never less than 240px of scrollable grid.
+          maxHeight: 'max(240px, calc(100vh - 230px))',
+        }}
       >
         <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: laneCol + slotWidth * timeSlots.length, minWidth: LANE_COL_WIDTH + 8 * timeSlots.length }}>
           <colgroup>
@@ -3798,7 +3808,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
               <tr>
                 <td
                   colSpan={timeSlots.length + 1}
-                  className="bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 sticky left-0"
+                  className="bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-700 sticky left-0 z-10"
                 >
                   <span className="mr-3">Staff Schedule</span>
                   <span className="inline-flex items-center gap-3 font-normal align-middle">
@@ -3810,7 +3820,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     <button
                       type="button"
                       onClick={() => setShowManageCoaches(true)}
-                      className="ml-3 inline-flex items-center gap-1 rounded border border-indigo-300 bg-white px-2 py-0.5 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 align-middle"
+                      className="ml-3 inline-flex items-center gap-1 rounded border border-indigo-300 bg-white px-2 py-0.5 min-h-[24px] text-[10px] font-medium text-indigo-700 hover:bg-indigo-100 align-middle"
                     >
                       <UserCog size={12} /> Manage coaches
                     </button>
