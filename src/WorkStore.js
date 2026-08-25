@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag, Layers } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag, Layers, Link2 } from 'lucide-react';
 import BackfillHistory from './BackfillHistory';
+import InvoiceReconcile from './InvoiceReconcile';
 import BulkTagSessions from './BulkTagSessions';
 import DuplicateProducts from './DuplicateProducts';
 
@@ -908,6 +909,10 @@ function PackagesTab() {
 const STORE_TABS = [
   { key: 'catalog',    label: 'Catalog',            Icon: ShoppingBag, adminOnly: true },
   { key: 'purchases',  label: 'Purchases',          Icon: ListChecks,  adminOnly: false },
+  // #340: settling the 140 stuck 'pending' rows against Square invoices. Not
+  // adminOnly — it is the same act as Mark-as-Paid above, gated the same way
+  // (admin or coach, matching store_purchases_update_staff).
+  { key: 'reconcile',  label: 'Reconcile Pending',  Icon: Link2,       adminOnly: false },
   { key: 'packages',   label: 'Packages',           Icon: Package,     adminOnly: true },
   { key: 'backfill',   label: 'Backfill History',   Icon: History,     adminOnly: true },
   { key: 'bulk-tag',   label: 'Bulk Tag Sessions',  Icon: Tag,         adminOnly: false },
@@ -951,6 +956,7 @@ export default function WorkStore({ userRole }) {
       </div>
       {activeTab === 'catalog' ? <CatalogTab />
         : activeTab === 'purchases' ? <PurchasesTab userRole={userRole} />
+        : activeTab === 'reconcile' ? <InvoiceReconcile userRole={userRole} />
         : activeTab === 'packages' ? <PackagesTab />
         : activeTab === 'bulk-tag' ? <BulkTagSessions />
         : activeTab === 'duplicates' ? <DuplicateProducts />
