@@ -304,7 +304,7 @@ function buildProvenance(subs) {
 /* ============================== small view parts ========================== */
 
 const CARD = 'bg-white rounded-lg border border-gray-200 p-5';
-const EYEBROW = 'text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3';
+const EYEBROW = 'text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3';
 const LBL = 'block text-xs font-medium text-gray-500 mb-1';
 const INP = 'w-full border border-gray-300 rounded px-2 py-1.5 text-sm';
 
@@ -313,7 +313,7 @@ function Section({ title, subtitle, open, onToggle, children, right }) {
     <div className={CARD}>
       <div className="flex items-start justify-between gap-3">
         <button onClick={onToggle} className="flex items-center gap-2 text-left">
-          {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          {open ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
           <span>
             <span className="block text-sm font-semibold text-gray-900">{title}</span>
             {subtitle && <span className="block text-xs text-gray-500 mt-0.5">{subtitle}</span>}
@@ -349,7 +349,7 @@ function FlagList({ items, tone = 'amber', icon: Icon = AlertTriangle }) {
 function DriverTable({ keys, values, sources, where, emptyText, captionTone }) {
   const rows = keys.filter((k) => values[k] != null);
   if (!rows.length) {
-    return emptyText ? <div className="text-xs text-gray-400 italic">{emptyText}</div> : null;
+    return emptyText ? <div className="text-xs text-gray-500 italic">{emptyText}</div> : null;
   }
   return (
     <div className="overflow-x-auto">
@@ -371,7 +371,7 @@ function DriverTable({ keys, values, sources, where, emptyText, captionTone }) {
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200" title="Matched by reading the field's label, not by an explicit metric tag. Weakest evidence — check it.">label-matched</span>
                   )}
                 </td>
-                <td className="py-1 text-gray-400">
+                <td className="py-1 text-gray-500">
                   {w.date ? `${fmtDate(w.date)}${w.template ? ` · ${w.template}` : ''}` : 'source unknown'}
                 </td>
               </tr>
@@ -379,7 +379,7 @@ function DriverTable({ keys, values, sources, where, emptyText, captionTone }) {
           })}
         </tbody>
       </table>
-      {captionTone && <div className="text-[10px] text-gray-400 mt-1.5">{captionTone}</div>}
+      {captionTone && <div className="text-[10px] text-gray-500 mt-1.5">{captionTone}</div>}
     </div>
   );
 }
@@ -1364,7 +1364,7 @@ export default function AutoProgram({ userId, userRole }) {
     return (
       <div className="max-w-3xl mx-auto p-6">
         <div className="bg-white rounded-lg border border-gray-200 p-6 flex items-start gap-3">
-          <Lock className="w-5 h-5 text-gray-400 mt-0.5" />
+          <Lock className="w-5 h-5 text-gray-500 mt-0.5" />
           <div>
             <div className="font-semibold text-gray-900">Auto-Program is staff-only</div>
             <p className="text-sm text-gray-500 mt-1">
@@ -1423,7 +1423,7 @@ export default function AutoProgram({ userId, userRole }) {
       <div className={`${CARD} mb-5`}>
         <div className={EYEBROW}>1 · Athlete</div>
         <div className="relative">
-          <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-2.5" />
+          <Search className="w-4 h-4 text-gray-500 absolute left-2.5 top-2.5" />
           <input
             className="w-full border border-gray-300 rounded pl-8 pr-3 py-2 text-sm"
             placeholder="Search athletes…"
@@ -1438,7 +1438,7 @@ export default function AutoProgram({ userId, userRole }) {
                   onClick={() => selectAthlete(p)}
                   className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
                 >
-                  <User className="w-4 h-4 text-gray-400" />{p.full_name}
+                  <User className="w-4 h-4 text-gray-500" />{p.full_name}
                 </button>
               ))}
             </div>
@@ -1447,8 +1447,8 @@ export default function AutoProgram({ userId, userRole }) {
         {selectedName && (
           <div className="mt-3 flex items-center gap-2 text-sm">
             <span className="font-semibold text-gray-900">{selectedName}</span>
-            {loadingAthlete && <span className="text-gray-400 text-xs">loading…</span>}
-            {!loadingAthlete && <span className="text-xs text-gray-400">· {subCount} assessment(s) on file</span>}
+            {loadingAthlete && <span className="text-gray-500 text-xs">loading…</span>}
+            {!loadingAthlete && <span className="text-xs text-gray-500">· {subCount} assessment(s) on file</span>}
           </div>
         )}
         {autoNote && <div className="mt-2 text-xs text-blue-700 bg-blue-50 rounded p-2">{autoNote}</div>}
@@ -1477,13 +1477,13 @@ export default function AutoProgram({ userId, userRole }) {
                       : <Circle className="w-4 h-4 text-gray-300 flex-shrink-0" />}
                     <div className="min-w-0">
                       <div className="text-xs font-medium text-gray-700 truncate">{a.label}</div>
-                      <div className="text-[11px] text-gray-400">{done ? `Assessed ${fmtDate(done.date)}` : 'Not assessed'}</div>
+                      <div className="text-[11px] text-gray-500">{done ? `Assessed ${fmtDate(done.date)}` : 'Not assessed'}</div>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="text-[11px] text-gray-400 mt-2">
+            <div className="text-[11px] text-gray-500 mt-2">
               An area counts as assessed when at least one submission carries a real, numeric metric for it. Domains
               whose area is not ready start switched OFF below.
             </div>
@@ -1519,7 +1519,7 @@ export default function AutoProgram({ userId, userRole }) {
                   <select className={INP} value={shared.phaseId} onChange={(e) => setS('phaseId', e.target.value)}>
                     {THROW_PHASE_ORDER.map((k) => <option key={k} value={k}>{THROW_PHASES[k].label}</option>)}
                   </select>
-                  <span className="text-[10px] text-gray-400">
+                  <span className="text-[10px] text-gray-500">
                     Drives throwing + nutrition. S&amp;C derives its own phase from the dates
                     {scDerivedPhase ? `: ${PHASE_LABEL[scDerivedPhase]}` : ''}.
                   </span>
@@ -1527,7 +1527,7 @@ export default function AutoProgram({ userId, userRole }) {
                 <div>
                   <span className={LBL}>Week in phase (throwing ramp)</span>
                   <input type="number" min="1" max="16" className={INP} value={shared.weekInPhase} onChange={(e) => setS('weekInPhase', e.target.value)} />
-                  <span className="text-[10px] text-gray-400">1 = the athlete is starting this phase now (lowest volume).</span>
+                  <span className="text-[10px] text-gray-500">1 = the athlete is starting this phase now (lowest volume).</span>
                 </div>
                 <div>
                   <span className={LBL}>Hitting days / week</span>
@@ -1536,7 +1536,7 @@ export default function AutoProgram({ userId, userRole }) {
                     <option value="2">2 · Tue/Thu</option>
                     <option value="3">3 · Mon/Wed/Fri</option>
                   </select>
-                  <span className="text-[10px] text-gray-400">S&amp;C (3–4 days) and throwing (7-day microcycle) set their own cadence from the phase.</span>
+                  <span className="text-[10px] text-gray-500">S&amp;C (3–4 days) and throwing (7-day microcycle) set their own cadence from the phase.</span>
                 </div>
                 <div>
                   <span className={LBL}>Arm / body soreness</span>
@@ -1550,7 +1550,7 @@ export default function AutoProgram({ userId, userRole }) {
                 <div className="col-span-2 md:col-span-4">
                   <span className={LBL}>Injury history (comma-separated: ucl, shoulder, elbow, wrist, tj_surgery…)</span>
                   <input className={INP} value={shared.injuries} onChange={(e) => setS('injuries', e.target.value)} placeholder="none" />
-                  <span className="text-[10px] text-gray-400">Drives the S&amp;C exercise exclusions (Olympic lifts, heavy pressing).</span>
+                  <span className="text-[10px] text-gray-500">Drives the S&amp;C exercise exclusions (Olympic lifts, heavy pressing).</span>
                 </div>
               </div>
 
@@ -1654,7 +1654,7 @@ export default function AutoProgram({ userId, userRole }) {
                   <select className={INP} value={profile.throwLevel} onChange={(e) => setP('throwLevel', e.target.value)}>
                     {THROW_LEVELS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
                   </select>
-                  <span className="text-[10px] text-gray-400">Sets the Pitch Smart caps.</span>
+                  <span className="text-[10px] text-gray-500">Sets the Pitch Smart caps.</span>
                 </div>
                 <div>
                   <span className={LBL}>Hitting level</span>
@@ -1728,7 +1728,7 @@ export default function AutoProgram({ userId, userRole }) {
                   </select>
                 </div>
               </div>
-              <div className="text-[10px] text-gray-400 mt-2">
+              <div className="text-[10px] text-gray-500 mt-2">
                 Auto-filled from the shared assessment metric registry — an explicitly tagged <code>metric_key</code>
                 first, then the shared label fallback. The S&amp;C tab additionally applies its own stricter local label
                 matcher, so where an assessment field carries no metric tag the two screens can disagree. Check anything
@@ -1798,7 +1798,7 @@ export default function AutoProgram({ userId, userRole }) {
                 <div>
                   <span className={LBL}>Chronic baseline (SU/wk)</span>
                   <input className={`${INP} bg-gray-50`} value={chronicWeekly} readOnly />
-                  <span className="text-[10px] text-gray-400">From the last 28 days of Trackman throws (or a seeded pattern when there are none).</span>
+                  <span className="text-[10px] text-gray-500">From the last 28 days of Trackman throws (or a seeded pattern when there are none).</span>
                 </div>
               </div>
             </Section>
@@ -1848,7 +1848,7 @@ export default function AutoProgram({ userId, userRole }) {
               >
                 <Wand2 className="w-4 h-4" />Build full program
               </button>
-              <span className="text-xs text-gray-400">Local only — writes nothing.</span>
+              <span className="text-xs text-gray-500">Local only — writes nothing.</span>
             </div>
           </div>
 
@@ -1857,11 +1857,11 @@ export default function AutoProgram({ userId, userRole }) {
             <div className="space-y-4 mb-5">
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-bold text-gray-900">5 · Review</h2>
-                <span className="text-xs text-gray-400">built {new Date(built.builtAt).toLocaleTimeString()}</span>
+                <span className="text-xs text-gray-500">built {new Date(built.builtAt).toLocaleTimeString()}</span>
               </div>
 
               <div className="rounded border border-gray-200 bg-gray-50 p-3 text-[11px] text-gray-600 flex gap-2">
-                <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-gray-400" />
+                <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-gray-500" />
                 <span>
                   The assessment values listed under each domain are <strong>derived at build time</strong> from this
                   athlete's assessment submissions. They are <strong>not stored with the saved program</strong> —
@@ -1892,14 +1892,14 @@ export default function AutoProgram({ userId, userRole }) {
                         {built.sc.headline} · benchmarked at <strong>{built.sc.level}</strong>
                       </div>
                       {scDerivedPhase && (
-                        <div className="text-[11px] text-gray-400 mb-3">
+                        <div className="text-[11px] text-gray-500 mb-3">
                           S&amp;C phase is derived from the plan date against the season window ({PHASE_LABEL[scDerivedPhase]}), not from
                           the season-phase dropdown — that is how the S&amp;C engine is designed to work.
                         </div>
                       )}
 
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Mobility</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">Mobility</div>
                         <div className="text-[11px] text-gray-500 mb-2">
                           There is no separate mobility program. Mobility is prescribed as screen-driven corrective prep
                           on the first lifting day of each week, chosen from a 5-item corrective pool by the weakness tags
@@ -1911,12 +1911,12 @@ export default function AutoProgram({ userId, userRole }) {
                               <span className="text-gray-300">•</span>
                               <span><strong>{c.name}</strong> — {c.rx}{c.why ? ` · ${c.why}` : ''}</span>
                             </li>
-                          )) : <li className="text-gray-400 italic">No corrective blocks in week 1.</li>}
+                          )) : <li className="text-gray-500 italic">No corrective blocks in week 1.</li>}
                         </ul>
                       </div>
 
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">What drove it</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">What drove it</div>
                         <DriverTable
                           keys={SC_DRIVERS} values={metrics.values} sources={metrics.sources} where={metrics.where}
                           emptyText="No canonical S&C metrics found on this athlete's assessments — the program is running on defaults and whatever you typed above."
@@ -1934,7 +1934,7 @@ export default function AutoProgram({ userId, userRole }) {
                         <div className="mb-3"><FlagList items={built.sc.flags} tone="red" icon={ShieldAlert} /></div>
                       )}
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Engine safety flags — check these</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">Engine safety flags — check these</div>
                         <FlagList items={built.sc.engineFlags} tone="amber" />
                       </div>
                       {built.sc.armNote && (
@@ -1973,7 +1973,7 @@ export default function AutoProgram({ userId, userRole }) {
                       </div>
 
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">What drove it</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">What drove it</div>
                         <DriverTable
                           keys={THROW_DRIVERS} values={metrics.values} sources={metrics.sources} where={metrics.where}
                           emptyText="No canonical throwing / screen metrics found — the mobility, strength and biomech gates are at their neutral defaults and describe nobody."
@@ -1989,12 +1989,12 @@ export default function AutoProgram({ userId, userRole }) {
                       )}
                       {built.throwing.psRest.length > 0 && (
                         <div className="mb-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Pitch Smart required rest</div>
+                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">Pitch Smart required rest</div>
                           <FlagList items={built.throwing.psRest} tone="amber" />
                         </div>
                       )}
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Assessment gates</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">Assessment gates</div>
                         <FlagList items={built.throwing.gateNotes} tone="blue" icon={Info} />
                       </div>
                       <div className="mt-3">
@@ -2026,7 +2026,7 @@ export default function AutoProgram({ userId, userRole }) {
                     <>
                       <div className="text-xs text-gray-600 mb-3">{built.hitting.headline}</div>
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
                           Top findings ({built.hitting.redCount} high-priority)
                         </div>
                         <ul className="text-xs text-gray-700 space-y-1">
@@ -2036,11 +2036,11 @@ export default function AutoProgram({ userId, userRole }) {
                               <span><strong>{f.title}</strong> — {f.measured}</span>
                             </li>
                           ))}
-                          {!built.hitting.findings.length && <li className="text-gray-400 italic">No deficiencies flagged against this level.</li>}
+                          {!built.hitting.findings.length && <li className="text-gray-500 italic">No deficiencies flagged against this level.</li>}
                         </ul>
                       </div>
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">What drove it</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">What drove it</div>
                         <DriverTable
                           keys={HIT_DRIVERS} values={metrics.values} sources={metrics.sources} where={metrics.where}
                           emptyText="No canonical hitting metrics on file — anything shown above came from what you typed in."
@@ -2084,7 +2084,7 @@ export default function AutoProgram({ userId, userRole }) {
                         ))}
                       </ul>
                       <div className="mb-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">What drove it</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">What drove it</div>
                         <DriverTable
                           keys={NUTRI_DRIVERS} values={metrics.values} sources={metrics.sources} where={metrics.where}
                           emptyText="No anthropometric metrics on file — weight, height and body fat came from the athlete record or the defaults."
@@ -2118,7 +2118,7 @@ export default function AutoProgram({ userId, userRole }) {
                     <input type="checkbox" checked={assignAthlete} onChange={(e) => setAssignAthlete(e.target.checked)} />
                     Assign to {selectedName} (starting {fmtDate(shared.programStart)})
                   </label>
-                  <div className="text-[11px] text-gray-400 mt-1">
+                  <div className="text-[11px] text-gray-500 mt-1">
                     Will write:{' '}
                     {DOMAINS.filter((d) => include[d.key] && built[d.key] && !built[d.key].error).map((d) => d.label).join(', ') || 'nothing'}
                   </div>
@@ -2157,7 +2157,7 @@ export default function AutoProgram({ userId, userRole }) {
                     );
                   })}
                   {savedAnything && (
-                    <div className="text-[11px] text-gray-400">
+                    <div className="text-[11px] text-gray-500">
                       Saved programs appear in Programming → Programs (and meal plans under Meal Plans). Only the
                       domains listed above were written — anything not listed was switched off or failed to build.
                     </div>

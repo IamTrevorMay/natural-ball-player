@@ -322,7 +322,9 @@ function StatCard({ value, label, detail, tone = 'default' }) {
     <div className={`rounded-lg border p-4 ${tones[tone] || tones.default}`}>
       <p className="text-2xl font-bold text-gray-900">{value}</p>
       <p className="text-sm font-medium text-gray-700 mt-0.5">{label}</p>
-      {detail && <p className="text-xs text-gray-500 mt-1 leading-snug">{detail}</p>}
+      {/* gray-600, not gray-500: these cards sit on tinted red/amber/green
+          backgrounds where gray-500 measures 4.42:1, just under AA. */}
+      {detail && <p className="text-xs text-gray-600 mt-1 leading-snug">{detail}</p>}
     </div>
   );
 }
@@ -1153,9 +1155,11 @@ export default function ExerciseVideoGaps({ userRole }) {
             {applyResult.ok ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
             {applyResult.ok
               ? 'Changes applied.'
-              : (applyResult.failures.length > 0
-                ? 'Applied with failures.'
-                : 'Partly applied — some changes were blocked.')}
+              : (applyResult.templateEntriesWritten + applyResult.programRowsWritten === 0
+                ? 'Nothing was saved.'
+                : applyResult.failures.length > 0
+                  ? 'Applied with failures.'
+                  : 'Partly applied — some changes were blocked.')}
           </p>
 
           {/* Written, blocked and errored are three different things and are
@@ -1234,7 +1238,7 @@ export default function ExerciseVideoGaps({ userRole }) {
           <div>
             <label htmlFor="evg-search" className="block text-xs font-medium text-gray-700 mb-1">Search names</label>
             <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
               <input
                 id="evg-search"
                 type="search"
