@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2 } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, AlertTriangle } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { familyLabel, frequencyOf } from './productFamily';
 
@@ -122,6 +122,256 @@ function displayName(p) {
 // were canceled before payment landed.
 const DELETABLE_STATUSES = new Set(['pending', 'canceled', 'failed']);
 
+// ---------------------------------------------------------------------------
+// #344: cancelling a subscription for real (square-cancel-subscription).
+//
+// THE ONE THING TO GET RIGHT: Square cancels at the END of the current billing
+// period, not now. A perfectly successful cancel comes back as
+//   { ok: true, square_status: "ACTIVE", canceled_date: "2025-09-14", ... }
+// — still ACTIVE, with a FUTURE end date, and the family keeps their access
+// until that day.
+//
+// So "is this cancelled?" is answered by `canceled_date` being present and by
+// nothing else. If this code asked `square_status === 'CANCELED'` instead, every
+// ordinary success would render as "nothing happened" and a coach would cancel
+// the same family twice.
+// ---------------------------------------------------------------------------
+
+// Only a row Square actually knows as a subscription can be cancelled. A
+// one-time lesson or bundle has no recurring billing and the function rejects
+// it at the `lookup` stage, so the button must never appear on one.
+function canCancelSubscription(p) {
+  return !!p.square_subscription_id;
+}
+
+// `canceled_date` / `charged_through_date` are plain calendar days ("2025-09-14"),
+// not timestamps. new Date('2025-09-14') is parsed as UTC midnight, which in any
+// US timezone prints as the 13th — a whole day wrong on the one date a parent is
+// told. Split it by hand so the day we print is the day Square meant.
+function fmtDayOrNull(d) {
+  if (!d) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d).trim());
+  if (m) {
+    const local = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (Number.isNaN(local.getTime())) return null;
+    return local.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  return fmtDateOrNull(d);
+}
+
+// Strictly before today, in the reader's own timezone. Only changes the tense of
+// the sentence — "billing stops on" vs "billing stopped on" — which matters
+// because a re-check of an old cancellation otherwise promises a family a future
+// end date that went by months ago.
+function isPastDay(d) {
+  if (!d) return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d).trim());
+  if (!m) return false;
+  const day = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const today = new Date();
+  return day.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+}
+
+// Used ONLY to describe a subscription whose billing has already finished — it
+// is deliberately never consulted to decide whether our cancel worked.
+const ENDED_SQUARE_STATUSES = new Set(['CANCELED', 'DEACTIVATED']);
+
+// The function's own error strings are good plain English and are shown as the
+// last line. Dropped when it only repeats what we already said above it — a
+// coach reading the same sentence twice starts skimming, and these are the
+// sentences that must not be skimmed.
+function withDetail(lines, detail) {
+  if (!detail) return lines;
+  const already = lines.some(l => l.includes(detail) || detail.includes(l));
+  return already ? lines : lines.concat(detail);
+}
+
+// Turns one response from square-cancel-subscription into what a coach reads.
+// Pure on purpose: this is the part that decides what a family gets told about
+// their money, so it is testable without a network or a browser.
+//
+// result: { ok: true, data }                    — the 200 body
+//         { ok: false, stage, message }         — the non-2xx body
+// who:    { athlete, product }
+// returns { tone, title, lines, retryable }
+export function cancelOutcome(result, who = {}) {
+  const athlete = who.athlete || 'This athlete';
+  const product = who.product || 'This subscription';
+  const { ok, data, stage, message } = result || {};
+
+  // Never refunds. Every branch says so, because "cancelled" is heard as
+  // "money coming back" by roughly every parent who has ever been told it.
+  const NO_REFUND =
+    'Nothing has been refunded. Cancelling never returns money already paid — '
+    + 'if money needs to go back, that is a separate refund in Square.';
+
+  if (ok) {
+    const endsOn = fmtDayOrNull(data?.canceled_date);
+    const paidThrough = fmtDayOrNull(data?.charged_through_date);
+    const squareStatus = String(data?.square_status || '').toUpperCase();
+    const already = data?.already_canceled === true;
+    const finished = ENDED_SQUARE_STATUSES.has(squareStatus);
+
+    // The normal, expected success: Square gave us the day billing stops.
+    if (endsOn) {
+      const past = isPastDay(data?.canceled_date);
+      const lines = already
+        ? [
+          'This subscription had already been cancelled in Square before now, so nothing changed and no second cancellation was sent. This is not an error.',
+          past
+            ? `Billing stopped on ${endsOn} and ${athlete}'s access under this subscription ended then.`
+            : `Billing stops on ${endsOn}. ${athlete} keeps access until then.`,
+        ]
+        : [
+          `Recurring billing for ${product} is now cancelled in Square. No further payments will be taken.`,
+          past
+            ? `The end of the paid period was ${endsOn}, which has already passed.`
+            : `${athlete} keeps access until ${endsOn} — the end of the period already paid for. Billing has not stopped today.`,
+        ];
+      if (paidThrough && paidThrough !== endsOn) lines.push(`Square shows this paid through ${paidThrough}.`);
+      lines.push(NO_REFUND);
+      lines.push('Nothing was deleted. The record stays on this screen.');
+      const when = past ? `billing stopped ${endsOn}` : `billing stops ${endsOn}`;
+      return {
+        tone: already ? 'notice' : 'success',
+        title: already
+          ? `Already cancelled — ${when}`
+          : (past ? `Cancelled — ${when}` : `Billing stops on ${endsOn}`),
+        lines,
+        retryable: false,
+      };
+    }
+
+    // Billing already finished before today, so there is no future end date.
+    if (finished) {
+      return {
+        tone: 'notice',
+        title: 'Already cancelled — billing has already stopped',
+        lines: [
+          `Square reports this subscription as ${squareStatus}. It is not billing anyone and no further payments will be taken. Nothing changed and this is not an error.`,
+          'Square did not give a future end date because the billing period it was cancelled in has already passed.',
+          NO_REFUND,
+        ],
+        retryable: false,
+      };
+    }
+
+    // Square took the cancel but will not say when billing stops. We refuse to
+    // invent a date, and we do not call this a clean success.
+    return {
+      tone: 'warn',
+      title: 'Cancellation sent — Square has not given an end date',
+      lines: [
+        `Square accepted the cancellation but still reports this subscription as ${squareStatus || 'unknown'} with no date for when billing stops.`,
+        'Do not give the family a date — we do not have one. Open this subscription in Square and confirm when it ends.',
+        'Do not send the cancellation again; Square has already taken it.',
+        NO_REFUND,
+      ],
+      retryable: false,
+    };
+  }
+
+  const detail = message ? String(message) : null;
+
+  switch (stage) {
+    // Nothing left the building. The card is still being charged.
+    case 'auth':
+      return {
+        tone: 'error',
+        title: 'Not cancelled — you are not signed in, or not allowed to do this',
+        lines: withDetail([
+          'Nothing was sent to Square. Nothing changed and the family is still being billed exactly as before.',
+          'Only an admin or a coach can cancel a subscription. Sign in again as one and retry.',
+        ], detail),
+        retryable: true,
+      };
+
+    case 'lookup':
+      return {
+        tone: 'error',
+        title: 'Not cancelled — the purchase record could not be used',
+        lines: withDetail([
+          'Nothing was sent to Square. Nothing changed and the family is still being billed exactly as before.',
+          'Close this screen, reopen it so the list is fresh, and try again.',
+        ], detail),
+        retryable: true,
+      };
+
+    case 'square_read':
+      return {
+        tone: 'error',
+        title: 'Not cancelled — Square could not be read',
+        lines: withDetail([
+          'We could not read this subscription from Square, so no cancellation was sent. The family is still being billed.',
+          'It is safe to try again.',
+        ], detail),
+        retryable: true,
+      };
+
+    // Square said no. The money is untouched.
+    case 'square_cancel':
+      return {
+        tone: 'error',
+        title: 'Not cancelled — the family is still being billed',
+        lines: withDetail([
+          'Square refused the cancellation, so nothing changed. The subscription is still live and the next payment will still be taken.',
+          'It is safe to try again. If it keeps failing, cancel this subscription directly in Square.',
+        ], detail),
+        retryable: true,
+      };
+
+    // The dangerous one: we asked, and then lost sight of the answer.
+    case 'square_verify':
+      return {
+        tone: 'warn',
+        title: 'Cancellation was sent but NOT confirmed — check Square first',
+        lines: withDetail([
+          'The cancellation reached Square, but we could not re-read the subscription to confirm what Square did with it. It may or may not be cancelled.',
+          'Do not press cancel again and do not tell the family anything yet. Open this subscription in Square and look at its status first.',
+          'The portal record was deliberately left unchanged rather than guessing.',
+        ], detail),
+        retryable: false,
+      };
+
+    // The billing IS stopped. Only our own bookkeeping fell over. This must
+    // never read as "the cancellation failed" — a coach who reads it that way
+    // cancels a second time, or tells the family they are still being charged.
+    case 'db_write':
+      return {
+        tone: 'warn',
+        title: 'Billing WAS stopped in Square — only our record is out of date',
+        lines: withDetail([
+          'The cancellation went through. Square will take no further payments from this family.',
+          'What failed was saving that result to the portal, so the row on this screen still shows the old status until the next Square sync.',
+          'Do NOT cancel again — there is nothing left to cancel.',
+          NO_REFUND,
+        ], detail),
+        retryable: false,
+      };
+
+    // Unknown stage, or the request never produced one (network dropped). We do
+    // not know whether Square was touched, so the safe instruction is "go look",
+    // not "try again".
+    default:
+      return {
+        tone: 'warn',
+        title: 'We could not tell whether the cancellation went through',
+        lines: withDetail([
+          'The request did not come back with a result we understand, so we cannot say whether Square was changed.',
+          'Do not retry blindly. Open this subscription in Square and check its status before doing anything else or telling the family anything.',
+        ], detail),
+        retryable: false,
+      };
+  }
+}
+
+const OUTCOME_STYLES = {
+  success: { box: 'border-green-300 bg-green-50', title: 'text-green-900', body: 'text-green-900' },
+  notice:  { box: 'border-blue-300 bg-blue-50',   title: 'text-blue-900',  body: 'text-blue-900' },
+  warn:    { box: 'border-amber-300 bg-amber-50', title: 'text-amber-900', body: 'text-amber-900' },
+  error:   { box: 'border-red-300 bg-red-50',     title: 'text-red-900',   body: 'text-red-900' },
+};
+
 function timeLeftLabel(expiresAt) {
   if (!expiresAt) return null;
   const ms = new Date(expiresAt).getTime() - Date.now();
@@ -142,13 +392,23 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
   // query failed, or store_backfill_runs is empty. It is NEVER used to mean
   // "synced just now"; the fallback wording says the date is unknown.
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  // #344: the cancel flow lives in its own nested dialog so that stopping a
+  // family's billing can never be one stray click on a row. `cancelTarget` holds
+  // the row plus the names as they read at the moment of asking; `cancelResult`
+  // is whatever cancelOutcome() made of the response.
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelSending, setCancelSending] = useState(false);
+  const [cancelResult, setCancelResult] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data: rows, error } = await supabase
         .from('store_purchases')
-        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, store_products(bundle_qty, kind)')
+        // #344: square_subscription_id is what decides whether a row can be
+        // cancelled at all. Without it there is no recurring billing to stop and
+        // square-cancel-subscription rejects the call, so the button is hidden.
+        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, store_products(bundle_qty, kind)')
         .eq('user_id', userId)
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
@@ -169,11 +429,17 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
       setPurchases(list);
 
       if (list.length > 0) {
-        const { data: usage } = await supabase
+        // The error was previously dropped on the floor here, which turned "the
+        // usage query failed" into "this athlete has used no sessions" — a
+        // silent lie on a screen staff delete records from. Surfaced now; the
+        // package list itself still renders, because losing the usage history
+        // is not a reason to show an empty modal.
+        const { data: usage, error: usageErr } = await supabase
           .from('store_session_usage')
           .select('id, purchase_id, used_on, source_type, note')
           .in('purchase_id', list.map(p => p.id))
           .order('used_on', { ascending: false });
+        if (usageErr) throw usageErr;
         const grouped = {};
         (usage || []).forEach(u => {
           (grouped[u.purchase_id] = grouped[u.purchase_id] || []).push(u);
@@ -292,8 +558,11 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
       // costs real money: this button only removes the portal's row, Square
       // keeps billing the card either way, and once the row is gone staff have
       // lost the thing that told them the subscription exists at all.
-      // Cancelling is a Square action and is deliberately not offered here.
+      // The wording below is unchanged on purpose — it is the sentence that
+      // stops a coach believing this button ended the charges. The pointer to
+      // the real cancel button is appended, not substituted.
       parts.push('This removes the portal\'s record only. It does NOT cancel the subscription and does NOT stop Square billing them — to actually stop the charges, cancel the subscription in Square.');
+      parts.push('The "Cancel subscription" button on this row does exactly that. If that is what you meant, close this and use it instead.');
       // #341/#344 combined into one sentence rather than two walls of text: a
       // subscription row is never marked paid by a webhook (#341) AND is only
       // as fresh as the last manual backfill (#344), so the single honest
@@ -317,6 +586,60 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
       if (error) throw error;
       await load();
     } catch (e) { alert('Error deleting package: ' + formatUserError(e)); } finally { setBusyId(null); }
+  };
+
+  // #344: the real cancel. Stops Square billing the family; deletes nothing.
+  //
+  // Deliberately NOT sharing `busyId` with the row's other buttons: this one
+  // moves money, so it owns its own in-flight flag and the dialog's button is
+  // disabled off it. Double-firing a cancel is survivable (the function's
+  // already_canceled path is idempotent) but sending a second one while the
+  // first is still open is exactly how a coach ends up unsure what happened.
+  const runCancelSubscription = async () => {
+    if (!cancelTarget || cancelSending) return;
+    const { purchase, athlete, product } = cancelTarget;
+    setCancelSending(true);
+    setCancelResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('square-cancel-subscription', {
+        body: { purchase_id: purchase.id },
+      });
+
+      if (error) {
+        // supabase-js turns a non-2xx into a FunctionsHttpError and hides the
+        // body on `error.context` (the raw Response). That body is the entire
+        // point — it carries the `stage`, which is the difference between "they
+        // are still being billed" and "the billing stopped, only our row is
+        // stale". Without reading it, every failure collapses into the one
+        // useless sentence this change exists to get rid of.
+        let body = null;
+        try { body = await error.context?.json?.(); } catch { /* not JSON */ }
+        console.error('square-cancel-subscription failed:', body?.stage, body?.error || error.message);
+        setCancelResult(cancelOutcome(
+          { ok: false, stage: body?.stage, message: body?.error || error.message },
+          { athlete, product },
+        ));
+      } else if (data?.error) {
+        // A 200 carrying an error field. Treated the same way, stage and all.
+        console.error('square-cancel-subscription returned an error:', data.stage, data.error);
+        setCancelResult(cancelOutcome({ ok: false, stage: data.stage, message: data.error }, { athlete, product }));
+      } else {
+        console.log('square-cancel-subscription ok:', data);
+        setCancelResult(cancelOutcome({ ok: true, data }, { athlete, product }));
+      }
+    } catch (e) {
+      // Never reached the function, or the browser dropped the request. We do
+      // not know what Square saw, so the default branch says "go look".
+      console.error('square-cancel-subscription threw:', e);
+      setCancelResult(cancelOutcome({ ok: false, stage: null, message: formatUserError(e) }, { athlete, product }));
+    } finally {
+      setCancelSending(false);
+      // #344 requirement: the row must reflect the new state without a page
+      // reload. Runs after every outcome, not just success — square_verify
+      // writes a breadcrumb and the already-cancelled path re-syncs the status,
+      // so "it failed" does not mean "nothing on the row moved".
+      await load();
+    }
   };
 
   // #341: Square payment confirmations are not currently reaching the portal —
@@ -414,19 +737,64 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
             </div>
 
             {canManage && (
-              <div className="flex flex-wrap gap-2 pt-1">
-                <button onClick={() => logUsedSession(p)} disabled={busy} className="flex items-center gap-1 bg-indigo-600 text-white px-2.5 py-1 rounded text-xs font-medium hover:bg-indigo-700 transition disabled:opacity-50">
-                  <Plus size={12} /> Log used session
-                </button>
-                <button onClick={() => editRemaining(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Edit remaining</button>
-                <button onClick={() => editExpiry(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Set expiration</button>
-                {/* #307/#341: unchanged — only purchases that never became real
-                    money are deletable at all. A live subscription has no delete
-                    button here on purpose; stopping it is a Square action. */}
-                {canDelete && DELETABLE_STATUSES.has(p.status) && (
-                  <button onClick={() => deletePackage(p)} disabled={busy} className="flex items-center gap-1 border border-red-300 text-red-600 px-2.5 py-1 rounded text-xs font-medium hover:bg-red-50 transition disabled:opacity-50">
-                    <Trash2 size={12} /> Delete
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button onClick={() => logUsedSession(p)} disabled={busy} className="flex items-center gap-1 bg-indigo-600 text-white px-2.5 py-1 rounded text-xs font-medium hover:bg-indigo-700 transition disabled:opacity-50">
+                    <Plus size={12} /> Log used session
                   </button>
+                  <button onClick={() => editRemaining(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Edit remaining</button>
+                  <button onClick={() => editExpiry(p)} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">Set expiration</button>
+                </div>
+
+                {/* #344: the real cancel. Its own block, its own colour and the
+                    biggest button on the row, because it is the action staff
+                    actually came here for — the previous answer was "go do it in
+                    Square", which is how families kept getting billed.
+                    Deliberately NOT sitting next to Delete: those two are
+                    different actions with different consequences and one row of
+                    lookalike buttons is how they get confused. */}
+                {canCancelSubscription(p) && (
+                  <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-900">
+                      <Ban size={13} /> Stop the billing
+                    </div>
+                    <p className="text-[11px] text-rose-800 mt-1">
+                      Cancels the recurring payment in Square so this family is not charged again.
+                      Access runs to the end of the period already paid for, and nothing is refunded.
+                    </p>
+                    <button
+                      onClick={() => { setCancelResult(null); setCancelTarget({ purchase: p, athlete: userName || 'This athlete', product: displayName(p) }); }}
+                      disabled={busy || cancelSending}
+                      className="mt-2 flex items-center gap-1.5 bg-rose-600 text-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-rose-700 transition disabled:opacity-50"
+                    >
+                      <Ban size={13} /> Cancel subscription
+                    </button>
+                  </div>
+                )}
+
+                {/* A package row with no Square subscription id cannot be
+                    cancelled from here and the function would reject it. Say why,
+                    rather than leaving a coach hunting for a missing button. */}
+                {isSubscription(p) && !canCancelSubscription(p) && (
+                  <p className="text-[11px] text-gray-500">
+                    No Square subscription id is stored on this row, so it cannot be cancelled from the portal.
+                    Re-sync subscriptions from Square, or cancel it in Square directly.
+                  </p>
+                )}
+
+                {/* #307/#341: unchanged rule — only purchases that never became
+                    real money are deletable at all. Kept apart from the cancel
+                    button above and relabelled to say what it actually does:
+                    it touches our record, not the family's card. */}
+                {canDelete && DELETABLE_STATUSES.has(p.status) && (
+                  <div className="pt-2 border-t border-gray-100">
+                    <button onClick={() => deletePackage(p)} disabled={busy} className="flex items-center gap-1 border border-gray-300 text-gray-600 px-2.5 py-1 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50">
+                      <Trash2 size={12} /> Delete portal record
+                    </button>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Removes this row from the portal only. It does not stop Square billing anyone.
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -437,6 +805,7 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
   };
 
   return (
+    <>
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[88vh] flex flex-col">
         <div className="border-b border-gray-200 p-5 flex items-center justify-between flex-shrink-0">
@@ -489,9 +858,11 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
                       : 'Subscriptions are synced from Square manually and the date of the last sync is unknown. Anything started or cancelled since then may not appear here.'}
                   </p>
                   {/* #344: Cordell asked to "cancel / delete" as if they were
-                      one action. They are not, and the difference is money. */}
+                      one action. They are not, and the difference is money —
+                      which is exactly why both now exist and are described
+                      separately. */}
                   <p className="text-xs text-gray-400 mt-1">
-                    Cancelling a subscription can only be done in Square. Deleting a row here removes the portal&apos;s record only and does not stop the billing.
+                    &ldquo;Cancel subscription&rdquo; stops Square billing the family and refunds nothing. &ldquo;Delete portal record&rdquo; removes the portal&apos;s record only and does not stop the billing. They are not the same thing.
                   </p>
                 </div>
                 {subscriptions.length > 0 ? (
@@ -527,5 +898,131 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         </div>
       </div>
     </div>
+
+    {/* #344 cancel dialog.
+        HEIGHT: five popups on this project have pushed their own buttons off the
+        bottom of the screen and one of them locked a coach out entirely. So the
+        shell below carries NO max-height — the only capped, scrolling element is
+        the middle <div>, and the footer holding the buttons is its SIBLING, not
+        its child. Long copy scrolls inside the middle; the footer cannot move.
+        Same shape as the coaches dialog in Schedule.js. */}
+    {cancelTarget && (
+      <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
+        <div className="bg-white rounded-lg shadow-xl max-w-lg w-full flex flex-col">
+          <div className="border-b border-gray-200 px-5 py-3 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Ban size={18} className="text-rose-600" />
+              <h3 className="text-base font-bold text-gray-900">
+                {cancelResult ? 'Cancellation result' : 'Cancel this subscription?'}
+              </h3>
+            </div>
+            <button
+              onClick={() => { if (!cancelSending) { setCancelTarget(null); setCancelResult(null); } }}
+              disabled={cancelSending}
+              className="text-gray-400 hover:text-gray-600 disabled:opacity-40"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* THE ONLY SCROLLING ELEMENT IN THIS DIALOG. */}
+          <div className="px-5 py-4 max-h-[50vh] overflow-y-auto">
+            {cancelResult ? (
+              <div className={`rounded-lg border p-3 ${OUTCOME_STYLES[cancelResult.tone].box}`}>
+                <p className={`text-sm font-bold ${OUTCOME_STYLES[cancelResult.tone].title}`}>
+                  {(cancelResult.tone === 'warn' || cancelResult.tone === 'error') && (
+                    <AlertTriangle size={14} className="inline-block mr-1.5 -mt-0.5" />
+                  )}
+                  {cancelResult.title}
+                </p>
+                <div className={`mt-2 space-y-2 text-xs ${OUTCOME_STYLES[cancelResult.tone].body}`}>
+                  {cancelResult.lines.map((line, i) => <p key={i}>{line}</p>)}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 text-sm text-gray-700">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <div className="font-semibold text-gray-900">{cancelTarget.product}</div>
+                  <div className="text-xs text-gray-600 mt-0.5">
+                    {frequencyLabel(cancelTarget.purchase)} billing · Athlete: {cancelTarget.athlete}
+                  </div>
+                </div>
+                {/* Every one of these is a thing a family has been told wrongly
+                    before. They are spelled out here, at the moment of pressing,
+                    not buried in a help page. */}
+                <ul className="space-y-2 text-xs text-gray-700 list-disc pl-4">
+                  <li>
+                    <span className="font-semibold">This stops future billing in Square.</span> No further
+                    payments will be taken for this subscription.
+                  </li>
+                  <li>
+                    <span className="font-semibold">It does NOT refund anything already paid.</span> If money
+                    needs to go back to this family, that is a separate refund, done in Square.
+                  </li>
+                  <li>
+                    <span className="font-semibold">{cancelTarget.athlete} keeps access until the end of the
+                    period already paid for.</span> Square cancels at the end of the current billing period,
+                    not today, so do not tell the family their access has stopped.
+                  </li>
+                  <li>
+                    Nothing is deleted. The record stays on this screen with its history.
+                  </li>
+                </ul>
+                <p className="text-xs text-gray-500">
+                  Square is asked live, so this does not depend on the last manual sync.
+                  The exact date billing stops is shown once it is done.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* FOOTER — sibling of the scrolling element above, never inside it. */}
+          <div className="border-t border-gray-200 px-5 py-3 flex flex-wrap justify-end gap-2 flex-shrink-0">
+            {cancelResult ? (
+              <>
+                {/* Retry is offered ONLY where the outcome says nothing reached
+                    Square. After square_verify or db_write there is no retry
+                    button at all, because pressing it is the wrong move. */}
+                {cancelResult.retryable && (
+                  <button
+                    onClick={runCancelSubscription}
+                    disabled={cancelSending}
+                    className="rounded-lg border border-rose-300 text-rose-700 px-4 py-1.5 text-sm font-medium hover:bg-rose-50 transition disabled:opacity-50"
+                  >
+                    Try again
+                  </button>
+                )}
+                <button
+                  onClick={() => { setCancelTarget(null); setCancelResult(null); }}
+                  className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 transition"
+                >
+                  Done
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setCancelTarget(null)}
+                  disabled={cancelSending}
+                  className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
+                >
+                  Keep billing
+                </button>
+                {/* Disabled the instant it is pressed. This moves money. */}
+                <button
+                  onClick={runCancelSubscription}
+                  disabled={cancelSending}
+                  className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-rose-700 transition disabled:opacity-60"
+                >
+                  <Ban size={14} />
+                  {cancelSending ? 'Cancelling in Square…' : 'Yes, stop the billing'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
