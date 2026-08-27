@@ -487,7 +487,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchLoiData();
     fetchArmCareRoutines();
     fetchGoals();
-    fetchPlayerNotes();
     fetchAssessmentData();
     fetchPtVisits();
     fetchCommunicationLogs();
@@ -497,6 +496,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
+
+  // Player notes are staff-only: RECORDS_SUB_TABS hides the Notes section from
+  // players (it is `staffOnly`), so a player's own profile has no business
+  // asking the server for the rows either, even though the database would
+  // refuse them. This gate is the same test the Notes sub-tab uses.
+  // It lives in its own effect, keyed on userRole as well as userId, because
+  // userRole arrives from App as null on the first render and only settles once
+  // the role lookup comes back. Folding it into the effect above (which re-runs
+  // on userId alone) would skip the fetch for admins and coaches and leave the
+  // Notes tab permanently empty.
+  useEffect(() => {
+    if (userRole === 'admin' || userRole === 'coach') fetchPlayerNotes();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [userId, userRole]);
 
   useEffect(() => {
     let cancelled = false;
