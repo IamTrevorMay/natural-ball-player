@@ -2026,6 +2026,7 @@ export default function Schedule({ userId, userRole }) {
                     </button>
                   )}
                   {coaches
+                    .filter(coach => userRole !== 'player' || viewMode !== 'lanes' || coachDaySlots.some(s => s.coach_id === coach.id))
                     .filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter))
                     .map(coach => (
                     <button
@@ -2052,8 +2053,14 @@ export default function Schedule({ userId, userRole }) {
                       </div>
                     </button>
                   ))}
-                  {coaches.filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter)).length === 0 && (
-                    <div className="px-4 py-6 text-center text-sm text-gray-500">No coaches cover {coachSkillFilter}.</div>
+                  {coaches
+                    .filter(coach => userRole !== 'player' || viewMode !== 'lanes' || coachDaySlots.some(s => s.coach_id === coach.id))
+                    .filter(coach => coachSkillFilter === 'All' || (coach.skills || []).includes(coachSkillFilter)).length === 0 && (
+                    <div className="px-4 py-6 text-center text-sm text-gray-500">
+                      {userRole === 'player' && viewMode === 'lanes' && coachSkillFilter === 'All'
+                        ? 'No coaches have availability on this day.'
+                        : `No coaches cover ${coachSkillFilter}.`}
+                    </div>
                   )}
                 </div>
               </aside>
