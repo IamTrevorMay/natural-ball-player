@@ -5,6 +5,7 @@ import {
   ExternalLink, Check, RefreshCw, Info, Undo2, Lock, ShieldAlert,
 } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import { classifyWriteOutcome } from './writeOutcome';
 import {
   normalizeExerciseName,
   buildGapReport,
@@ -175,30 +176,11 @@ export const OWNERSHIP = {
 export const RLS_PLAIN_SENTENCE =
   'Workout templates can only be edited by the coach who created them. Whether to change that is an admin decision, not something this screen can do.';
 
-/**
- * What a Supabase write ACTUALLY did, given the response.
- *
- * Callers must pass the `data` from a write that ended in .select(...), and
- * `expected` = how many rows the statement targeted.
- *
- *   error present        -> 'errored'
- *   no error, 0 rows     -> 'blocked'  (RLS silently matched nothing)
- *   no error, < expected -> 'partial'  (some rows refused)
- *   no error, >= expected-> 'written'
- *
- * `data` of null/undefined with no error means the server returned no
- * representation at all, which we also treat as blocked rather than assumed.
- *
- * @returns {{ outcome: 'errored'|'blocked'|'partial'|'written', written: number, blocked: number }}
- */
-export function classifyWriteOutcome({ error, data, expected = 1 }) {
-  const target = Math.max(0, Number(expected) || 0);
-  if (error) return { outcome: 'errored', written: 0, blocked: 0 };
-  const returned = Array.isArray(data) ? data.length : 0;
-  if (returned === 0) return { outcome: 'blocked', written: 0, blocked: target };
-  if (returned < target) return { outcome: 'partial', written: returned, blocked: target - returned };
-  return { outcome: 'written', written: returned, blocked: 0 };
-}
+// What a Supabase write ACTUALLY did, given the response. The body moved to
+// writeOutcome.js when #306 needed the same guarantee on a different table —
+// this screen's behaviour is unchanged, and the re-export keeps the name
+// importable from here for anything that already relied on it.
+export { classifyWriteOutcome };
 
 // ---------------------------------------------------------------------------
 // Data access — every read is SELECT only, and every error is surfaced.

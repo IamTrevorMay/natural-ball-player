@@ -691,7 +691,7 @@ function Shell({ children, wide, signedIn }) {
       <header className="bg-white border-b border-gray-200">
         <div className={`${wide ? 'max-w-7xl' : 'max-w-3xl'} mx-auto px-4 py-4 flex items-center justify-between`}>
           <div className="flex items-center space-x-2">
-            <img src="/nbp-logo.png" alt="Natural Ball Player" className="w-8 h-8 object-contain" />
+            <img src="/naturals-diamond.png" alt="The Naturals" className="w-8 h-8 object-contain" />
             <span className="font-bold text-gray-900">Natural Ball Player</span>
           </div>
           <a

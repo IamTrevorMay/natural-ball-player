@@ -47,7 +47,7 @@ const PAGE_META = {
   'work-admin-announcements':   { title: 'Manage Announcements',   description: 'Post and manage announcements for staff.' },
   'work-invoices':              { title: 'My Invoices',            description: 'Submit and track your invoices.' },
   'work-admin-invoices':        { title: 'Coach Invoices',         description: 'Review and manage coach-submitted invoices.' },
-  'work-admin-store':           { title: 'Store',                  description: 'Manage Square catalog and view all purchases.' },
+  'work-admin-store':           { title: 'Store',                  description: 'Manage Square catalog, view all purchases, and decide which cancellations were sick.' },
   // #311: coach-only door into WorkStore's Bulk Tag Sessions tab, not the
   // rest of the Store (catalog/purchases/pricing stay admin-only).
   'work-bulk-tag':              { title: 'Bulk Tag Sessions',       description: 'Attach a package or plan to many training sessions at once.' },
@@ -196,7 +196,7 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
       // a coach sees Purchases and Bulk Tag Sessions, not the product catalogue.
       case 'work-admin-store':
         return (userRole === 'admin' || userRole === 'coach')
-          ? <WorkStore userRole={userRole} />
+          ? <WorkStore userRole={userRole} userId={userId} />
           : <ComingSoon viewKey={currentView} />;
       // #311: BulkTagSessions renders directly — it's already a standalone,
       // zero-prop component (imported into WorkStore.js, not defined there),
@@ -309,7 +309,7 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
       <div className="mb-4 flex items-start justify-between">
         <div className="min-w-0">
           <div className="flex items-center space-x-2">
-            <img src="/nbp-logo.png" alt="NBP" className="w-8 h-8 object-contain flex-shrink-0" />
+            <img src="/naturals-diamond.png" alt="The Naturals" className="w-8 h-8 object-contain flex-shrink-0" />
             <h1 className="text-xl font-bold text-indigo-200 truncate">NBP Work Portal</h1>
           </div>
           <div className="flex items-center space-x-3 mt-2">
@@ -357,7 +357,12 @@ function WorkSidebar({ userRole, userName, userAvatar, currentView, setCurrentVi
             is why this stays out of their nav — one path each, no duplicates.
             WorkStore hides the Catalog/Packages/Backfill/Duplicates tabs from
             coaches, so this opens on Purchases and shows nothing else they
-            should not have. */}
+            should not have.
+            #306: a coach now also gets the Cancellations tab through this same
+            door, because Cordell put the sick-cancel decision with admins AND
+            coaches. The label stays "Purchases" — it is the tab this opens on,
+            and a second sidebar entry pointing at the same screen is the
+            duplicate path the note above exists to avoid. */}
         {userRole === 'coach' && (
           <NavItem id="work-admin-store" icon={ListChecks} label="Purchases" />
         )}

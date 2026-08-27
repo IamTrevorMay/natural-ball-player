@@ -14,6 +14,7 @@ import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import AssignPackageModal from './AssignPackageModal';
 import PackagesModal from './PackagesModal';
+import MentalTrainingModal from './MentalTrainingModal';
 import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
@@ -44,18 +45,43 @@ const PROFILE_TABS = [
   { key: 'trackman', label: 'Trackman' },
   { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
   { key: 'hittrax', label: 'Hittrax' },
-  { key: 'assessment', label: 'Assessment' },
-  { key: 'armcare', label: 'Arm Care' },
-  { key: 'pt', label: 'Physical Therapy' },
+  // #369: Arm Care, Physical Therapy and Assessment used to be three separate
+  // tabs. They are now one "Health" tab with a sub-nav inside it. None of the
+  // three had a role gate at tab level and none has one now; the gates that
+  // exist are inside the sections themselves (PT's status select and Add
+  // Visit, Assessment's Submit and delete) and are untouched.
+  { key: 'health', label: 'Health' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
-  { key: 'documents', label: 'Documents' },
-  { key: 'codes', label: 'Codes' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
+  // Mental Training is the odd one out: Cordell asked for a pop-up, not another
+  // page of tab content, so this button opens a modal instead of switching
+  // tabs. See the special case in the tab bar's onClick below. No role gate —
+  // the offer is open to everyone.
+  { key: 'mental', label: 'Mental Training' },
+  // #370: Documents, Codes, Goals and Notes used to be four separate tabs.
+  // They are now one "Records" tab with a sub-nav inside it. The Records tab
+  // itself carries no role gate because three of the four sections never had
+  // one; Notes keeps its admin/coach gate on the sub-nav instead (see
+  // RECORDS_SUB_TABS below).
+  { key: 'records', label: 'Records' },
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
   { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
   { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
   { key: 'marek', label: 'Marek', roles: ['admin', 'coach'] },
+];
+
+// The tab keys that actually have a content block further down this file (each
+// one has a matching `activeProfileTab === '<key>'` section). Any other tab
+// shows the "Coming Soon" placeholder instead. This used to be a hand-written
+// list of `activeProfileTab !== '...'` tests inside the placeholder itself, and
+// it drifted twice — tabs gained real content but were never removed from the
+// list, so "Coming Soon" was drawn directly above their content. Add a key here
+// the moment you add its content block, and nowhere else.
+// 'hittrax' is deliberately NOT in this list: it has no content block yet, so
+// "Coming Soon" is the whole of that tab and is correct.
+const PROFILE_TABS_WITH_CONTENT = [
+  'general', 'athletes', 'schedule', 'trackman', 'whoop', 'health',
+  'recruitment', 'records', 'attendance', 'communication', 'practice_stats',
+  'marek',
 ];
 
 // #226: whole-years age from a 'YYYY-MM-DD' DOB, or null if absent/invalid.
@@ -192,6 +218,31 @@ const NOTE_CATEGORIES = [
   { value: 'pitching', label: 'Pitching', color: 'bg-cyan-100 text-cyan-800' },
 ];
 
+// #370: the sections that live inside the merged "Records" tab, in the order
+// they appear in the sub-nav. `staffOnly` reproduces exactly the role gate the
+// old top-level Notes tab had (roles: ['admin', 'coach']) — players could never
+// see Notes, not even on their own profile, and that has not changed.
+const RECORDS_SUB_TABS = [
+  { key: 'documents', label: 'Documents' },
+  { key: 'codes', label: 'Codes' },
+  { key: 'goals', label: 'Goals' },
+  { key: 'notes', label: 'Notes', staffOnly: true },
+];
+
+// #369: the sections that live inside the merged "Health" tab, in sub-nav order.
+const HEALTH_SUB_TABS = [
+  { key: 'armcare', label: 'Arm Care' },
+  { key: 'pt', label: 'Physical Therapy' },
+  { key: 'assessment', label: 'Assessment' },
+];
+
+// #369: the arm care routine types. These strings are written straight into the
+// routine_type column and existing rows are displayed from them, so they must
+// stay byte-identical Title Case. The drop-down shows "Starter Routine" etc.,
+// but what gets stored is still 'Starter'. Changing any of these would need a
+// data migration.
+const ARM_CARE_ROUTINE_TYPES = ['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder', 'Catching', 'Hitting'];
+
 const NOTE_CONTEXT_OPTIONS = ['game', 'lives', 'scrimmage', 'bullpen', 'practice'];
 const PITCH_TYPE_OPTIONS = ['Fastball', '4-Seam', '2-Seam', 'Cutter', 'Sinker', 'Slider', 'Curveball', 'Changeup', 'Splitter', 'Knuckle', 'Other'];
 const PITCH_LOCATION_OPTIONS = [
@@ -284,6 +335,35 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeProfileTab, setActiveProfileTab] = useState('general');
 
+  // #370: which section is showing inside the merged "Records" tab.
+  const [recordsSubTab, setRecordsSubTab] = useState('documents');
+
+  // #369: which section is showing inside the merged "Health" tab, and which
+  // routine type is picked in the Arm Care drop-down ('' = nothing picked yet).
+  const [healthSubTab, setHealthSubTab] = useState('armcare');
+  const [routineTypeChoice, setRoutineTypeChoice] = useState('');
+
+  // Mental Training pop-up (Major League Mindset).
+  const [showMentalTraining, setShowMentalTraining] = useState(false);
+  // Same fail-closed treatment as Records: an unrecognised value falls back to
+  // the first section. No role gating here — all three are open to everyone,
+  // exactly as the three separate tabs were.
+  const activeHealthSubTab = HEALTH_SUB_TABS.some(sub => sub.key === healthSubTab)
+    ? healthSubTab
+    : HEALTH_SUB_TABS[0].key;
+
+  // Only staff may see Notes — the same test the old top-level Notes tab used.
+  const canSeeNotes = userRole === 'admin' || userRole === 'coach';
+  const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => !sub.staffOnly || canSeeNotes);
+  // Fail closed. Never trust the raw state value: if it names a section this
+  // user is not allowed to see (a stale value left over from a role change, a
+  // deep link, or anything else), fall back to the first section they CAN see.
+  // Every render and every content block below reads this, never recordsSubTab,
+  // so there is no route by which a player reaches Notes.
+  const activeRecordsSubTab = visibleRecordsSubTabs.some(sub => sub.key === recordsSubTab)
+    ? recordsSubTab
+    : visibleRecordsSubTabs[0].key;
+
   // Lets a caller (e.g. the player dashboard's post-practice reminder, #278)
   // open this profile directly on a specific tab. Watches the prop rather
   // than only reading it at mount, then reports back so the parent can
@@ -291,7 +371,28 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   // this tab again instead of 'general'.
   useEffect(() => {
     if (initialTab) {
-      setActiveProfileTab(initialTab);
+      // Mental Training is the odd one out here for the same reason it is in the
+      // tab bar's onClick below: it is a pop-up, not a tab body. Open the modal
+      // and leave whatever tab is underneath alone — parking activeProfileTab on
+      // 'mental' would show the "Coming Soon" placeholder, because there is no
+      // 'mental' content block for it to fall through to.
+      if (initialTab === 'mental') {
+        setShowMentalTraining(true);
+      // #370: the four old tab keys still work as deep links — they now open
+      // the Records tab on the matching section. (A player deep-linked to
+      // 'notes' still lands on Records, but activeRecordsSubTab above sends
+      // them to Documents; they never see the Notes section itself.)
+      } else if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
+        setActiveProfileTab('records');
+        setRecordsSubTab(initialTab);
+      // #369: likewise the three old Health keys ('armcare', 'pt', 'assessment')
+      // still work as deep links and open the Health tab on the right section.
+      } else if (HEALTH_SUB_TABS.some(sub => sub.key === initialTab)) {
+        setActiveProfileTab('health');
+        setHealthSubTab(initialTab);
+      } else {
+        setActiveProfileTab(initialTab);
+      }
       onInitialTabHandled?.();
     }
   }, [initialTab]);
@@ -393,7 +494,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchLoiData();
     fetchArmCareRoutines();
     fetchGoals();
-    fetchPlayerNotes();
     fetchAssessmentData();
     fetchPtVisits();
     fetchCommunicationLogs();
@@ -403,6 +503,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
+
+  // Player notes are staff-only: RECORDS_SUB_TABS hides the Notes section from
+  // players (it is `staffOnly`), so a player's own profile has no business
+  // asking the server for the rows either, even though the database would
+  // refuse them. This gate is the same test the Notes sub-tab uses.
+  // It lives in its own effect, keyed on userRole as well as userId, because
+  // userRole arrives from App as null on the first render and only settles once
+  // the role lookup comes back. Folding it into the effect above (which re-runs
+  // on userId alone) would skip the fetch for admins and coaches and leave the
+  // Notes tab permanently empty.
+  useEffect(() => {
+    if (userRole === 'admin' || userRole === 'coach') fetchPlayerNotes();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [userId, userRole]);
 
   useEffect(() => {
     let cancelled = false;
@@ -828,6 +942,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       }
       await fetchArmCareRoutines();
       cancelEditRoutine();
+      // Put the drop-down back to "Choose a routine…" now the save went
+      // through. Without this it kept the routine that was just added, Add
+      // Routine stayed enabled on it, and a second click quietly opened a
+      // duplicate draft of the same routine. Only on success — a failed save
+      // leaves the choice in place so it can be retried, and cancelling the
+      // draft does not touch it either.
+      setRoutineTypeChoice('');
     } catch (error) {
       console.error('Error saving routine:', error);
       alert('Error saving routine: ' + formatUserError(error));
@@ -1451,7 +1572,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   };
 
   // #306: "Sick cancels: N" — staff-only, no automatic blocking, just a
-  // count so a human can notice a pattern. Separate from fetchAttendanceData
+  // count so a human can notice a pattern. Counting cancel_reason = 'sick' is
+  // still the right query after the decision moved to staff, and a better
+  // number than it was: only an admin or coach can write that value now. Separate from fetchAttendanceData
   // above on purpose: that query explicitly excludes cancelled reservations
   // (.neq('status', 'cancelled')) and other things already depend on it
   // staying that way (see its own comment) — this is its own small query,
@@ -1836,6 +1959,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   };
 
   return (
+    <>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -2079,10 +2203,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               )}
               {/* #306: staff-only, no automatic blocking — just visible so a
                   human can notice a pattern. Hidden (not "0") until the
-                  cancel_reason migration has actually run. */}
+                  cancel_reason migration has actually run.
+                  The number means something stronger than it used to. When the
+                  athlete pressed their own "I'm sick / injured" button this
+                  counted self-declared illness; now 'sick' is only ever written
+                  by an admin or coach on the Cancellations tab, so this counts
+                  the ones staff agreed with. The tooltip says so, because "sick
+                  cancels" on its own reads as the athlete's claim. */}
               {userData.role === 'player' && (userRole === 'admin' || userRole === 'coach') && sickCancelCount !== null && (
                 <span
-                  title="Cancelled sessions marked sick/injured — released back to the player's package"
+                  title="Cancelled sessions an admin or coach agreed were sick or injured, so the session went back to the athlete's package. Athletes cannot set this themselves. Cancellations nobody has decided on yet are not counted here — they are on the Cancellations tab in Store."
                   className="px-3 py-1 rounded-full text-xs font-medium border bg-gray-50 text-gray-600 border-gray-200"
                 >
                   Sick cancels: {sickCancelCount}
@@ -2227,7 +2357,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setActiveProfileTab(tab.key)}
+                  onClick={() => {
+                    // Mental Training opens a pop-up rather than swapping the
+                    // content below the tab bar, so the currently selected tab
+                    // stays where it is and we return early.
+                    if (tab.key === 'mental') { setShowMentalTraining(true); return; }
+                    setActiveProfileTab(tab.key);
+                  }}
                   className={`min-h-[40px] py-2.5 px-3.5 rounded-lg font-medium text-sm md:text-xs md:py-2 md:px-3 text-center transition whitespace-nowrap touch-manipulation ${
                     activeProfileTab === tab.key
                       ? 'bg-blue-100 text-blue-700'
@@ -2240,7 +2376,52 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'documents' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
+          {/* #370: Records sub-nav. Deliberately lighter than the main tab bar
+              above it — smaller, rounded-full, outlined rather than filled — so
+              it reads as a level below. flex-wrap, as per the #321 QA notes, so
+              it stacks instead of panning sideways on a 390px phone. */}
+          {activeProfileTab === 'records' && (
+            <nav className="flex flex-wrap gap-1.5 mb-5 min-w-0">
+              {visibleRecordsSubTabs.map(sub => (
+                <button
+                  key={sub.key}
+                  type="button"
+                  onClick={() => setRecordsSubTab(sub.key)}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-full border text-xs font-medium transition whitespace-nowrap touch-manipulation ${
+                    activeRecordsSubTab === sub.key
+                      ? 'bg-white border-blue-300 text-blue-700 shadow-sm'
+                      : 'bg-transparent border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </nav>
+          )}
+
+          {/* #369: Health sub-nav. Same lighter styling and same flex-wrap as
+              the Records sub-nav above, so both stack rather than pan sideways
+              on a 390px phone (#321). */}
+          {activeProfileTab === 'health' && (
+            <nav className="flex flex-wrap gap-1.5 mb-5 min-w-0">
+              {HEALTH_SUB_TABS.map(sub => (
+                <button
+                  key={sub.key}
+                  type="button"
+                  onClick={() => setHealthSubTab(sub.key)}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-full border text-xs font-medium transition whitespace-nowrap touch-manipulation ${
+                    activeHealthSubTab === sub.key
+                      ? 'bg-white border-blue-300 text-blue-700 shadow-sm'
+                      : 'bg-transparent border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </nav>
+          )}
+
+          {!PROFILE_TABS_WITH_CONTENT.includes(activeProfileTab) && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -2450,7 +2631,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'assessment' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'assessment' && (
             <div className="space-y-6">
               {/* Assessment Templates */}
               {assessmentTemplates.length > 0 && (
@@ -2591,7 +2772,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'goals' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'goals' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[
                 { type: 'short_term', label: 'Short-Term Goals' },
@@ -2671,7 +2852,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'notes' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'notes' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-wrap gap-2">
@@ -2804,7 +2985,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'pt' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'pt' && (
             <div className="space-y-6">
               {/* PT Status */}
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
@@ -2979,19 +3160,33 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'armcare' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'armcare' && (
             <div>
-              <div className="flex flex-wrap gap-1.5 mb-6">
-                {['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder', 'Catching', 'Hitting'].map(type => (
-                  <button
-                    key={type}
-                    onClick={() => addArmCareRoutine(type)}
-                    className="bg-blue-600 text-white px-2.5 py-1 rounded-md font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-xs"
-                  >
-                    <Plus size={12} />
-                    <span>{type} Routine</span>
-                  </button>
-                ))}
+              {/* #369: Cordell asked for the seven routine buttons to become a
+                  drop-down. The option VALUES are the Title Case strings that go
+                  into routine_type and that existing rows are displayed from —
+                  only the visible label reads "Starter Routine". Add is disabled
+                  until something other than the placeholder is picked. */}
+              <div className="flex flex-wrap items-center gap-2 mb-6 min-w-0">
+                <select
+                  value={routineTypeChoice}
+                  onChange={(e) => setRoutineTypeChoice(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Choose a routine…</option>
+                  {ARM_CARE_ROUTINE_TYPES.map(type => (
+                    <option key={type} value={type}>{type} Routine</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => addArmCareRoutine(routineTypeChoice)}
+                  disabled={!routineTypeChoice}
+                  className="bg-blue-600 text-white px-3 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={14} />
+                  <span>Add Routine</span>
+                </button>
               </div>
 
               {editingRoutineId === 'new' && (
@@ -3033,7 +3228,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
               {armCareRoutines.length === 0 && editingRoutineId !== 'new' && (
                 <div className="text-center py-8 text-gray-500">
-                  <p>No routines yet. Click a button above to add one.</p>
+                  <p>No routines yet. Choose a routine above and click Add Routine.</p>
                 </div>
               )}
 
@@ -3360,7 +3555,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'codes' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'codes' && (
             <div>
               <h4 className="text-lg font-semibold text-gray-900 mb-4">Discount Codes</h4>
               <table className="w-full">
@@ -3387,7 +3582,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'documents' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'documents' && (
             <div className="space-y-4">
               {/* Waiver */}
               <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -4493,7 +4688,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
         </div>
       </div>
+    </div>
 
+    {/* The modal mounts below deliberately live OUTSIDE the space-y-6
+        wrapper above. Tailwind compiles space-y-6 to
+        `.space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem }`,
+        so any `fixed inset-0` overlay mounted as a later child of that
+        container was given a 24px margin-top: the backdrop started 24px
+        down the screen and left the top strip uncovered and clickable —
+        clicking it opened the mobile sidebar behind the modal. That rule
+        out-specifies a plain `mt-0` utility, so keeping the overlays out of
+        any space-y-* parent is the fix. Do not add a space-y-* class to the
+        wrapper below, and mount new modals inside it. */}
+    <div>
       {showEmailCompose && userData.email && (
         <EmailComposeModal
           recipientName={userData.full_name}
@@ -4545,6 +4752,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         />
       )}
 
+      {showMentalTraining && (
+        <MentalTrainingModal onClose={() => setShowMentalTraining(false)} />
+      )}
+
       {viewProgram && (
         <ProgramViewerModal
           programId={viewProgram.id}
@@ -4553,6 +4764,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         />
       )}
     </div>
+    </>
   );
 }
 

@@ -5,6 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#1A091B" />
     <meta name="description" content="Natural Ball Player Training Portal" />
+    <!-- #366: the Naturals diamond. There was no favicon at all before this,
+         so the browser tab showed a blank page icon. .ico first for older
+         browsers, then the PNGs modern ones prefer; apple-touch-icon is the
+         one iOS uses when a parent saves the portal to their home screen, and
+         it is the only one on a cream plate because iOS ignores transparency
+         and would otherwise put the dark outline on a black square. -->
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/naturals-diamond-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/naturals-diamond-16.png" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <!-- #367: the picture and text that show up when someone shares a link to
+         the portal in a text message, on social, or in a chat app. Without
+         these there was no thumbnail at all and the link looked like a bare
+         address. Uses the same Naturals diamond as the favicon set above.
+         The image and url are written out in full (https://www.thenatural-app.com/...)
+         on purpose: %PUBLIC_URL% comes out empty in a production build, and
+         Facebook, iMessage and LinkedIn will not fetch a half-address, so the
+         thumbnail simply never appeared. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.thenatural-app.com/" />
+    <meta property="og:title" content="Natural Ball Player" />
+    <meta property="og:description" content="Natural Ball Player Training Portal" />
+    <meta property="og:image" content="https://www.thenatural-app.com/naturals-diamond-512.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Natural Ball Player" />
+    <meta name="twitter:description" content="Natural Ball Player Training Portal" />
+    <meta name="twitter:image" content="https://www.thenatural-app.com/naturals-diamond-512.png" />
     <title>Natural Ball Player</title>
   </head>
   <body>

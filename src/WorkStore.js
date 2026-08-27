@@ -1,9 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag, Layers } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ShoppingBag, ListChecks, RefreshCw, History, Package, Tag, Layers, Link2, HeartPulse } from 'lucide-react';
 import BackfillHistory from './BackfillHistory';
+import InvoiceReconcile from './InvoiceReconcile';
+import CancellationReview from './CancellationReview';
 import BulkTagSessions from './BulkTagSessions';
 import DuplicateProducts from './DuplicateProducts';
+import { latestExtension } from './packageExtension';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -749,7 +752,12 @@ function PackagesTab() {
       setLoading(true);
       const { data } = await supabase
         .from('store_purchases')
-        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, user:users!store_purchases_user_id_fkey(full_name, email), store_products(bundle_qty)')
+        // #306: `metadata` carries the extension audit trail written by
+        // packageExtension.js. Selected so this tab — the only place staff see
+        // every package at once — cannot show an extended package as if nobody
+        // had touched it. Extending itself is not offered here: it is a
+        // one-athlete-at-a-time act and belongs on the athlete's own profile.
+        .select('id, product_name_snapshot, product_kind, status, remaining_qty, expires_at, created_at, paid_at, metadata, user:users!store_purchases_user_id_fkey(full_name, email), store_products(bundle_qty)')
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false })
         .limit(1000);
@@ -878,7 +886,24 @@ function PackagesTab() {
                               confusion #344 exists to end. Say 'Recurring' and let the
                               product name carry the real frequency. */}
                           <td className="px-4 py-2 text-sm text-gray-700">{r.remaining_qty != null ? `${r.remaining_qty}${total != null ? ` / ${total}` : ''}` : (r.product_kind === 'package' ? 'Recurring' : '—')}</td>
-                          <td className={`px-4 py-2 text-sm ${tl?.cls || 'text-gray-400'}`}>{tl?.text || '—'}</td>
+                          <td className={`px-4 py-2 text-sm ${tl?.cls || 'text-gray-400'}`}>
+                            <div>{tl?.text || '—'}</div>
+                            {/* #306: a date on this row that somebody moved by
+                                hand is not the same fact as a date the system
+                                worked out, and staff comparing this tab against
+                                Square need to be able to tell. Who and why are
+                                on the athlete's own Packages panel; this says
+                                that there is something to go and read. */}
+                            {(() => {
+                              const ext = latestExtension(r.metadata);
+                              if (!ext) return null;
+                              return (
+                                <div className="text-xs text-amber-700" title={ext.reason || ''}>
+                                  Extended by {ext.by_name || 'a staff account'}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td className="px-4 py-2 text-sm">
                             <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_COLORS[r.status] || 'bg-gray-100 text-gray-700'}`}>{PKG_STATUS_LABELS[r.status] || r.status}</span>
                           </td>
@@ -908,13 +933,23 @@ function PackagesTab() {
 const STORE_TABS = [
   { key: 'catalog',    label: 'Catalog',            Icon: ShoppingBag, adminOnly: true },
   { key: 'purchases',  label: 'Purchases',          Icon: ListChecks,  adminOnly: false },
+  // #340: settling the 140 stuck 'pending' rows against Square invoices. Not
+  // adminOnly — it is the same act as Mark-as-Paid above, gated the same way
+  // (admin or coach, matching store_purchases_update_staff).
+  { key: 'reconcile',  label: 'Reconcile Pending',  Icon: Link2,       adminOnly: false },
   { key: 'packages',   label: 'Packages',           Icon: Package,     adminOnly: true },
   { key: 'backfill',   label: 'Backfill History',   Icon: History,     adminOnly: true },
   { key: 'bulk-tag',   label: 'Bulk Tag Sessions',  Icon: Tag,         adminOnly: false },
   { key: 'duplicates', label: 'Duplicate Products', Icon: Layers,      adminOnly: true },
+  // #306: Cordell — "Admins and coaches only choose if a cancellation was
+  // sick." So this one is NOT adminOnly: a coach deciding whether the athlete
+  // in front of them was genuinely ill is the whole point. It sits in the
+  // Store area because what the decision moves is a package session, which is
+  // what every other tab here is about.
+  { key: 'cancels',    label: 'Cancellations',      Icon: HeartPulse,  adminOnly: false },
 ];
 
-export default function WorkStore({ userRole }) {
+export default function WorkStore({ userRole, userId }) {
   const isAdmin = userRole === 'admin';
   const tabs = STORE_TABS.filter(t => isAdmin || !t.adminOnly);
   const [tab, setTab] = useState(isAdmin ? 'catalog' : 'purchases');
@@ -951,9 +986,11 @@ export default function WorkStore({ userRole }) {
       </div>
       {activeTab === 'catalog' ? <CatalogTab />
         : activeTab === 'purchases' ? <PurchasesTab userRole={userRole} />
+        : activeTab === 'reconcile' ? <InvoiceReconcile userRole={userRole} />
         : activeTab === 'packages' ? <PackagesTab />
         : activeTab === 'bulk-tag' ? <BulkTagSessions />
         : activeTab === 'duplicates' ? <DuplicateProducts />
+        : activeTab === 'cancels' ? <CancellationReview userId={userId} userRole={userRole} />
         : <BackfillHistory />}
     </div>
   );

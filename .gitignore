@@ -26,3 +26,6 @@ yarn-error.log*
 .vercel
 .env*.local
 supabase/.temp/
+
+# Local agent worktrees — never part of the tree
+.claude/worktrees/
