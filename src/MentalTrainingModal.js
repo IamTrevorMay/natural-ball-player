@@ -8,10 +8,10 @@ import { useModalTracking } from './usage';
  * ------------------------------------------------------------------ */
 const MLM_UNLOCKED_URL   = 'https://www.brandonguyer.com/unlocked';
 const MLM_5WEEK_URL      = 'https://www.brandonguyer.com/5weekrecordings';
-// TODO(Nicholas): the email's "HERE" checkout hyperlink target is not known yet.
-// Confirm the exact checkout URL with Cordell before this ships. Defaulting to the
-// Unlocked page, which is a real page, so the button is never dead.
-const MLM_CHECKOUT_URL   = MLM_UNLOCKED_URL;
+// The "HERE" checkout link from Brandon Guyer's email, confirmed by Nicholas 27 Aug 2026.
+// The discount code below is entered on this page; the price the player pays is set there,
+// not here.
+const MLM_CHECKOUT_URL   = 'https://www.brandonguyer.com/5weektrainingcheckout';
 const MLM_DISCOUNT_CODE  = 'NBPLIFETIME';
 const MLM_PRICE          = '$497';
 const MLM_5WEEK_LIST     = '$747';
