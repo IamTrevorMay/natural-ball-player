@@ -69,6 +69,21 @@ const PROFILE_TABS = [
   { key: 'marek', label: 'Marek', roles: ['admin', 'coach'] },
 ];
 
+// The tab keys that actually have a content block further down this file (each
+// one has a matching `activeProfileTab === '<key>'` section). Any other tab
+// shows the "Coming Soon" placeholder instead. This used to be a hand-written
+// list of `activeProfileTab !== '...'` tests inside the placeholder itself, and
+// it drifted twice — tabs gained real content but were never removed from the
+// list, so "Coming Soon" was drawn directly above their content. Add a key here
+// the moment you add its content block, and nowhere else.
+// 'hittrax' is deliberately NOT in this list: it has no content block yet, so
+// "Coming Soon" is the whole of that tab and is correct.
+const PROFILE_TABS_WITH_CONTENT = [
+  'general', 'athletes', 'schedule', 'trackman', 'whoop', 'health',
+  'recruitment', 'records', 'attendance', 'communication', 'practice_stats',
+  'marek',
+];
+
 // #226: whole-years age from a 'YYYY-MM-DD' DOB, or null if absent/invalid.
 function ageFromDob(dob) {
   if (!dob) return null;
@@ -2379,7 +2394,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </nav>
           )}
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'records' && activeProfileTab !== 'health' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'attendance' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
+          {!PROFILE_TABS_WITH_CONTENT.includes(activeProfileTab) && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
