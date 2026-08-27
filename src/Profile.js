@@ -14,6 +14,7 @@ import StoreModal from './StoreModal';
 import ApplyDiscountModal from './ApplyDiscountModal';
 import AssignPackageModal from './AssignPackageModal';
 import PackagesModal from './PackagesModal';
+import MentalTrainingModal from './MentalTrainingModal';
 import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
@@ -51,6 +52,11 @@ const PROFILE_TABS = [
   // Visit, Assessment's Submit and delete) and are untouched.
   { key: 'health', label: 'Health' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
+  // Mental Training is the odd one out: Cordell asked for a pop-up, not another
+  // page of tab content, so this button opens a modal instead of switching
+  // tabs. See the special case in the tab bar's onClick below. No role gate —
+  // the offer is open to everyone.
+  { key: 'mental', label: 'Mental Training' },
   // #370: Documents, Codes, Goals and Notes used to be four separate tabs.
   // They are now one "Records" tab with a sub-nav inside it. The Records tab
   // itself carries no role gate because three of the four sections never had
@@ -321,6 +327,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   // routine type is picked in the Arm Care drop-down ('' = nothing picked yet).
   const [healthSubTab, setHealthSubTab] = useState('armcare');
   const [routineTypeChoice, setRoutineTypeChoice] = useState('');
+
+  // Mental Training pop-up (Major League Mindset).
+  const [showMentalTraining, setShowMentalTraining] = useState(false);
   // Same fail-closed treatment as Records: an unrecognised value falls back to
   // the first section. No role gating here — all three are open to everyone,
   // exactly as the three separate tabs were.
@@ -2305,7 +2314,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 <button
                   key={tab.key}
                   type="button"
-                  onClick={() => setActiveProfileTab(tab.key)}
+                  onClick={() => {
+                    // Mental Training opens a pop-up rather than swapping the
+                    // content below the tab bar, so the currently selected tab
+                    // stays where it is and we return early.
+                    if (tab.key === 'mental') { setShowMentalTraining(true); return; }
+                    setActiveProfileTab(tab.key);
+                  }}
                   className={`min-h-[40px] py-2.5 px-3.5 rounded-lg font-medium text-sm md:text-xs md:py-2 md:px-3 text-center transition whitespace-nowrap touch-manipulation ${
                     activeProfileTab === tab.key
                       ? 'bg-blue-100 text-blue-700'
@@ -4680,6 +4695,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           onClose={() => setAssessmentFormTemplate(null)}
           onSubmitted={() => { fetchAssessmentData(); setAssessmentFormTemplate(null); }}
         />
+      )}
+
+      {showMentalTraining && (
+        <MentalTrainingModal onClose={() => setShowMentalTraining(false)} />
       )}
 
       {viewProgram && (
