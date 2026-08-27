@@ -1917,6 +1917,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   };
 
   return (
+    <>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -4645,7 +4646,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
         </div>
       </div>
+    </div>
 
+    {/* The modal mounts below deliberately live OUTSIDE the space-y-6
+        wrapper above. Tailwind compiles space-y-6 to
+        `.space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem }`,
+        so any `fixed inset-0` overlay mounted as a later child of that
+        container was given a 24px margin-top: the backdrop started 24px
+        down the screen and left the top strip uncovered and clickable —
+        clicking it opened the mobile sidebar behind the modal. That rule
+        out-specifies a plain `mt-0` utility, so keeping the overlays out of
+        any space-y-* parent is the fix. Do not add a space-y-* class to the
+        wrapper below, and mount new modals inside it. */}
+    <div>
       {showEmailCompose && userData.email && (
         <EmailComposeModal
           recipientName={userData.full_name}
@@ -4709,6 +4722,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         />
       )}
     </div>
+    </>
   );
 }
 
