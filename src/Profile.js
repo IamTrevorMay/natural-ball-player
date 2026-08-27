@@ -922,6 +922,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       }
       await fetchArmCareRoutines();
       cancelEditRoutine();
+      // Put the drop-down back to "Choose a routine…" now the save went
+      // through. Without this it kept the routine that was just added, Add
+      // Routine stayed enabled on it, and a second click quietly opened a
+      // duplicate draft of the same routine. Only on success — a failed save
+      // leaves the choice in place so it can be retried, and cancelling the
+      // draft does not touch it either.
+      setRoutineTypeChoice('');
     } catch (error) {
       console.error('Error saving routine:', error);
       alert('Error saving routine: ' + formatUserError(error));
