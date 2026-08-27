@@ -3201,7 +3201,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
               {armCareRoutines.length === 0 && editingRoutineId !== 'new' && (
                 <div className="text-center py-8 text-gray-500">
-                  <p>No routines yet. Click a button above to add one.</p>
+                  <p>No routines yet. Choose a routine above and click Add Routine.</p>
                 </div>
               )}
 
