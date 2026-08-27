@@ -44,9 +44,12 @@ const PROFILE_TABS = [
   { key: 'trackman', label: 'Trackman' },
   { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
   { key: 'hittrax', label: 'Hittrax' },
-  { key: 'assessment', label: 'Assessment' },
-  { key: 'armcare', label: 'Arm Care' },
-  { key: 'pt', label: 'Physical Therapy' },
+  // #369: Arm Care, Physical Therapy and Assessment used to be three separate
+  // tabs. They are now one "Health" tab with a sub-nav inside it. None of the
+  // three had a role gate at tab level and none has one now; the gates that
+  // exist are inside the sections themselves (PT's status select and Add
+  // Visit, Assessment's Submit and delete) and are untouched.
+  { key: 'health', label: 'Health' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
   // #370: Documents, Codes, Goals and Notes used to be four separate tabs.
   // They are now one "Records" tab with a sub-nav inside it. The Records tab
@@ -205,6 +208,20 @@ const RECORDS_SUB_TABS = [
   { key: 'notes', label: 'Notes', staffOnly: true },
 ];
 
+// #369: the sections that live inside the merged "Health" tab, in sub-nav order.
+const HEALTH_SUB_TABS = [
+  { key: 'armcare', label: 'Arm Care' },
+  { key: 'pt', label: 'Physical Therapy' },
+  { key: 'assessment', label: 'Assessment' },
+];
+
+// #369: the arm care routine types. These strings are written straight into the
+// routine_type column and existing rows are displayed from them, so they must
+// stay byte-identical Title Case. The drop-down shows "Starter Routine" etc.,
+// but what gets stored is still 'Starter'. Changing any of these would need a
+// data migration.
+const ARM_CARE_ROUTINE_TYPES = ['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder', 'Catching', 'Hitting'];
+
 const NOTE_CONTEXT_OPTIONS = ['game', 'lives', 'scrimmage', 'bullpen', 'practice'];
 const PITCH_TYPE_OPTIONS = ['Fastball', '4-Seam', '2-Seam', 'Cutter', 'Sinker', 'Slider', 'Curveball', 'Changeup', 'Splitter', 'Knuckle', 'Other'];
 const PITCH_LOCATION_OPTIONS = [
@@ -300,6 +317,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   // #370: which section is showing inside the merged "Records" tab.
   const [recordsSubTab, setRecordsSubTab] = useState('documents');
 
+  // #369: which section is showing inside the merged "Health" tab, and which
+  // routine type is picked in the Arm Care drop-down ('' = nothing picked yet).
+  const [healthSubTab, setHealthSubTab] = useState('armcare');
+  const [routineTypeChoice, setRoutineTypeChoice] = useState('');
+  // Same fail-closed treatment as Records: an unrecognised value falls back to
+  // the first section. No role gating here — all three are open to everyone,
+  // exactly as the three separate tabs were.
+  const activeHealthSubTab = HEALTH_SUB_TABS.some(sub => sub.key === healthSubTab)
+    ? healthSubTab
+    : HEALTH_SUB_TABS[0].key;
+
   // Only staff may see Notes — the same test the old top-level Notes tab used.
   const canSeeNotes = userRole === 'admin' || userRole === 'coach';
   const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => !sub.staffOnly || canSeeNotes);
@@ -326,6 +354,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
         setActiveProfileTab('records');
         setRecordsSubTab(initialTab);
+      // #369: likewise the three old Health keys ('armcare', 'pt', 'assessment')
+      // still work as deep links and open the Health tab on the right section.
+      } else if (HEALTH_SUB_TABS.some(sub => sub.key === initialTab)) {
+        setActiveProfileTab('health');
+        setHealthSubTab(initialTab);
       } else {
         setActiveProfileTab(initialTab);
       }
@@ -2308,7 +2341,29 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </nav>
           )}
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'records' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'armcare' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
+          {/* #369: Health sub-nav. Same lighter styling and same flex-wrap as
+              the Records sub-nav above, so both stack rather than pan sideways
+              on a 390px phone (#321). */}
+          {activeProfileTab === 'health' && (
+            <nav className="flex flex-wrap gap-1.5 mb-5 min-w-0">
+              {HEALTH_SUB_TABS.map(sub => (
+                <button
+                  key={sub.key}
+                  type="button"
+                  onClick={() => setHealthSubTab(sub.key)}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-full border text-xs font-medium transition whitespace-nowrap touch-manipulation ${
+                    activeHealthSubTab === sub.key
+                      ? 'bg-white border-blue-300 text-blue-700 shadow-sm'
+                      : 'bg-transparent border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </nav>
+          )}
+
+          {activeProfileTab !== 'general' && activeProfileTab !== 'records' && activeProfileTab !== 'health' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'attendance' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -2518,7 +2573,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'assessment' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'assessment' && (
             <div className="space-y-6">
               {/* Assessment Templates */}
               {assessmentTemplates.length > 0 && (
@@ -2872,7 +2927,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'pt' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'pt' && (
             <div className="space-y-6">
               {/* PT Status */}
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
@@ -3047,19 +3102,33 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'armcare' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'armcare' && (
             <div>
-              <div className="flex flex-wrap gap-1.5 mb-6">
-                {['Starter', 'Reliever', 'Closer', 'Infielder', 'Outfielder', 'Catching', 'Hitting'].map(type => (
-                  <button
-                    key={type}
-                    onClick={() => addArmCareRoutine(type)}
-                    className="bg-blue-600 text-white px-2.5 py-1 rounded-md font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-xs"
-                  >
-                    <Plus size={12} />
-                    <span>{type} Routine</span>
-                  </button>
-                ))}
+              {/* #369: Cordell asked for the seven routine buttons to become a
+                  drop-down. The option VALUES are the Title Case strings that go
+                  into routine_type and that existing rows are displayed from —
+                  only the visible label reads "Starter Routine". Add is disabled
+                  until something other than the placeholder is picked. */}
+              <div className="flex flex-wrap items-center gap-2 mb-6 min-w-0">
+                <select
+                  value={routineTypeChoice}
+                  onChange={(e) => setRoutineTypeChoice(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Choose a routine…</option>
+                  {ARM_CARE_ROUTINE_TYPES.map(type => (
+                    <option key={type} value={type}>{type} Routine</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => addArmCareRoutine(routineTypeChoice)}
+                  disabled={!routineTypeChoice}
+                  className="bg-blue-600 text-white px-3 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={14} />
+                  <span>Add Routine</span>
+                </button>
               </div>
 
               {editingRoutineId === 'new' && (
