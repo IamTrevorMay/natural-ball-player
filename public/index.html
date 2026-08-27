@@ -19,15 +19,20 @@
     <!-- #367: the picture and text that show up when someone shares a link to
          the portal in a text message, on social, or in a chat app. Without
          these there was no thumbnail at all and the link looked like a bare
-         address. Uses the same Naturals diamond as the favicon set above. -->
+         address. Uses the same Naturals diamond as the favicon set above.
+         The image and url are written out in full (https://www.thenatural-app.com/...)
+         on purpose: %PUBLIC_URL% comes out empty in a production build, and
+         Facebook, iMessage and LinkedIn will not fetch a half-address, so the
+         thumbnail simply never appeared. -->
     <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.thenatural-app.com/" />
     <meta property="og:title" content="Natural Ball Player" />
     <meta property="og:description" content="Natural Ball Player Training Portal" />
-    <meta property="og:image" content="%PUBLIC_URL%/naturals-diamond-512.png" />
+    <meta property="og:image" content="https://www.thenatural-app.com/naturals-diamond-512.png" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Natural Ball Player" />
     <meta name="twitter:description" content="Natural Ball Player Training Portal" />
-    <meta name="twitter:image" content="%PUBLIC_URL%/naturals-diamond-512.png" />
+    <meta name="twitter:image" content="https://www.thenatural-app.com/naturals-diamond-512.png" />
     <title>Natural Ball Player</title>
   </head>
   <body>
