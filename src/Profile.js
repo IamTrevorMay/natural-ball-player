@@ -371,11 +371,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   // this tab again instead of 'general'.
   useEffect(() => {
     if (initialTab) {
+      // Mental Training is the odd one out here for the same reason it is in the
+      // tab bar's onClick below: it is a pop-up, not a tab body. Open the modal
+      // and leave whatever tab is underneath alone — parking activeProfileTab on
+      // 'mental' would show the "Coming Soon" placeholder, because there is no
+      // 'mental' content block for it to fall through to.
+      if (initialTab === 'mental') {
+        setShowMentalTraining(true);
       // #370: the four old tab keys still work as deep links — they now open
       // the Records tab on the matching section. (A player deep-linked to
       // 'notes' still lands on Records, but activeRecordsSubTab above sends
       // them to Documents; they never see the Notes section itself.)
-      if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
+      } else if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
         setActiveProfileTab('records');
         setRecordsSubTab(initialTab);
       // #369: likewise the three old Health keys ('armcare', 'pt', 'assessment')
