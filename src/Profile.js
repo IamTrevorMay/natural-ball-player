@@ -48,10 +48,12 @@ const PROFILE_TABS = [
   { key: 'armcare', label: 'Arm Care' },
   { key: 'pt', label: 'Physical Therapy' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
-  { key: 'documents', label: 'Documents' },
-  { key: 'codes', label: 'Codes' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'notes', label: 'Notes', roles: ['admin', 'coach'] },
+  // #370: Documents, Codes, Goals and Notes used to be four separate tabs.
+  // They are now one "Records" tab with a sub-nav inside it. The Records tab
+  // itself carries no role gate because three of the four sections never had
+  // one; Notes keeps its admin/coach gate on the sub-nav instead (see
+  // RECORDS_SUB_TABS below).
+  { key: 'records', label: 'Records' },
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
   { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
   { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
@@ -192,6 +194,17 @@ const NOTE_CATEGORIES = [
   { value: 'pitching', label: 'Pitching', color: 'bg-cyan-100 text-cyan-800' },
 ];
 
+// #370: the sections that live inside the merged "Records" tab, in the order
+// they appear in the sub-nav. `staffOnly` reproduces exactly the role gate the
+// old top-level Notes tab had (roles: ['admin', 'coach']) — players could never
+// see Notes, not even on their own profile, and that has not changed.
+const RECORDS_SUB_TABS = [
+  { key: 'documents', label: 'Documents' },
+  { key: 'codes', label: 'Codes' },
+  { key: 'goals', label: 'Goals' },
+  { key: 'notes', label: 'Notes', staffOnly: true },
+];
+
 const NOTE_CONTEXT_OPTIONS = ['game', 'lives', 'scrimmage', 'bullpen', 'practice'];
 const PITCH_TYPE_OPTIONS = ['Fastball', '4-Seam', '2-Seam', 'Cutter', 'Sinker', 'Slider', 'Curveball', 'Changeup', 'Splitter', 'Knuckle', 'Other'];
 const PITCH_LOCATION_OPTIONS = [
@@ -284,6 +297,21 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeProfileTab, setActiveProfileTab] = useState('general');
 
+  // #370: which section is showing inside the merged "Records" tab.
+  const [recordsSubTab, setRecordsSubTab] = useState('documents');
+
+  // Only staff may see Notes — the same test the old top-level Notes tab used.
+  const canSeeNotes = userRole === 'admin' || userRole === 'coach';
+  const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => !sub.staffOnly || canSeeNotes);
+  // Fail closed. Never trust the raw state value: if it names a section this
+  // user is not allowed to see (a stale value left over from a role change, a
+  // deep link, or anything else), fall back to the first section they CAN see.
+  // Every render and every content block below reads this, never recordsSubTab,
+  // so there is no route by which a player reaches Notes.
+  const activeRecordsSubTab = visibleRecordsSubTabs.some(sub => sub.key === recordsSubTab)
+    ? recordsSubTab
+    : visibleRecordsSubTabs[0].key;
+
   // Lets a caller (e.g. the player dashboard's post-practice reminder, #278)
   // open this profile directly on a specific tab. Watches the prop rather
   // than only reading it at mount, then reports back so the parent can
@@ -291,7 +319,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   // this tab again instead of 'general'.
   useEffect(() => {
     if (initialTab) {
-      setActiveProfileTab(initialTab);
+      // #370: the four old tab keys still work as deep links — they now open
+      // the Records tab on the matching section. (A player deep-linked to
+      // 'notes' still lands on Records, but activeRecordsSubTab above sends
+      // them to Documents; they never see the Notes section itself.)
+      if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
+        setActiveProfileTab('records');
+        setRecordsSubTab(initialTab);
+      } else {
+        setActiveProfileTab(initialTab);
+      }
       onInitialTabHandled?.();
     }
   }, [initialTab]);
@@ -2248,7 +2285,30 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </nav>
           </div>
 
-          {activeProfileTab !== 'general' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'codes' && activeProfileTab !== 'documents' && activeProfileTab !== 'armcare' && activeProfileTab !== 'goals' && activeProfileTab !== 'notes' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
+          {/* #370: Records sub-nav. Deliberately lighter than the main tab bar
+              above it — smaller, rounded-full, outlined rather than filled — so
+              it reads as a level below. flex-wrap, as per the #321 QA notes, so
+              it stacks instead of panning sideways on a 390px phone. */}
+          {activeProfileTab === 'records' && (
+            <nav className="flex flex-wrap gap-1.5 mb-5 min-w-0">
+              {visibleRecordsSubTabs.map(sub => (
+                <button
+                  key={sub.key}
+                  type="button"
+                  onClick={() => setRecordsSubTab(sub.key)}
+                  className={`min-h-[36px] px-3 py-1.5 rounded-full border text-xs font-medium transition whitespace-nowrap touch-manipulation ${
+                    activeRecordsSubTab === sub.key
+                      ? 'bg-white border-blue-300 text-blue-700 shadow-sm'
+                      : 'bg-transparent border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </nav>
+          )}
+
+          {activeProfileTab !== 'general' && activeProfileTab !== 'records' && activeProfileTab !== 'athletes' && activeProfileTab !== 'recruitment' && activeProfileTab !== 'armcare' && activeProfileTab !== 'attendance' && activeProfileTab !== 'assessment' && activeProfileTab !== 'pt' && activeProfileTab !== 'schedule' && activeProfileTab !== 'programming' && activeProfileTab !== 'communication' && activeProfileTab !== 'whoop' && (
             <div className="py-12 text-center">
               <p className="text-gray-500 text-lg">Coming Soon</p>
             </div>
@@ -2599,7 +2659,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'goals' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'goals' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[
                 { type: 'short_term', label: 'Short-Term Goals' },
@@ -2679,7 +2739,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'notes' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'notes' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-wrap gap-2">
@@ -3368,7 +3428,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'codes' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'codes' && (
             <div>
               <h4 className="text-lg font-semibold text-gray-900 mb-4">Discount Codes</h4>
               <table className="w-full">
@@ -3395,7 +3455,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'documents' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'documents' && (
             <div className="space-y-4">
               {/* Waiver */}
               <div className="border border-gray-200 rounded-lg overflow-hidden">
