@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { fetchUserDirectory, readDirectory } from './userDirectory';
-import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip, Search } from 'lucide-react';
+import { Mail, Phone, Ruler, Scale, Edit2, Save, X, Shirt, Camera, Plus, Trash2, Instagram, Twitter, Building2, ArrowLeft, CheckCircle, XCircle, ShoppingBag, ExternalLink, Users, FileText, ClipboardList, ChevronDown, ChevronUp, Eye, Calendar, ChevronLeft, ChevronRight, Paperclip, Search, AlertTriangle } from 'lucide-react';
 import AttendanceRings from './AttendanceRings';
 import MedicalHistoryForm from './MedicalHistoryForm';
 import EmailComposeModal from './EmailComposeModal';
@@ -481,6 +481,18 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // #377 / K1: the team-store pop-up closes on Escape, like every other modal in
+  // this app. Copied from MentalTrainingModal, including its reasoning: the
+  // content is read-only and nothing is typed into it, so there is no half-filled
+  // form to lose. The listener only exists while the pop-up is open, so it can
+  // never swallow an Escape meant for something else on the page.
+  useEffect(() => {
+    if (!showUniformStore) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setShowUniformStore(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showUniformStore]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2139,13 +2151,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   <span>Pay</span>
                 </button>
               )}
-              <button
-                onClick={() => setShowUniformStore(true)}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition flex items-center space-x-2"
-              >
-                <ShoppingBag size={18} />
-                <span>Uniform Store</span>
-              </button>
               {/* #340: coaches can now SEE this (they could already assign a
                   package, then had no way to look at what they'd assigned —
                   the pill was admin-only). Deleting stays admin-only; that is
@@ -4713,15 +4718,37 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
               <span>Gear Stores</span>
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* #377: renamed from "Natural Ballplayer Store" to "The Natural
+                  Ballplayer Store" at Cordell's request. The link is untouched. */}
               <a
                 href="https://naturalballplayer.myshopify.com/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-between bg-blue-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-blue-700 transition"
               >
-                <span>Natural Ballplayer Store</span>
+                <span>The Natural Ballplayer Store</span>
                 <ExternalLink size={18} />
               </a>
+              {/* #377: this was a green "Uniform Store" button up in the profile
+                  header next to Pay. Cordell asked for it down here beside the
+                  other store button, renamed, and recoloured cream-on-black.
+                  bg-blue-200 / text-blue-900 IS the brand cream (#E6DBB9) and the
+                  brand ink — tailwind.config.js repoints the whole blue ramp onto
+                  the Naturals palette, so this is the same pair the sidebar's
+                  "View as Coach" and "Switch to Work Portal" buttons already use,
+                  rather than a hand-written hex. Text on cream measures 14.4:1.
+                  The border is the one addition: cream on the white profile card
+                  is only 1.4:1, so without an edge the button has no visible
+                  shape. blue-400 (#9A8C86) against white is 3.2:1, which clears
+                  the 3:1 that WCAG asks of a control's boundary. */}
+              <button
+                type="button"
+                onClick={() => setShowUniformStore(true)}
+                className="flex items-center justify-between bg-blue-200 border border-blue-400 text-blue-900 px-4 py-3 rounded-lg font-medium hover:bg-blue-300 transition"
+              >
+                <span>Naturals Select Teams Store</span>
+                <ExternalLink size={18} />
+              </button>
             </div>
           </div>
 
@@ -4777,16 +4804,39 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       )}
 
       {showUniformStore && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-5 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-900">Naturals Select Team Store</h2>
-              <button onClick={() => setShowUniformStore(false)} className="text-gray-400 hover:text-gray-600 transition">
+        /* K1: clicking the dark backdrop closes the pop-up. The card below stops
+           the click bubbling, so a click INSIDE the card never closes it. */
+        <div
+          onClick={() => setShowUniformStore(false)}
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+        >
+          {/* The card scrolls its BODY, not itself: header pinned, body
+              overflow-y-auto flex-1 min-h-0. The whole card used to scroll, which
+              pushed the close X off the top of a phone screen on a long list. */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden"
+          >
+            <div className="flex-shrink-0 flex items-center justify-between gap-3 p-5 border-b border-gray-200">
+              {/* #377: title follows the button's new name. */}
+              <h2 className="text-xl font-bold text-gray-900 min-w-0 truncate">Naturals Select Teams Store</h2>
+              <button onClick={() => setShowUniformStore(false)} className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition">
                 <X size={22} />
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <p className="text-gray-700 text-sm">Order uniforms for the Naturals Select season. Once orders are received we are not able to make changes — please order the correct numbers.</p>
+            <div className="overflow-y-auto flex-1 min-h-0 p-5 space-y-4">
+              <p className="text-gray-700 text-sm">Order uniforms for the Naturals Select season.</p>
+              {/* K4: the expensive mistake, in its own amber box rather than
+                  folded into the sentence above it. This is the line that costs a
+                  parent money if they skim past it, so it gets the same treatment
+                  it had on the earlier branch. It sits second in the body, so it
+                  stays above the fold even at 390x480. */}
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                <AlertTriangle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm font-semibold text-amber-900">
+                  Once orders are received we are not able to make changes — please order the correct numbers.
+                </p>
+              </div>
               <a
                 href="https://bsnteamsports.com/shop/ykUskUUjsG"
                 target="_blank"
