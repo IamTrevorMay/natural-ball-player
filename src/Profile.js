@@ -54,10 +54,11 @@ const PROFILE_TABS = [
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
   // #370: Documents, Codes, Goals, Notes and Assessment all live in Records.
   // #376: Mental Training and Marek moved into Health sub-tabs.
+  // #376 (second round): Attendance and Practice Stats moved OUT of this list
+  // and into RECORDS_SUB_TABS. Their gates moved with them, unchanged — see the
+  // note on each entry there.
   { key: 'records', label: 'Records' },
-  { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
   { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
-  { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
 ];
 
 // The tab keys that actually have a content block further down this file (each
@@ -69,9 +70,17 @@ const PROFILE_TABS = [
 // the moment you add its content block, and nowhere else.
 // 'hittrax' is deliberately NOT in this list: it has no content block yet, so
 // "Coming Soon" is the whole of that tab and is correct.
+// #376: 'attendance' and 'practice_stats' were removed from this list at the
+// same time as they were removed from PROFILE_TABS. Their content now hangs off
+// activeProfileTab === 'records' instead, so neither key can ever be the active
+// tab: there is no button that sets it, and the deep-link handler rewrites both
+// to 'records' + the matching sub-tab. Leaving them here would have been
+// harmless; leaving them here while their content moved would have rendered a
+// blank page, and removing the content without removing them would have shown
+// "Coming Soon" over nothing. Both go, together.
 const PROFILE_TABS_WITH_CONTENT = [
   'general', 'athletes', 'schedule', 'trackman', 'whoop', 'health',
-  'recruitment', 'records', 'attendance', 'communication', 'practice_stats',
+  'recruitment', 'records', 'communication',
 ];
 
 // #226: whole-years age from a 'YYYY-MM-DD' DOB, or null if absent/invalid.
@@ -219,6 +228,22 @@ const RECORDS_SUB_TABS = [
   { key: 'goals', label: 'Goals' },
   { key: 'notes', label: 'Notes', staffOnly: true },
   { key: 'assessment', label: 'Assessment' },
+  // #376 (second round): moved down from the top-level tab bar. The gates are
+  // carried across verbatim.
+  //
+  // Attendance was `roles: ['admin', 'coach']` with NO player exception, so
+  // `staffOnly` alone reproduces it exactly: staffOnly is filtered by
+  // `canSeeNotes`, which is literally `userRole === 'admin' || userRole ===
+  // 'coach'` — the same test, phrased the same way.
+  { key: 'attendance', label: 'Attendance', staffOnly: true },
+  // Practice Stats had TWO gates, not one: `roles: ['admin', 'coach']` AND an
+  // earlier player-self exception (#278) that returned true for a player
+  // looking at their own profile, before the roles test was ever reached. Drop
+  // the second one and athletes lose the only place they can log their own
+  // practice work; treat it as ungated and every player sees every other
+  // player's. Hence `playerSelf` alongside `staffOnly` — see
+  // visibleRecordsSubTabs below, where the pair is evaluated.
+  { key: 'practice_stats', label: 'Practice Stats', staffOnly: true, playerSelf: true },
 ];
 
 // #369: the sections that live inside the merged "Health" tab, in sub-nav order.
@@ -353,7 +378,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const activeHealthSubTab = visibleHealthSubTabs.some(sub => sub.key === healthSubTab)
     ? healthSubTab
     : (visibleHealthSubTabs[0]?.key ?? 'armcare');
-  const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => !sub.staffOnly || canSeeNotes);
+  // #376: `playerSelf` is the second half of Practice Stats' old two-part gate —
+  // a player may see it, but only on their own profile, exactly as the top-level
+  // tab filter did with `return loggedInUserId === userId`. Notes, Attendance
+  // and anything else marked staffOnly without playerSelf is unreachable for a
+  // player, on their own profile or anyone else's, as before.
+  const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => {
+    if (!sub.staffOnly) return true;
+    if (canSeeNotes) return true;
+    if (sub.playerSelf && userRole === 'player' && loggedInUserId === userId) return true;
+    return false;
+  });
   // Fail closed. Never trust the raw state value: if it names a section this
   // user is not allowed to see (a stale value left over from a role change, a
   // deep link, or anything else), fall back to the first section they CAN see.
@@ -363,36 +398,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     ? recordsSubTab
     : visibleRecordsSubTabs[0].key;
 
-  // Lets a caller (e.g. the player dashboard's post-practice reminder, #278)
-  // open this profile directly on a specific tab. Watches the prop rather
-  // than only reading it at mount, then reports back so the parent can
-  // clear it — otherwise the next ordinary visit to Profile would land on
-  // this tab again instead of 'general'.
-  useEffect(() => {
-    if (initialTab) {
-      // Mental Training is the odd one out here for the same reason it is in the
-      // tab bar's onClick below: it is a pop-up, not a tab body. Open the modal
-      // and leave whatever tab is underneath alone — parking activeProfileTab on
-      // 'mental' would show the "Coming Soon" placeholder, because there is no
-      // 'mental' content block for it to fall through to.
-      if (initialTab === 'mental') {
-        setShowMentalTraining(true);
-      // #370: Records sub-tab keys open the Records tab on the right section.
-      // assessment now lives in Records (#376), so it matches here too.
-      } else if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
-        setActiveProfileTab('records');
-        setRecordsSubTab(initialTab);
-      // #369/#376: Health sub-tab keys open the Health tab on the right section.
-      // marek and mental are now health sub-tabs; assessment moved to Records above.
-      } else if (['armcare', 'pt', 'marek'].includes(initialTab)) {
-        setActiveProfileTab('health');
-        setHealthSubTab(initialTab);
-      } else {
-        setActiveProfileTab(initialTab);
-      }
-      onInitialTabHandled?.();
-    }
-  }, [initialTab]);
   const [viewProgram, setViewProgram] = useState(null); // { id, name } — read-only program viewer
   const [recruitmentTeams, setRecruitmentTeams] = useState([]);
   const [savingRecruitment, setSavingRecruitment] = useState({});
@@ -501,6 +506,50 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     return () => { cancelled = true; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [userId]);
+
+  // #376: this effect MUST stay below the `[userId]` effect above. Both fire on
+  // the same mount, React runs them in declaration order, and that one opens
+  // with setActiveProfileTab('general'). While this block sat above it, the
+  // 'general' reset landed second and won, so a deep link only ever worked when
+  // Profile happened to be mounted already — which it never is, because App.js
+  // unmounts Profile whenever you leave the view. The one in-app caller
+  // (PlayerDashboard's "log your practice stats" prompt, #278) therefore landed
+  // on General instead of Practice Stats. Pre-existing; fixed here because #376
+  // moves both of those deep-link targets.
+  // Lets a caller (e.g. the player dashboard's post-practice reminder, #278)
+  // open this profile directly on a specific tab. Watches the prop rather
+  // than only reading it at mount, then reports back so the parent can
+  // clear it — otherwise the next ordinary visit to Profile would land on
+  // this tab again instead of 'general'.
+  useEffect(() => {
+    if (initialTab) {
+      // Mental Training is the odd one out here for the same reason it is in the
+      // tab bar's onClick below: it is a pop-up, not a tab body. Open the modal
+      // and leave whatever tab is underneath alone — parking activeProfileTab on
+      // 'mental' would show the "Coming Soon" placeholder, because there is no
+      // 'mental' content block for it to fall through to.
+      if (initialTab === 'mental') {
+        setShowMentalTraining(true);
+      // #370: Records sub-tab keys open the Records tab on the right section.
+      // assessment, attendance and practice_stats all live in Records (#376), so
+      // the old top-level deep links ?tab=attendance / ?tab=practice_stats keep
+      // working — including PlayerDashboard's onOpenPracticeStats, which is the
+      // only in-app caller. A player deep-linked to 'attendance' lands on Records
+      // and activeRecordsSubTab sends them to Documents; they never see it.
+      } else if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
+        setActiveProfileTab('records');
+        setRecordsSubTab(initialTab);
+      // #369/#376: Health sub-tab keys open the Health tab on the right section.
+      // marek and mental are now health sub-tabs; assessment moved to Records above.
+      } else if (['armcare', 'pt', 'marek'].includes(initialTab)) {
+        setActiveProfileTab('health');
+        setHealthSubTab(initialTab);
+      } else {
+        setActiveProfileTab(initialTab);
+      }
+      onInitialTabHandled?.();
+    }
+  }, [initialTab]);
 
   // Player notes are staff-only: RECORDS_SUB_TABS hides the Notes section from
   // players (it is `staffOnly`), so a player's own profile has no business
@@ -2202,7 +2251,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   games={attendanceStats.game}
                   lifts={attendanceStats.workout}
                   sessions={attendanceStats.sessions || { attended: 0, upcoming: 0 }}
-                  onToggleLog={() => setActiveProfileTab('attendance')}
+                  onToggleLog={() => { setActiveProfileTab('records'); setRecordsSubTab('attendance'); }}
                   canEdit={canEditProfile}
                 />
               )}
@@ -2350,11 +2399,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 if (tab.key === 'whoop' && userRole === 'player') return loggedInUserId === userId;
                 // Players can view their OWN recruitment entries (#216) — subject to the 15+ gate above.
                 if (tab.key === 'recruitment' && userRole === 'player') return loggedInUserId === userId;
-                // Players can log their OWN practice stats (#278) — the tab was
-                // built for #192 but only ever wired up for coach/admin, so
-                // practice-stats stayed permanently empty: not because athletes
-                // forgot, but because they had no way to open it.
-                if (tab.key === 'practice_stats' && userRole === 'player') return loggedInUserId === userId;
+                // #376: the Practice Stats exception used to sit here — "a player
+                // may see this tab, but only on their own profile" (#278). Practice
+                // Stats is no longer a top-level tab, so this line could never fire
+                // again; it is not dropped, it MOVED, to the `playerSelf` flag on
+                // RECORDS_SUB_TABS and the visibleRecordsSubTabs filter. Leaving a
+                // dead permission test in a live permission filter is how the next
+                // person re-adds the tab and thinks it is already covered.
                 if (tab.roles && !tab.roles.includes(userRole)) return false;
                 if (tab.viewedRoles && (!userData || !tab.viewedRoles.includes(userData.role))) return false;
                 return true;
@@ -2490,7 +2541,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <TrackmanTab userId={userId} />
           )}
 
-          {activeProfileTab === 'attendance' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'attendance' && (
             <div className="space-y-4">
               <div className="flex flex-wrap gap-2">
                 {[
@@ -4303,9 +4354,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'practice_stats' && (
-            // Players can only ever reach this tab on their own profile (the
-            // filter above enforces loggedInUserId === userId), so it's safe
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'practice_stats' && (
+            // Players can only ever reach this section on their own profile (the
+            // visibleRecordsSubTabs filter enforces loggedInUserId === userId,
+            // and activeRecordsSubTab can only ever name a visible one), so it's safe
             // to also let them log their own stats here specifically — this
             // does NOT touch canEditProfile itself, which still gates every
             // other admin/coach-only field on the page (#278).
