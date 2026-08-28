@@ -365,6 +365,180 @@ const STATIC_POSITIONS = [
   { code: 'TEAM', label: 'Team Plays' },
 ];
 
+// #372: General and Team Plays are hardcoded JSX, so their sections have no
+// database id to key a video to. Each section instead gets a stable string key
+// below, stored in situational_plays.static_key. The key is deliberately NOT
+// derived from the heading text, so rewording the prose never orphans a video.
+// A row carrying a static_key is a video slot, never a situation in the picker.
+// The key is the stable identifier; the title is display copy that must match
+// the heading on screen (F3), since it is written to the row's situation column
+// and used as the iframe title.
+const STATIC_VIDEO_ROW_NOTE = 'Example video slot for the static Situational guide (#372).';
+
+// The third column is the link Cordell supplied for that section. It is a
+// DEFAULT, not a fixture: the app shows it when the slot has no row of its own,
+// so the videos appear the moment this code deploys, with no migration and no
+// hand-pasting. The alternative — seeding INSERTs in the migration — would have
+// left the slots empty on any environment where the migration had not been run
+// yet, which is every environment until someone runs it.
+//
+// A staff edit still wins, always. Saving a link writes a row for that
+// static_key and the row is read in preference to this table; clearing a link
+// writes a row with a NULL video_url, which reads as a deliberate "no video"
+// and suppresses the default. So a default can be replaced or removed from the
+// pencil like any other slot, and the only way back to the default is to delete
+// that row in the database.
+//
+// gen-three-rules is deliberately null: Cordell sent nine links for ten slots
+// and did not send one for it. It renders as an empty slot, exactly as designed,
+// and nothing is substituted or guessed.
+const STATIC_VIDEO_SLOTS = {};
+[
+  ['GEN', 'General', [
+    ['gen-universal-rule', 'The Universal Rule — before every pitch, ask three questions', 'https://youtube.com/shorts/bocNmloGFRI'],
+    ['gen-cutoff-relay', 'Cutoff & Relay Assignments', 'https://youtu.be/wIU9NdCBBkE'],
+    ['gen-backup-assignments', 'Backup Assignments', 'https://youtu.be/LD4H96mlpr8'],
+    ['gen-fly-ball-priority', 'Fly Ball Priority (call it loud, call it three times)', 'https://youtu.be/R6qzZfN2IQE'],
+    ['gen-defensive-depths', 'Defensive Depths', 'https://youtu.be/lis5N4-KwWk'],
+    ['gen-three-rules', 'The three rules that prevent more runs than anything else', null],
+  ]],
+  ['TEAM', 'Team Plays', [
+    ['team-rundown', 'Rundown (Pickle)', 'https://youtu.be/OEYEvKRh2eQ'],
+    ['team-first-and-third', 'First & Third (runner on 1st takes off)', 'https://youtu.be/UDgDJSEOves'],
+    ['team-infield-fly', 'Infield Fly Rule', 'https://youtu.be/8DuNMudFst8'],
+    ['team-tag-ups', 'Tag-Ups', 'https://youtu.be/vjoIcUIgv5o'],
+  ]],
+].forEach(([positionCode, positionLabel, slots]) => {
+  slots.forEach(([key, title, defaultVideoUrl = null], i) => {
+    STATIC_VIDEO_SLOTS[key] = { key, title, positionCode, positionLabel, sortOrder: i, defaultVideoUrl };
+  });
+});
+
+// The link a static slot should show right now: its own row if one exists —
+// including a row whose video_url is NULL, which means staff cleared it — and
+// otherwise the default above. `rows` is keyed by static_key.
+function staticSlotVideoUrl(rows, slotKey) {
+  const slot = STATIC_VIDEO_SLOTS[slotKey];
+  if (!slot) return null;
+  const row = rows[slotKey];
+  if (row) return row.video_url || null;
+  return slot.defaultVideoUrl || null;
+}
+
+// #372: the staff-only pencil that opens the video-link editor. Extracted so the
+// database-backed position plays and the static slots use one implementation.
+function VideoEditPencil({ isStaff, videoUrl, editing, onToggle, className = '' }) {
+  if (!isStaff) return null;
+  return (
+    <button
+      onClick={onToggle}
+      className={`shrink-0 p-1 text-gray-300 hover:text-blue-600 transition ${className}`}
+      title={videoUrl ? 'Edit example video link' : 'Add example video link'}
+    >
+      {editing ? <X size={13} /> : <Pencil size={13} />}
+    </button>
+  );
+}
+
+// #372: the video block itself — edit box, the #274 unembeddable warning, the
+// "Watch example" toggle and the iframe. Previously inlined in the position-play
+// map; now shared by that path and the static General / Team Plays slots so
+// there is exactly one copy of the embed and save behaviour.
+function SituationalVideoBody({ id, title, videoUrl, isStaff, ui, onSave }) {
+  const embedUrl = toSafeEmbedUrl(videoUrl);
+  // A stored link that is not embeddable used to render as nothing at all —
+  // indistinguishable from "no video", which is how a dead link survives for
+  // months (#274). Show the external link to everyone and tell staff to fix it.
+  const externalUrl = toSafeExternalUrl(videoUrl);
+  const unembeddable = !!videoUrl && !embedUrl;
+  const videoOpen = ui.openVideoId === id;
+  const editing = ui.editingVideoId === id;
+  return (
+    <>
+      {editing && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            type="url"
+            value={ui.videoDraft}
+            onChange={(e) => ui.setVideoDraft(e.target.value)}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="flex-1 min-w-[160px] px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={onSave}
+            disabled={ui.savingVideo}
+            className="px-2.5 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition disabled:opacity-50"
+          >
+            {ui.savingVideo ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={() => ui.setEditingVideoId(null)}
+            className="p-1.5 text-gray-400 hover:text-gray-600 transition"
+            title="Cancel"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {unembeddable && !editing && (
+        <div className="mt-2 space-y-1">
+          {externalUrl && (
+            <a
+              href={externalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition"
+            >
+              <ExternalLink size={12} />
+              <span>{externalLinkLabel(videoUrl)}</span>
+            </a>
+          )}
+          {isStaff && (
+            <div className="flex items-start gap-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded px-2 py-1 text-[11px]">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              <span>This link can't be embedded — click the pencil to replace it.</span>
+            </div>
+          )}
+        </div>
+      )}
+      {embedUrl && !editing && (
+        <button
+          onClick={() => ui.setOpenVideoId(videoOpen ? null : id)}
+          className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition"
+        >
+          <Play size={12} className={videoOpen ? 'rotate-90 transition-transform' : 'transition-transform'} />
+          <span>{videoOpen ? 'Hide example' : 'Watch example'}</span>
+        </button>
+      )}
+      {embedUrl && videoOpen && !editing && (
+        <>
+          <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 relative" style={{ paddingBottom: '56.25%', height: 0 }}>
+            <iframe
+              src={embedUrl}
+              title={`Example: ${title}`}
+              className="absolute inset-0 w-full h-full"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
+          {externalUrl && (
+            <a
+              href={externalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition"
+            >
+              <ExternalLink size={10} />
+              {externalLinkLabel(videoUrl)}
+            </a>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 function SituationalView({ userRole }) {
   const [plays, setPlays] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -375,6 +549,17 @@ function SituationalView({ userRole }) {
   const [editingVideoId, setEditingVideoId] = useState(null);
   const [videoDraft, setVideoDraft] = useState('');
   const [savingVideo, setSavingVideo] = useState(false);
+  // #372: video rows for the static GEN / TEAM sections, keyed by static_key.
+  const [staticVideos, setStaticVideos] = useState({});
+
+  // Shared handle for the video UI, so the position plays and the static slots
+  // drive the same "only one open at a time" state they always have.
+  const videoUi = {
+    openVideoId, setOpenVideoId,
+    editingVideoId, setEditingVideoId,
+    videoDraft, setVideoDraft,
+    savingVideo,
+  };
 
   const saveVideoUrl = async (play) => {
     const raw = videoDraft.trim();
@@ -394,6 +579,57 @@ function SituationalView({ userRole }) {
     if (!raw && openVideoId === play.id) setOpenVideoId(null);
   };
 
+  // #372: same validation and same table as saveVideoUrl above, but a static
+  // slot may not have a row yet, so the first save inserts one. Both the insert
+  // and the update run under the staff-only policies that already exist on
+  // situational_plays — no new permission surface.
+  const saveStaticVideoUrl = async (slot) => {
+    const raw = videoDraft.trim();
+    if (raw && !toSafeEmbedUrl(raw)) {
+      alert(describeVideoUrlProblem(raw));
+      return;
+    }
+    const existing = staticVideos[slot.key];
+    // Clearing a slot that has neither a row NOR a default is a no-op — there is
+    // nothing to clear, so don't write an empty row. Clearing a slot that is
+    // showing its DEFAULT is not a no-op: it has to write a row with a NULL
+    // video_url, because that row is what tells the app the staff member meant
+    // "no video here" rather than "nobody has set one yet".
+    if (!existing && !raw && !slot.defaultVideoUrl) { setEditingVideoId(null); return; }
+    setSavingVideo(true);
+    let error = null;
+    if (existing) {
+      ({ error } = await supabase
+        .from('situational_plays')
+        .update({ video_url: raw || null })
+        .eq('id', existing.id));
+      if (!error) {
+        setStaticVideos(prev => ({ ...prev, [slot.key]: { ...prev[slot.key], video_url: raw || null } }));
+      }
+    } else {
+      const { data, error: insertError } = await supabase
+        .from('situational_plays')
+        .insert({
+          position_code: slot.positionCode,
+          position_label: slot.positionLabel,
+          position_order: 99,
+          situation: slot.title,
+          responsibility: STATIC_VIDEO_ROW_NOTE,
+          sort_order: slot.sortOrder,
+          static_key: slot.key,
+          video_url: raw || null,
+        })
+        .select()
+        .single();
+      error = insertError;
+      if (!error && data) setStaticVideos(prev => ({ ...prev, [slot.key]: data }));
+    }
+    setSavingVideo(false);
+    if (error) { alert('Error saving video link: ' + error.message); return; }
+    setEditingVideoId(null);
+    if (!raw && openVideoId === slot.key) setOpenVideoId(null);
+  };
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -404,8 +640,17 @@ function SituationalView({ userRole }) {
         .order('sort_order');
       if (cancelled) return;
       const rows = data || [];
-      setPlays(rows);
-      setActivePosition(rows.length ? rows[0].position_code : 'GEN');
+      // #372: rows carrying a static_key are video slots for the hardcoded
+      // GEN / TEAM sections, not situations. They are split out here so they can
+      // never reach the picker, never override a position label or the default
+      // tab, and never fall into the position list below.
+      const playRows = rows.filter(r => !r.static_key);
+      const staticRows = rows.filter(r => r.static_key);
+      setPlays(playRows);
+      const byKey = {};
+      staticRows.forEach(r => { byKey[r.static_key] = r; });
+      setStaticVideos(byKey);
+      setActivePosition(playRows.length ? playRows[0].position_code : 'GEN');
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -438,6 +683,39 @@ function SituationalView({ userRole }) {
     }
     groups[groupIndex[key]].items.push(play);
   });
+
+  // #372: renders one static section's video affordance. A player with no video
+  // set sees nothing at all — no empty box, no broken player.
+  const renderStaticVideo = (slotKey) => {
+    const slot = STATIC_VIDEO_SLOTS[slotKey];
+    if (!slot) return null;
+    const videoUrl = staticSlotVideoUrl(staticVideos, slot.key);
+    if (!videoUrl && !isStaff) return null;
+    const editing = editingVideoId === slot.key;
+    return (
+      <div className="mt-3 pt-2 border-t border-gray-200/70">
+        <VideoEditPencil
+          isStaff={isStaff}
+          videoUrl={videoUrl}
+          editing={editing}
+          onToggle={() => {
+            if (editing) { setEditingVideoId(null); return; }
+            setEditingVideoId(slot.key);
+            setVideoDraft(videoUrl || '');
+          }}
+          className="-ml-1"
+        />
+        <SituationalVideoBody
+          id={slot.key}
+          title={slot.title}
+          videoUrl={videoUrl}
+          isStaff={isStaff}
+          ui={videoUi}
+          onSave={() => saveStaticVideoUrl(slot)}
+        />
+      </div>
+    );
+  };
 
   if (loading) {
     return <p className="text-gray-500">Loading situational guide…</p>;
@@ -472,8 +750,8 @@ function SituationalView({ userRole }) {
       </div>
 
       {/* Content for the selected position */}
-      {activePosition === 'GEN' && <GeneralView />}
-      {activePosition === 'TEAM' && <TeamPlaysView />}
+      {activePosition === 'GEN' && <GeneralView renderVideo={renderStaticVideo} />}
+      {activePosition === 'TEAM' && <TeamPlaysView renderVideo={renderStaticVideo} />}
       {!isStatic && (
         <div>
           <h4 className="text-base font-bold text-gray-900 mb-3">{activeLabel}</h4>
@@ -488,14 +766,6 @@ function SituationalView({ userRole }) {
                   </div>
                   <div className="space-y-3">
                     {group.items.map((play, i) => {
-                      const embedUrl = toSafeEmbedUrl(play.video_url);
-                      // A stored link that is not embeddable used to render as
-                      // nothing at all — indistinguishable from "no video", which
-                      // is how a dead link survives for months (#274). Show the
-                      // external link to everyone and tell staff it needs fixing.
-                      const externalUrl = toSafeExternalUrl(play.video_url);
-                      const unembeddable = !!play.video_url && !embedUrl;
-                      const videoOpen = openVideoId === play.id;
                       const editingVideo = editingVideoId === play.id;
                       return (
                         <div key={play.id} className="bg-white border border-gray-200 rounded-lg p-4">
@@ -506,101 +776,26 @@ function SituationalView({ userRole }) {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="font-semibold text-gray-900">{play.situation}</div>
-                                {isStaff && (
-                                  <button
-                                    onClick={() => {
-                                      if (editingVideo) { setEditingVideoId(null); return; }
-                                      setEditingVideoId(play.id);
-                                      setVideoDraft(play.video_url || '');
-                                    }}
-                                    className="shrink-0 p-1 text-gray-300 hover:text-blue-600 transition"
-                                    title={play.video_url ? 'Edit example video link' : 'Add example video link'}
-                                  >
-                                    <Pencil size={13} />
-                                  </button>
-                                )}
+                                <VideoEditPencil
+                                  isStaff={isStaff}
+                                  videoUrl={play.video_url}
+                                  editing={editingVideo}
+                                  onToggle={() => {
+                                    if (editingVideo) { setEditingVideoId(null); return; }
+                                    setEditingVideoId(play.id);
+                                    setVideoDraft(play.video_url || '');
+                                  }}
+                                />
                               </div>
                               <div className="text-sm text-gray-600 mt-1">{play.responsibility}</div>
-                              {editingVideo && (
-                                <div className="mt-2 flex items-center gap-2">
-                                  <input
-                                    type="url"
-                                    value={videoDraft}
-                                    onChange={(e) => setVideoDraft(e.target.value)}
-                                    placeholder="https://www.youtube.com/watch?v=..."
-                                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                  />
-                                  <button
-                                    onClick={() => saveVideoUrl(play)}
-                                    disabled={savingVideo}
-                                    className="px-2.5 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition disabled:opacity-50"
-                                  >
-                                    {savingVideo ? 'Saving…' : 'Save'}
-                                  </button>
-                                  <button
-                                    onClick={() => setEditingVideoId(null)}
-                                    className="p-1.5 text-gray-400 hover:text-gray-600 transition"
-                                    title="Cancel"
-                                  >
-                                    <X size={14} />
-                                  </button>
-                                </div>
-                              )}
-                              {unembeddable && !editingVideo && (
-                                <div className="mt-2 space-y-1">
-                                  {externalUrl && (
-                                    <a
-                                      href={externalUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition"
-                                    >
-                                      <ExternalLink size={12} />
-                                      <span>{externalLinkLabel(play.video_url)}</span>
-                                    </a>
-                                  )}
-                                  {isStaff && (
-                                    <div className="flex items-start gap-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded px-2 py-1 text-[11px]">
-                                      <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                                      <span>This link can't be embedded — click the pencil to replace it.</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {embedUrl && !editingVideo && (
-                                <button
-                                  onClick={() => setOpenVideoId(videoOpen ? null : play.id)}
-                                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition"
-                                >
-                                  <Play size={12} className={videoOpen ? 'rotate-90 transition-transform' : 'transition-transform'} />
-                                  <span>{videoOpen ? 'Hide example' : 'Watch example'}</span>
-                                </button>
-                              )}
-                              {embedUrl && videoOpen && !editingVideo && (
-                                <>
-                                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 relative" style={{ paddingBottom: '56.25%', height: 0 }}>
-                                    <iframe
-                                      src={embedUrl}
-                                      title={`Example: ${play.situation}`}
-                                      className="absolute inset-0 w-full h-full"
-                                      frameBorder="0"
-                                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                      allowFullScreen
-                                    />
-                                  </div>
-                                  {externalUrl && (
-                                    <a
-                                      href={externalUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition"
-                                    >
-                                      <ExternalLink size={10} />
-                                      {externalLinkLabel(play.video_url)}
-                                    </a>
-                                  )}
-                                </>
-                              )}
+                              <SituationalVideoBody
+                                id={play.id}
+                                title={play.situation}
+                                videoUrl={play.video_url}
+                                isStaff={isStaff}
+                                ui={videoUi}
+                                onSave={() => saveVideoUrl(play)}
+                              />
                             </div>
                           </div>
                         </div>
@@ -645,7 +840,7 @@ function RefTable({ headers, rows }) {
 
 // GENERAL: the universal rule, cutoff/relay + backup + depth charts, and the
 // three run-saving rules. Static reference content (#240).
-function GeneralView() {
+function GeneralView({ renderVideo = () => null }) {
   return (
     <div className="space-y-8">
       {/* The Universal Rule */}
@@ -660,6 +855,7 @@ function GeneralView() {
           If you're not fielding the ball, you are covering a base, backing up a base, serving as a cutoff/relay,
           or directing traffic. There is no such thing as "standing there."
         </p>
+        {renderVideo('gen-universal-rule')}
       </div>
 
       {/* Cutoff & Relay */}
@@ -685,6 +881,7 @@ function GeneralView() {
           Hands high, yell so the outfielder finds you. The receiver makes the call — "Cut!" (cut and hold),
           "Cut two/three/four!" (cut and throw; 4 = home), or silence = let it through.
         </p>
+        {renderVideo('gen-cutoff-relay')}
       </div>
 
       {/* Backup Assignments */}
@@ -702,6 +899,7 @@ function GeneralView() {
             ['Ball in the gap', 'Nearest outfielder + the middle infielder trailing the relay'],
           ]}
         />
+        {renderVideo('gen-backup-assignments')}
       </div>
 
       {/* Fly Ball Priority */}
@@ -712,6 +910,7 @@ function GeneralView() {
           Outfielders beat infielders. Center field beats everybody. The player with priority calls "Ball! Ball! Ball!"
           and everyone else peels off and yells "Take it!" Nobody goes silent.
         </p>
+        {renderVideo('gen-fly-ball-priority')}
       </div>
 
       {/* Defensive Depths */}
@@ -728,6 +927,7 @@ function GeneralView() {
             ['Late innings, protecting a lead', 'Guard the lines (1B and 3B)', 'No-doubles — deep and toward the lines'],
           ]}
         />
+        {renderVideo('gen-defensive-depths')}
       </div>
 
       {/* Three Rules */}
@@ -738,22 +938,24 @@ function GeneralView() {
           <li><span className="font-semibold">Back up the base.</span> Every throw has a backup. Every one. Overthrows with no backup are free runs.</li>
           <li><span className="font-semibold">Take the sure out.</span> The lead runner is nice; the out is the point. A forced throw into the outfield turns one runner into two.</li>
         </ol>
+        {renderVideo('gen-three-rules')}
       </div>
     </div>
   );
 }
 
 // TEAM PLAYS: special situations that involve the whole defense. Static (#240).
-function TeamPlaysView() {
-  const play = (title, body) => (
+function TeamPlaysView({ renderVideo = () => null }) {
+  const play = (slotKey, title, body) => (
     <div className="bg-white border border-gray-200 rounded-lg p-4">
       <div className="font-bold text-gray-900 mb-1">{title}</div>
       {body}
+      {renderVideo(slotKey)}
     </div>
   );
   return (
     <div className="space-y-4">
-      {play('Rundown (Pickle)', (
+      {play('team-rundown', 'Rundown (Pickle)', (
         <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
           <li>Run the runner back toward the base he came from. Never let him advance.</li>
           <li>Minimize throws — ideally one. Sprint at him with the ball held high, make him commit.</li>
@@ -762,7 +964,7 @@ function TeamPlaysView() {
           <li>Trap him — don't chase him forever.</li>
         </ul>
       ))}
-      {play('First & Third (runner on 1st takes off)', (
+      {play('team-first-and-third', 'First & Third (runner on 1st takes off)', (
         <div className="text-sm text-gray-700 space-y-1">
           <p>Every team has a call. The three basic options:</p>
           <ol className="list-decimal list-inside space-y-1">
@@ -773,13 +975,13 @@ function TeamPlaysView() {
           <p className="text-gray-600">Whatever the call, the pitcher, catcher, SS, and 2B must all know it before the pitch.</p>
         </div>
       ))}
-      {play('Infield Fly Rule', (
+      {play('team-infield-fly', 'Infield Fly Rule', (
         <p className="text-sm text-gray-700">
           Runners on 1st &amp; 2nd (or bases loaded) with less than two outs, on an infield pop-up catchable with ordinary effort:
           the batter is out automatically. The umpire calls it. Catch it anyway — but don't intentionally drop it for a cheap double play. It won't work.
         </p>
       ))}
-      {play('Tag-Ups', (
+      {play('team-tag-ups', 'Tag-Ups', (
         <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
           <li>Runner on 3rd, fly ball, less than 2 outs: the outfielder is throwing home; the 3B or cutoff man lines it up.</li>
           <li>Foul-ball catch with a runner on 3rd: know how deep you're going. If the catch lets the run score and you're behind, it may not be worth it.</li>
