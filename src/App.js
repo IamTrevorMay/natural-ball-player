@@ -1304,6 +1304,14 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
 function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, onLogout, unreadMessageCount = 0, pendingSlotCount = 0, waiverSigned, contractSigned, loiSigned, facilityFineSigned, onEmailCampaignNav, onSwitchPortal, canSwitchRole, otherRole, onSwitchRole, mobileOpen }) {
   const [documentsExpanded, setDocumentsExpanded] = useState(true);
   const [emailCampaignExpanded, setEmailCampaignExpanded] = useState(false);
+  // #371: Communication is an expandable parent for admins only (Email Campaign
+  // lives inside it). Defaults CLOSED, unlike documentsExpanded: Documents opens
+  // by default because its children carry the red "unsigned" dots a player needs
+  // to notice, whereas Communication's own one-click destination (messages) is
+  // the thing admins want most of the time. Closed also means the sidebar is
+  // exactly as tall as it is today for every role on first paint, and it matches
+  // emailCampaignExpanded's existing `false` default rather than fighting it.
+  const [communicationExpanded, setCommunicationExpanded] = useState(false);
   const anyDocUnsigned = waiverSigned === false || contractSigned === false || loiSigned === false || facilityFineSigned === false;
   return (
     <div className={`w-64 bg-gray-900 text-white h-screen fixed left-0 top-0 p-4 flex flex-col z-50 transition-transform duration-200 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
@@ -1458,55 +1466,133 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <span>Knowledge Base</span>
         </button>
 
-        {/* #281: Email Campaign — EZFacility-style sub-folders. Admin only.
-            #371: Moved above Communication per Trevor's request. */}
-        {userRole === 'admin' && (
-          <div>
-            <button
-              onClick={() => setEmailCampaignExpanded(!emailCampaignExpanded)}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-                currentView === 'email-campaigns' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
-              }`}
-            >
-              <Mail size={18} />
-              <span className="flex-1 text-left">Email Campaign</span>
-              {emailCampaignExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </button>
-            {emailCampaignExpanded && (
-              <div className="ml-4 space-y-1 mt-1">
-                {[
-                  { key: 'send', label: 'Send Email Campaign' },
-                  { key: 'history', label: 'Campaign History' },
-                  { key: 'templates', label: 'Email Template Library' },
-                  { key: 'images', label: 'Email Image Library' },
-                  { key: 'failed', label: 'Failed Emails' },
-                ].map(item => (
-                  <button
-                    key={item.key}
-                    onClick={() => onEmailCampaignNav && onEmailCampaignNav(item.key)}
-                    className="w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition text-sm hover:bg-gray-800"
-                  >
-                    <Mail size={16} />
-                    <span className="flex-1 text-left">{item.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {/* #371: Cordell did NOT want the two buttons swapped — he wanted Email
+            Campaign to live INSIDE Communication, "since it is a form of
+            communication", the way Waiver / Player Contract / Letter of Intent /
+            Facility Fine live inside Documents above.
 
-        <button
-          onClick={() => setCurrentView('messages')}
-          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'messages' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
-          }`}
-        >
-          <MessageSquare size={18} />
-          <span className="flex-1 text-left">Communication</span>
-          {unreadMessageCount > 0 && (
-            <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
-          )}
-        </button>
+            The catch: Communication has no role gate (every role sees it) while
+            the Email Campaign block is admin-only, because it fronts the full
+            937-address mailing list. Moving Communication inside the admin block
+            would have deleted it for every athlete and coach. So Communication
+            stays exactly where it is and stays ungated; it merely GAINS an
+            expander, and only for admins.
+
+            Role visibility, stated plainly:
+              • player / coach  → the same single button as before. Same classes,
+                same one-click navigate to 'messages', same unread badge, no
+                chevron, no children. Rendered from the untouched branch below.
+              • admin           → the identical button plus a sibling chevron
+                that reveals the Email Campaign group beneath it. The label
+                itself still navigates to 'messages' in one click.
+            The chevron is a SIBLING button, not a nested one: a <button> inside
+            a <button> is invalid HTML and the inner click never fires. */}
+        {(() => {
+          // Shared inner markup so the two branches cannot drift apart.
+          const communicationInner = (
+            <>
+              <MessageSquare size={18} />
+              <span className="flex-1 text-left">Communication</span>
+              {unreadMessageCount > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
+              )}
+            </>
+          );
+          if (userRole !== 'admin') {
+            // Byte-for-byte the button players and coaches see today.
+            return (
+              <button
+                onClick={() => setCurrentView('messages')}
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                  currentView === 'messages' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
+                }`}
+              >
+                {communicationInner}
+              </button>
+            );
+          }
+          return (
+            <div>
+              <div
+                className={`w-full flex items-center rounded-lg transition text-sm ${
+                  currentView === 'messages' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
+                }`}
+              >
+                <button
+                  onClick={() => setCurrentView('messages')}
+                  className="flex-1 min-w-0 flex items-center space-x-3 px-3 py-2 text-left rounded-lg"
+                >
+                  {communicationInner}
+                </button>
+                <button
+                  onClick={() => setCommunicationExpanded(!communicationExpanded)}
+                  className="shrink-0 px-2 py-2 rounded-lg"
+                  aria-expanded={communicationExpanded}
+                  aria-label={communicationExpanded ? 'Hide Email Campaign' : 'Show Email Campaign'}
+                  title={communicationExpanded ? 'Hide Email Campaign' : 'Show Email Campaign'}
+                >
+                  {communicationExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </button>
+              </div>
+              {communicationExpanded && (
+                <div className="ml-4 space-y-1 mt-1">
+                  {/* #281: Email Campaign — EZFacility-style sub-folders. Admin
+                      only: this fronts the full 937-address mailing list.
+                      #371: now a child of Communication. Kept as ONE named
+                      sub-item that expands rather than flattening its five
+                      children up a level, so the words "Email Campaign" — the
+                      words Cordell used — still appear in the sidebar, so the
+                      existing 'email-campaigns' highlight still has something to
+                      highlight, and so an open Communication costs one line
+                      instead of five.
+
+                      K2: the third level has to earn its width. Measured, the
+                      earlier ml-3/px-3 left 144px for a label and "Email
+                      Template Library" needs 161px and "Send Email Campaign"
+                      155px, so two of the five wrapped onto a second line. The
+                      children below are now ml-2 / px-2 / space-x-2, with a 14px
+                      icon and text-xs, which leaves 162px of label width and
+                      needs at most 138px — every one of the five fits on one
+                      line with room to spare, and none is renamed or truncated.
+                      text-xs also reads as the third level it now is: the tab
+                      bar is text-sm, and these sit two steps under it. */}
+                  <div>
+                    <button
+                      onClick={() => setEmailCampaignExpanded(!emailCampaignExpanded)}
+                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+                        currentView === 'email-campaigns' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
+                      }`}
+                    >
+                      <Mail size={18} />
+                      <span className="flex-1 text-left">Email Campaign</span>
+                      {emailCampaignExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    </button>
+                    {emailCampaignExpanded && (
+                      <div className="ml-2 space-y-1 mt-1">
+                        {[
+                          { key: 'send', label: 'Send Email Campaign' },
+                          { key: 'history', label: 'Campaign History' },
+                          { key: 'templates', label: 'Email Template Library' },
+                          { key: 'images', label: 'Email Image Library' },
+                          { key: 'failed', label: 'Failed Emails' },
+                        ].map(item => (
+                          <button
+                            key={item.key}
+                            onClick={() => onEmailCampaignNav && onEmailCampaignNav(item.key)}
+                            className="w-full flex items-center space-x-2 px-2 py-1.5 rounded-lg transition text-xs hover:bg-gray-800"
+                          >
+                            <Mail size={14} className="shrink-0" />
+                            <span className="flex-1 text-left">{item.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {(userRole === 'admin' || userRole === 'coach') && (
           <>
