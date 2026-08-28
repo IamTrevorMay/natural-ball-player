@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { fetchUserDirectory } from './userDirectory';
+import { formatUserError } from './errorMessage';
 import { BookOpen, Search, MessageCircle, Plus, Eye, Tag, Calendar, User as UserIcon, Send, Loader, Sparkles, ArrowLeft, MapPin, Play, Pencil, X, ExternalLink, AlertTriangle } from 'lucide-react';
 
 // Hosts we will accept a pasted link *from*. Being on this list is necessary
@@ -283,7 +284,12 @@ export default function KnowledgeBase({ userId, userRole }) {
       {/* Navigation Tabs */}
       <div className="bg-white rounded-lg shadow">
         <div className="border-b border-gray-200">
-          <nav className="flex space-x-8 px-6">
+          {/* F1: was "flex space-x-8 px-6" — no wrap and no scroller, so the
+              third tab ran past a 390px viewport and panned the whole page
+              (same class as #321). Wraps now, matching the Situational position
+              picker below. gap-x-8 spaces identically to space-x-8 when the row
+              does not wrap, so wide screens are unchanged. */}
+          <nav className="flex flex-wrap gap-x-8 px-4 sm:px-6">
             <button
               onClick={() => setActiveView('browse')}
               className={`py-4 px-1 border-b-2 font-medium text-sm transition flex items-center space-x-2 ${
@@ -573,7 +579,14 @@ function SituationalView({ userRole }) {
       .update({ video_url: raw || null })
       .eq('id', play.id);
     setSavingVideo(false);
-    if (error) { alert('Error saving video link: ' + error.message); return; }
+    // F2: error.message here is the raw PostgREST string, which leaks column and
+    // constraint names at the user. Same convention as Profile.js: log the real
+    // error for a developer, show the translated one.
+    if (error) {
+      console.error('Error saving video link:', error);
+      alert('Error saving video link: ' + formatUserError(error));
+      return;
+    }
     setPlays(prev => prev.map(p => (p.id === play.id ? { ...p, video_url: raw || null } : p)));
     setEditingVideoId(null);
     if (!raw && openVideoId === play.id) setOpenVideoId(null);
@@ -625,7 +638,11 @@ function SituationalView({ userRole }) {
       if (!error && data) setStaticVideos(prev => ({ ...prev, [slot.key]: data }));
     }
     setSavingVideo(false);
-    if (error) { alert('Error saving video link: ' + error.message); return; }
+    if (error) {
+      console.error('Error saving video link:', error);
+      alert('Error saving video link: ' + formatUserError(error));
+      return;
+    }
     setEditingVideoId(null);
     if (!raw && openVideoId === slot.key) setOpenVideoId(null);
   };
@@ -1370,9 +1387,26 @@ function AIAssistant({ userId }) {
   };
 
   return (
-    <div className="flex h-[600px] border border-gray-200 rounded-lg overflow-hidden">
-      {/* Conversations Sidebar */}
-      <div className="w-64 bg-gray-50 border-r border-gray-200 flex flex-col">
+    /* G1: this was "flex h-[600px] ... overflow-hidden" — a fixed 256px sidebar
+       beside the chat with no responsive stacking. On a 390px phone the chat
+       pane could not shrink (flex items default to min-width:auto), so it ran
+       past the container and overflow-hidden clipped the Send button off-screen
+       with no scrollbar and no pan: the assistant was unusable. The panes now
+       stack below sm and sit side by side from sm up, with min-w-0 so the chat
+       pane may actually shrink. overflow-hidden stays — removing it would just
+       trade the dead button for a sideways-panning page (F1). */
+    <div className="flex flex-col sm:flex-row h-[70vh] sm:h-[600px] border border-gray-200 rounded-lg overflow-hidden">
+      {/* Conversations Sidebar — above the chat on a phone so "New Chat" and the
+          conversation list stay in the same reading order as the desktop
+          left-to-right, with no CSS order juggling. Capped so it cannot eat the
+          whole screen; its list scrolls inside that cap.
+          K3: the cap is max-h-40, not max-h-48. The extra 32px looked like more
+          breathing room on a 844px-tall phone, but on a 480px one it came
+          straight out of the chat, leaving a 59px message pane — about one
+          bubble. The messages are the point of this screen, so they get the
+          space and the conversation list scrolls. sm:max-h-none keeps the
+          desktop layout untouched either way. */}
+      <div className="w-full sm:w-64 flex-shrink-0 max-h-40 sm:max-h-none bg-gray-50 border-b sm:border-b-0 sm:border-r border-gray-200 flex flex-col">
         <div className="p-4 border-b border-gray-200">
           <button
             onClick={handleNewConversation}
@@ -1412,7 +1446,7 @@ function AIAssistant({ userId }) {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.length === 0 ? (
@@ -1466,13 +1500,13 @@ function AIAssistant({ userId }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask your baseball question..."
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 min-w-0 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={loading}
             />
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-2"
+              className="flex-shrink-0 bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 flex items-center space-x-2"
             >
               <Send size={18} />
               <span>Send</span>

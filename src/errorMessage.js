@@ -33,22 +33,40 @@ const KNOWN_TRANSLATIONS = [
   [/violates check constraint/i, "That value isn't allowed here — please check what you entered and try again."],
   [/violates foreign key constraint/i, 'This is connected to another record, so that change was not allowed.'],
   [/violates .*constraint/i, "One of the values entered isn't allowed here."],
+  // G2: the app is newer than the database — a migration has not been run, so a
+  // column or table the code expects is missing, or PostgREST's schema cache is
+  // stale. The person on screen cannot fix this and retrying will not help, so
+  // say so without naming the table or column. The bare codes are here because
+  // PostgREST puts 42703 / 42P01 / PGRST204 / PGRST205 on error.code, not in the
+  // message text; the phrase alternatives cover the message form. This sits
+  // after every entry above, so nothing that already translates is affected.
+  [/^42703$|^42P01$|^PGRST20[45]$|column .* does not exist|could not find the .* (column|table)|schema cache/i,
+    "This feature needs a database update that hasn't been applied yet. Nothing you did caused this and retrying won't help — please let Nicholas know."],
   [/network error|failed to fetch/i, 'Network error — check your connection.'],
 ];
 
 export function formatUserError(err, fallback = 'Something went wrong. Please try again.') {
   if (!err) return fallback;
   const raw = typeof err === 'string' ? err : (err.message || err.error_description || '');
+  // G2: Postgres/PostgREST put the SQLSTATE (42703) or PostgREST code (PGRST204)
+  // on err.code, never in err.message, so the table is tested against both. No
+  // existing pattern above is a bare code, so this cannot re-route an error that
+  // already translates. Deliberately NOT applied to the \d{5}: guard below —
+  // every PG error carries a code, and testing that against it would send every
+  // one of them to the generic fallback.
+  const code = typeof err === 'string' ? '' : String(err.code || '');
   // Categorize once so we both return a string AND record the bucket.
   let bucket = 'generic';
   let out = fallback;
-  if (!raw) {
+  if (!raw && !code) {
     bucket = 'empty';
     out = fallback;
   } else {
     let matched = false;
     for (const [pattern, msg] of KNOWN_TRANSLATIONS) {
-      if (pattern.test(raw)) { out = msg; bucket = String(pattern).slice(0, 40); matched = true; break; }
+      if ((raw && pattern.test(raw)) || (code && pattern.test(code))) {
+        out = msg; bucket = String(pattern).slice(0, 40); matched = true; break;
+      }
     }
     if (!matched) {
       if (RLS_HINTS.some((p) => p.test(raw))) {
@@ -57,6 +75,13 @@ export function formatUserError(err, fallback = 'Something went wrong. Please tr
       } else if (/^\s*\d{5}\s*:/.test(raw)) {
         out = fallback;
         bucket = 'pg_sqlstate';
+      } else if (!raw) {
+        // H1: a code-carrying error that matched nothing above and has no usable
+        // message must still land on the generic sentence. Letting it reach the
+        // passthrough below returned '', which showed the user an alert that
+        // stopped dead at the colon: "Error saving video link: ".
+        out = fallback;
+        bucket = 'empty';
       } else if (raw.length > 160) {
         out = fallback;
         bucket = 'too_long';
