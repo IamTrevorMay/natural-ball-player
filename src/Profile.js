@@ -52,21 +52,12 @@ const PROFILE_TABS = [
   // Visit, Assessment's Submit and delete) and are untouched.
   { key: 'health', label: 'Health' },
   { key: 'recruitment', label: 'Recruitment', roles: ['admin', 'coach'] },
-  // Mental Training is the odd one out: Cordell asked for a pop-up, not another
-  // page of tab content, so this button opens a modal instead of switching
-  // tabs. See the special case in the tab bar's onClick below. No role gate —
-  // the offer is open to everyone.
-  { key: 'mental', label: 'Mental Training' },
-  // #370: Documents, Codes, Goals and Notes used to be four separate tabs.
-  // They are now one "Records" tab with a sub-nav inside it. The Records tab
-  // itself carries no role gate because three of the four sections never had
-  // one; Notes keeps its admin/coach gate on the sub-nav instead (see
-  // RECORDS_SUB_TABS below).
+  // #370: Documents, Codes, Goals, Notes and Assessment all live in Records.
+  // #376: Mental Training and Marek moved into Health sub-tabs.
   { key: 'records', label: 'Records' },
   { key: 'attendance', label: 'Attendance', roles: ['admin', 'coach'] },
   { key: 'communication', label: 'Communication', roles: ['admin', 'coach'] },
   { key: 'practice_stats', label: 'Practice Stats', roles: ['admin', 'coach'] },
-  { key: 'marek', label: 'Marek', roles: ['admin', 'coach'] },
 ];
 
 // The tab keys that actually have a content block further down this file (each
@@ -81,7 +72,6 @@ const PROFILE_TABS = [
 const PROFILE_TABS_WITH_CONTENT = [
   'general', 'athletes', 'schedule', 'trackman', 'whoop', 'health',
   'recruitment', 'records', 'attendance', 'communication', 'practice_stats',
-  'marek',
 ];
 
 // #226: whole-years age from a 'YYYY-MM-DD' DOB, or null if absent/invalid.
@@ -222,18 +212,23 @@ const NOTE_CATEGORIES = [
 // they appear in the sub-nav. `staffOnly` reproduces exactly the role gate the
 // old top-level Notes tab had (roles: ['admin', 'coach']) — players could never
 // see Notes, not even on their own profile, and that has not changed.
+// Assessment moved here from the Health tab (#376).
 const RECORDS_SUB_TABS = [
   { key: 'documents', label: 'Documents' },
   { key: 'codes', label: 'Codes' },
   { key: 'goals', label: 'Goals' },
   { key: 'notes', label: 'Notes', staffOnly: true },
+  { key: 'assessment', label: 'Assessment' },
 ];
 
 // #369: the sections that live inside the merged "Health" tab, in sub-nav order.
+// Assessment moved to Records (#376). Marek (bloodwork, staff 18+) and
+// Mental Training (modal, all roles) added here per #376.
 const HEALTH_SUB_TABS = [
   { key: 'armcare', label: 'Arm Care' },
   { key: 'pt', label: 'Physical Therapy' },
-  { key: 'assessment', label: 'Assessment' },
+  { key: 'marek', label: 'Marek', staffOnly: true },
+  { key: 'mental', label: 'Mental Training' },
 ];
 
 // #369: the arm care routine types. These strings are written straight into the
@@ -345,15 +340,19 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   // Mental Training pop-up (Major League Mindset).
   const [showMentalTraining, setShowMentalTraining] = useState(false);
-  // Same fail-closed treatment as Records: an unrecognised value falls back to
-  // the first section. No role gating here — all three are open to everyone,
-  // exactly as the three separate tabs were.
-  const activeHealthSubTab = HEALTH_SUB_TABS.some(sub => sub.key === healthSubTab)
-    ? healthSubTab
-    : HEALTH_SUB_TABS[0].key;
 
   // Only staff may see Notes — the same test the old top-level Notes tab used.
   const canSeeNotes = userRole === 'admin' || userRole === 'coach';
+  // Fail-closed health sub-tab: filter by role/age; mental is modal-only so never a content key.
+  const visibleHealthSubTabs = HEALTH_SUB_TABS.filter(sub => {
+    if (sub.staffOnly && !canSeeNotes) return false;
+    if (sub.key === 'marek' && !meetsAge(userData?.date_of_birth, 18)) return false;
+    if (sub.key === 'mental') return false;
+    return true;
+  });
+  const activeHealthSubTab = visibleHealthSubTabs.some(sub => sub.key === healthSubTab)
+    ? healthSubTab
+    : (visibleHealthSubTabs[0]?.key ?? 'armcare');
   const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => !sub.staffOnly || canSeeNotes);
   // Fail closed. Never trust the raw state value: if it names a section this
   // user is not allowed to see (a stale value left over from a role change, a
@@ -378,16 +377,14 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       // 'mental' content block for it to fall through to.
       if (initialTab === 'mental') {
         setShowMentalTraining(true);
-      // #370: the four old tab keys still work as deep links — they now open
-      // the Records tab on the matching section. (A player deep-linked to
-      // 'notes' still lands on Records, but activeRecordsSubTab above sends
-      // them to Documents; they never see the Notes section itself.)
+      // #370: Records sub-tab keys open the Records tab on the right section.
+      // assessment now lives in Records (#376), so it matches here too.
       } else if (RECORDS_SUB_TABS.some(sub => sub.key === initialTab)) {
         setActiveProfileTab('records');
         setRecordsSubTab(initialTab);
-      // #369: likewise the three old Health keys ('armcare', 'pt', 'assessment')
-      // still work as deep links and open the Health tab on the right section.
-      } else if (HEALTH_SUB_TABS.some(sub => sub.key === initialTab)) {
+      // #369/#376: Health sub-tab keys open the Health tab on the right section.
+      // marek and mental are now health sub-tabs; assessment moved to Records above.
+      } else if (['armcare', 'pt', 'marek'].includes(initialTab)) {
         setActiveProfileTab('health');
         setHealthSubTab(initialTab);
       } else {
@@ -454,6 +451,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [showAddWorkout, setShowAddWorkout] = useState(false);
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [showStore, setShowStore] = useState(false);
+  const [showUniformStore, setShowUniformStore] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
   const [showAssignPackage, setShowAssignPackage] = useState(false);
   const [showPackages, setShowPackages] = useState(false);
@@ -2092,6 +2090,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   <span>Pay</span>
                 </button>
               )}
+              <button
+                onClick={() => setShowUniformStore(true)}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition flex items-center space-x-2"
+              >
+                <ShoppingBag size={18} />
+                <span>Uniform Store</span>
+              </button>
               {/* #340: coaches can now SEE this (they could already assign a
                   package, then had no way to look at what they'd assigned —
                   the pill was admin-only). Deleting stays admin-only; that is
@@ -2333,8 +2338,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 if (userRole === 'player' && loggedInUserId !== userId) return false;
                 // #226: age-gate sensitive tabs, fail-closed — hidden when the viewed
                 // athlete's DOB is missing or under the threshold, for everyone
-                // (including the athlete's own view): Marek bloodwork 18+, Recruitment 15+.
-                if (tab.key === 'marek' && !meetsAge(userData?.date_of_birth, 18)) return false;
+                // (including the athlete's own view): Recruitment 15+.
+                // Marek (18+) is now a Health sub-tab and gated there (#376).
                 if (tab.key === 'recruitment' && !meetsAge(userData?.date_of_birth, 15)) return false;
                 // Players get a read-only Schedule tab (calendar + their programming,
                 // merged per #226) on their OWN profile so they can see what's
@@ -2358,10 +2363,6 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   key={tab.key}
                   type="button"
                   onClick={() => {
-                    // Mental Training opens a pop-up rather than swapping the
-                    // content below the tab bar, so the currently selected tab
-                    // stays where it is and we return early.
-                    if (tab.key === 'mental') { setShowMentalTraining(true); return; }
                     setActiveProfileTab(tab.key);
                   }}
                   className={`min-h-[40px] py-2.5 px-3.5 rounded-lg font-medium text-sm md:text-xs md:py-2 md:px-3 text-center transition whitespace-nowrap touch-manipulation ${
@@ -2401,14 +2402,22 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
           {/* #369: Health sub-nav. Same lighter styling and same flex-wrap as
               the Records sub-nav above, so both stack rather than pan sideways
-              on a 390px phone (#321). */}
+              on a 390px phone (#321).
+              #376: Mental Training opens a modal; Marek is staff-only + 18+. */}
           {activeProfileTab === 'health' && (
             <nav className="flex flex-wrap gap-1.5 mb-5 min-w-0">
-              {HEALTH_SUB_TABS.map(sub => (
+              {HEALTH_SUB_TABS.filter(sub => {
+                if (sub.staffOnly && !canSeeNotes) return false;
+                if (sub.key === 'marek' && !meetsAge(userData?.date_of_birth, 18)) return false;
+                return true;
+              }).map(sub => (
                 <button
                   key={sub.key}
                   type="button"
-                  onClick={() => setHealthSubTab(sub.key)}
+                  onClick={() => {
+                    if (sub.key === 'mental') { setShowMentalTraining(true); return; }
+                    setHealthSubTab(sub.key);
+                  }}
                   className={`min-h-[36px] px-3 py-1.5 rounded-full border text-xs font-medium transition whitespace-nowrap touch-manipulation ${
                     activeHealthSubTab === sub.key
                       ? 'bg-white border-blue-300 text-blue-700 shadow-sm'
@@ -2631,7 +2640,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             </div>
           )}
 
-          {activeProfileTab === 'health' && activeHealthSubTab === 'assessment' && (
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'assessment' && (
             <div className="space-y-6">
               {/* Assessment Templates */}
               {assessmentTemplates.length > 0 && (
@@ -4303,7 +4312,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <PracticeStatsTab playerId={userId} canEdit={canEditProfile || (userRole === 'player' && loggedInUserId === userId)} />
           )}
 
-          {activeProfileTab === 'marek' && (
+          {activeProfileTab === 'health' && activeHealthSubTab === 'marek' && (
             <MarekTab playerId={userId} canEdit={canEditProfile} dateOfBirth={userData?.date_of_birth} />
           )}
 
@@ -4713,6 +4722,45 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
       {showStore && (
         <StoreModal userId={userData.id} onClose={() => setShowStore(false)} />
+      )}
+
+      {showUniformStore && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Naturals Select Team Store</h2>
+              <button onClick={() => setShowUniformStore(false)} className="text-gray-400 hover:text-gray-600 transition">
+                <X size={22} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-gray-700 text-sm">Order uniforms for the Naturals Select season. Once orders are received we are not able to make changes — please order the correct numbers.</p>
+              <a
+                href="https://bsnteamsports.com/shop/ykUskUUjsG"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full text-center bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
+              >
+                Open Uniform Store
+              </a>
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-2">How to Order</h3>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+                  <li>Select your player's age-required player pack. Select all required items — you only need a youth or adult option for each item.</li>
+                  <li>Select the athlete's size, name, and/or number on each garment if applicable, then click Add to Cart.</li>
+                  <li>Select any fan gear options. Sizes shown are what is currently available and no additional sizes can be added.</li>
+                  <li>Click Check Out at the top of the page.</li>
+                  <li>Complete checkout. Put the player's name in the recipient name section.</li>
+                </ol>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-600">
+                <p className="font-medium text-gray-800 mb-1">Order questions?</p>
+                <p>Contact: <a href="mailto:clubdirectcare@bsnsports.com" className="text-blue-600 hover:underline">clubdirectcare@bsnsports.com</a></p>
+                <p className="mt-1">Stock items ship in 2 days. Custom items ship in 3–4 weeks.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {showPackages && (

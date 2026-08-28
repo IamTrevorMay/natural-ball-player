@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Layers, Users, Plus, Trash2, X, GripVertical } from 'lucide-react';
+import { Layers, Users, Plus, Trash2, X, GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 
 // #219: Training Groups management. Staff (admin/coach) separate the Naturals
@@ -20,6 +20,9 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
   const [busyGroupId, setBusyGroupId] = useState(null);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [newGroup, setNewGroup] = useState({ name: '', age_group: '' });
+  const [expandedGroups, setExpandedGroups] = useState({});
+
+  const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
 
   const flashMsg = (type, text) => {
     setFlash({ type, text });
@@ -250,51 +253,64 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
             <div className="space-y-3">
               {trainingGroups.map(group => {
                 const members = membersByTeam[group.id] || [];
+                const isOpen = !!expandedGroups[group.id];
                 return (
                   <div
                     key={group.id}
-                    className="rounded-lg border-2 border-gray-200 bg-white transition p-3"
+                    className="rounded-lg border-2 border-gray-200 bg-white transition"
                   >
-                    <div className="flex items-center justify-between mb-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.id)}
+                      className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 transition rounded-lg"
+                    >
                       <div className="min-w-0">
                         <div className="font-semibold text-gray-900 truncate">{group.name}</div>
                         <div className="text-xs text-gray-400">
                           {group.age_group ? `${group.age_group} · ` : ''}{members.length} athlete{members.length === 1 ? '' : 's'}
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleDeleteGroup(group)}
-                        title="Delete training group"
-                        className="p-1.5 text-gray-300 hover:text-red-500 transition shrink-0"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                    {members.length === 0 ? (
-                      <div className="text-xs rounded-md px-3 py-4 text-center text-gray-400 border border-dashed border-gray-200">
-                        No athletes in this group yet.
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        {isOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group); }}
+                          title="Delete training group"
+                          className="p-1.5 text-gray-300 hover:text-red-500 transition"
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {members.map(m => (
-                          <span key={m.id} className="inline-flex items-center gap-1 bg-gray-100 rounded-full pl-2.5 pr-1 py-1 text-xs text-gray-700">
-                            <button
-                              type="button"
-                              onClick={() => onNavigateToProfile && m.user_id && onNavigateToProfile(m.user_id)}
-                              className="hover:text-blue-600 hover:underline truncate max-w-[140px]"
-                            >
-                              {m.users?.full_name || 'Unknown'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveMember(group, m)}
-                              title="Remove from group"
-                              className="text-gray-400 hover:text-red-500"
-                            >
-                              <X size={13} />
-                            </button>
-                          </span>
-                        ))}
+                    </button>
+                    {isOpen && (
+                      <div className="px-3 pb-3">
+                        {members.length === 0 ? (
+                          <div className="text-xs rounded-md px-3 py-4 text-center text-gray-400 border border-dashed border-gray-200">
+                            No athletes in this group yet.
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {members.map(m => (
+                              <span key={m.id} className="inline-flex items-center gap-1 bg-gray-100 rounded-full pl-2.5 pr-1 py-1 text-xs text-gray-700">
+                                <button
+                                  type="button"
+                                  onClick={() => onNavigateToProfile && m.user_id && onNavigateToProfile(m.user_id)}
+                                  className="hover:text-blue-600 hover:underline truncate max-w-[140px]"
+                                >
+                                  {m.users?.full_name || 'Unknown'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveMember(group, m)}
+                                  title="Remove from group"
+                                  className="text-gray-400 hover:text-red-500"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

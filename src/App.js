@@ -1458,21 +1458,8 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
           <span>Knowledge Base</span>
         </button>
 
-        <button
-          onClick={() => setCurrentView('messages')}
-          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
-            currentView === 'messages' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
-          }`}
-        >
-          <MessageSquare size={18} />
-          <span className="flex-1 text-left">Communication</span>
-          {unreadMessageCount > 0 && (
-            <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
-          )}
-        </button>
-
-        {/* #281: Email Campaign — under Communication, EZFacility-style sub-folders.
-            Admin only: this fronts the full 937-address mailing list. */}
+        {/* #281: Email Campaign — EZFacility-style sub-folders. Admin only.
+            #371: Moved above Communication per Trevor's request. */}
         {userRole === 'admin' && (
           <div>
             <button
@@ -1507,6 +1494,19 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
             )}
           </div>
         )}
+
+        <button
+          onClick={() => setCurrentView('messages')}
+          className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition text-sm ${
+            currentView === 'messages' ? 'bg-blue-200 text-blue-900' : 'hover:bg-gray-800'
+          }`}
+        >
+          <MessageSquare size={18} />
+          <span className="flex-1 text-left">Communication</span>
+          {unreadMessageCount > 0 && (
+            <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] flex items-center justify-center px-1">{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</span>
+          )}
+        </button>
 
         {(userRole === 'admin' || userRole === 'coach') && (
           <>
