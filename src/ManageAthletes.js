@@ -59,6 +59,11 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterSubStatus, setFilterSubStatus] = useState('All');
   const [filterOfferStatus, setFilterOfferStatus] = useState('All');
+  // Cordell, 2026-08-29: campaigns now reach the Parent 1 / Parent 2 addresses
+  // on an athlete's profile, but signup has never asked for them — the only way
+  // one gets filled in is by hand on the Profile page. This filter is how staff
+  // find the athletes still missing one.
+  const [filterParentEmail, setFilterParentEmail] = useState('All');
   const [editingPlayer, setEditingPlayer] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [teamCoachMap, setTeamCoachMap] = useState({});
@@ -78,7 +83,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, date_of_birth, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, date_of_birth, parent1_email, parent2_email, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name))')
       .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
@@ -302,6 +307,11 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     rosterPlayers.flatMap(p => (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean))
   )].sort();
 
+  // An athlete counts as covered if EITHER parent slot holds something. Trimmed,
+  // because a field holding only spaces is not an address.
+  const hasParentEmail = (p) => !!((p.parent1_email || '').trim() || (p.parent2_email || '').trim());
+  const missingParentEmailCount = rosterPlayers.filter(p => !hasParentEmail(p)).length;
+
   const displayPlayers = rosterPlayers.filter(p => {
     const profile = p.player_profiles?.[0] || {};
     const teamNames = (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean);
@@ -317,6 +327,8 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     if (filterStatus !== 'All' && profile.status !== filterStatus) return false;
     if (filterSubStatus !== 'All' && (profile.sub_status || '') !== filterSubStatus) return false;
     if (filterOfferStatus !== 'All' && (profile.offer_status || '') !== filterOfferStatus) return false;
+    if (filterParentEmail === 'Missing' && hasParentEmail(p)) return false;
+    if (filterParentEmail === 'On file' && !hasParentEmail(p)) return false;
     return true;
   });
 
@@ -366,6 +378,25 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
               <span>{saving ? 'Saving...' : 'Save All'}</span>
             </button>
           </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <label htmlFor="parent-email-filter" className="text-xs font-medium text-gray-600">Parent email</label>
+        <select
+          id="parent-email-filter"
+          value={filterParentEmail}
+          onChange={(e) => setFilterParentEmail(e.target.value)}
+          className="px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white text-gray-700"
+        >
+          <option value="All">All athletes</option>
+          <option value="Missing">Missing a parent email</option>
+          <option value="On file">Has a parent email</option>
+        </select>
+        {missingParentEmailCount > 0 && (
+          <span className="text-xs text-gray-500">
+            {missingParentEmailCount} of {rosterPlayers.length} have no parent email on file
+          </span>
         )}
       </div>
 
