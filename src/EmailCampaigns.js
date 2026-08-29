@@ -28,8 +28,84 @@ import { formatUserError } from './errorMessage';
  *
  * The recipient COUNT and the recipient LIST must never diverge, so both
  * derive from the same query builder (buildRecipientQuery) — the count is
- * head:true over exactly the query the list would run.
+ * the LENGTH of the list that query produces, never a separate estimate.
+ *
+ * ⚠️ #281 follow-up, 2026-08-29: a campaign now also reaches the Parent 1 and
+ * Parent 2 addresses on an athlete's profile, so ONE user row can produce up
+ * to THREE inboxes. That is why the count cannot be a head:true row count any
+ * more — it has to expand and de-duplicate first. See expandRecipients.
  */
+
+// Paginated read. A single .range(0, 9999) is silently clamped to the
+// project's db-max-rows (1000 by default) and returns a SHORT LIST WITH NO
+// ERROR. Module-level on purpose: it closes over nothing, so effects can
+// depend on callers of it without dragging the whole component into deps.
+const readAllPages = async (build) => {
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await build().range(from, from + PAGE - 1);
+    if (error) return { rows: out, error };
+    const page = data || [];
+    out.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return { rows: out, error: null };
+};
+
+// Deliberately permissive. Apostrophes are legal in a local part and were
+// wrongly rejected here once already; what this needs to catch is the shape a
+// hand-typed parent address actually arrives in — stray whitespace, a missing
+// @, a domain with no dot.
+const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const RECIPIENT_COLUMNS = 'id, email, parent1_email, parent2_email';
+
+// One entry per INBOX. Walks users in id order and takes, for each: the
+// athlete's own address first, then Parent 1, then Parent 2.
+//
+// Cordell, 2026-08-29: "Please move forward with sending out to parents" —
+// parents had never been recipients (this file only ever read users.email)
+// and were complaining they could not see schedules, blasts or updates.
+//
+// Two rules this must not break:
+//
+//  1. ADDITIVE ONLY. The athlete's own address is passed through exactly as it
+//     is today and is NOT validated, because validating it here could silently
+//     drop somebody who receives campaigns right now. Validation applies only
+//     to the two parent columns, which are free-typed on the profile and have
+//     never been checked by anything.
+//
+//  2. ONE ROW PER INBOX. email_campaign_recipients carries
+//     UNIQUE (campaign_id, lower(email)), so two siblings who share a parent
+//     address — or a parent whose address IS the athlete's — must collapse to
+//     a single entry HERE, or the snapshot insert fails and nothing sends.
+//     First occurrence wins, which is why the athlete is taken first.
+//
+// user_id stays the ATHLETE's id on a parent row. That is what ties a parent
+// back to the player they were listed under, and it is what lets a parent
+// unsubscribe on their own without unsubscribing the athlete — each row gets
+// its own unsubscribe token from the database.
+const expandRecipients = (rows) => {
+  const seen = new Set();
+  const out = [];
+  const take = (id, raw, isParent) => {
+    // Trim BEFORE anything else: a leading space once dodged the blacklist
+    // while still failing validation downstream.
+    const key = (raw || '').trim().toLowerCase();
+    if (!key) return;
+    if (isParent && !LOOKS_LIKE_EMAIL.test(key)) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ id, email: key });
+  };
+  (rows || []).forEach(r => {
+    take(r.id, r.email, false);
+    take(r.id, r.parent1_email, true);
+    take(r.id, r.parent2_email, true);
+  });
+  return out;
+};
 
 const SECTIONS = [
   { key: 'send', label: 'Send Email Campaign', desc: 'Send an email to all or targeted clients', icon: Send },
@@ -135,10 +211,13 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     return () => { cancelled = true; };
   }, [filters.teamId]);
 
-  // THE single source of truth for who a campaign reaches. The header count
-  // is this exact query with head:true — never a separate approximation.
-  const buildRecipientQuery = useCallback((selectCols, { head = false } = {}) => {
-    let q = supabase.from('users').select(selectCols, head ? { count: 'exact', head: true } : undefined);
+  // THE single source of truth for WHICH USERS a campaign reaches.
+  // ⚠️ There is deliberately no head:true count option here any more. A row
+  // count over this query would undercount, because each row can carry parent
+  // addresses too. Everything that needs a number goes through
+  // readRecipientList below, which expands and de-duplicates first.
+  const buildRecipientQuery = useCallback((selectCols) => {
+    let q = supabase.from('users').select(selectCols);
     if (category === 'players') q = q.eq('role', 'player');
     else if (category === 'staff') q = q.in('role', ['admin', 'coach']);
     else if (category === 'leads') q = q.eq('role', 'public');
@@ -159,21 +238,29 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     return q;
   }, [category, filters, teamMemberIds]);
 
+  // The list of inboxes a campaign would reach right now. The header count and
+  // the frozen snapshot BOTH come from here so they cannot drift apart.
+  const readRecipientList = useCallback(async () => {
+    const { rows, error } = await readAllPages(() => buildRecipientQuery(RECIPIENT_COLUMNS).order('id'));
+    if (error) return { list: null, error };
+    return { list: expandRecipients(rows), error: null };
+  }, [buildRecipientQuery]);
+
   useEffect(() => {
     // Waiting on the team resolve — don't show a count for the wrong list.
     if (filters.teamId && teamMemberIds === null) { setCount(null); return; }
     let cancelled = false;
     (async () => {
-      const { count: n, error } = await buildRecipientQuery('id', { head: true });
+      const { list, error } = await readRecipientList();
       if (error) {
         console.error('EmailCampaigns: recipient count query failed:', error);
         if (!cancelled) { setCount(null); setCountError(formatUserError(error)); }
         return;
       }
-      if (!cancelled) { setCount(n ?? 0); setCountError(null); }
+      if (!cancelled) { setCount(list.length); setCountError(null); }
     })();
     return () => { cancelled = true; };
-  }, [buildRecipientQuery, filters.teamId, teamMemberIds]);
+  }, [readRecipientList, filters.teamId, teamMemberIds]);
 
   const templateCategories = useMemo(
     () => Array.from(new Set(templates.map(t => t.category).filter(Boolean))).sort(),
@@ -259,22 +346,6 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
   const canOpenBlastConfirm = !!subject.trim() && !bodyIsEmpty && (count || 0) >= 1
     && !blastBusy && !blastFinished;
 
-  // Paginated. A single .range(0, 9999) is silently clamped to the project's
-  // db-max-rows (1000 by default) and returns a SHORT LIST WITH NO ERROR —
-  // so the progress display would quietly under-report on a big send.
-  const readAllPages = async (build) => {
-    const PAGE = 1000;
-    const out = [];
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await build().range(from, from + PAGE - 1);
-      if (error) return { rows: out, error };
-      const page = data || [];
-      out.push(...page);
-      if (page.length < PAGE) break;
-    }
-    return { rows: out, error: null };
-  };
-
   const readTally = async (campaignId) => {
     const { rows, error } = await readAllPages(() => supabase
       .from('email_campaign_recipients')
@@ -351,36 +422,22 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     setBlast(prev => ({ ...prev, phase: 'snapshotting', error: null }));
     let campaignId = null;
     try {
-      // 1. The list must still match the number the admin typed.
-      const { count: liveCount, error: recountError } = await buildRecipientQuery('id', { head: true });
-      if (recountError) throw new Error(`Could not re-verify the recipient count: ${formatUserError(recountError)}`);
-      if (liveCount !== confirmedCount) {
-        throw new Error(`The recipient list changed (now ${liveCount}, you confirmed ${confirmedCount}). Nothing was sent — please re-check and confirm again.`);
-      }
-
-      // 2. Freeze the list — same query the count came from.
-      // Paginated: a single wide .range() is clamped to db-max-rows (default
-      // 1000) with no error, which used to make this fail outright once the
-      // roster passed ~1000 people. It is at 991 today.
-      const { rows: recipients, error: listError } = await readAllPages(() => buildRecipientQuery('id, email').order('id'));
+      // 1 & 2. Re-read the list and freeze it — ONE read, not two.
+      // The old code counted with head:true and then re-read the rows, which
+      // left a window where the count it checked and the list it froze could
+      // disagree. Now the same array is both. readRecipientList paginates
+      // (a single wide .range() is clamped to db-max-rows with no error) and
+      // has already collapsed the athlete's address and both parent addresses
+      // down to one entry per inbox, case-insensitively — users.email's own
+      // UNIQUE constraint is case-SENSITIVE and 74 rows store mixed-case
+      // addresses, so a.smith@ and A.Smith@ are two rows and one human.
+      const { list: unique, error: listError } = await readRecipientList();
       if (listError) throw new Error(`Could not load the recipient list: ${formatUserError(listError)}`);
-      if (recipients.length !== confirmedCount) {
-        throw new Error(`Recipient list loaded ${recipients.length} rows but the confirmed count is ${confirmedCount}. Nothing was sent.`);
-      }
 
-      // One row per inbox. users.email carries a UNIQUE constraint, but a
-      // case-SENSITIVE one, and 74 rows already store mixed-case addresses —
-      // so a.smith@ and A.Smith@ are two rows and one human. Sending twice
-      // to the same family on the first ever campaign is exactly the kind of
-      // thing that gets reported as spam.
-      const seen = new Set();
-      const unique = [];
-      recipients.forEach(r => {
-        const key = (r.email || '').trim().toLowerCase();
-        if (!key || seen.has(key)) return;
-        seen.add(key);
-        unique.push({ ...r, email: key });
-      });
+      // The list must still match the number the admin typed.
+      if (unique.length !== confirmedCount) {
+        throw new Error(`The recipient list changed (now ${unique.length}, you confirmed ${confirmedCount}). Nothing was sent — please re-check and confirm again.`);
+      }
 
       // 3. The campaign row the server will trust.
       const { data: campaign, error: campaignError } = await supabase
@@ -436,7 +493,7 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
   const stepHeader = (title) => (
     <h4 className="text-base font-semibold text-gray-900">
       {title}{' '}
-      <span className="font-normal text-gray-500">( {countLabel} client{count === 1 ? '' : 's'} selected. )</span>
+      <span className="font-normal text-gray-500">( {countLabel} recipient{count === 1 ? '' : 's'} selected. )</span>
     </h4>
   );
 
