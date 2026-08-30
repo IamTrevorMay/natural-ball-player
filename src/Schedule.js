@@ -4462,18 +4462,72 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
               <p className="text-sm font-medium text-gray-700">What would you like to add?</p>
               
               {view === 'team' && (
-                <button
-                  onClick={() => setEventType('team-event')}
-                  className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left"
-                >
-                  <div className="flex items-center space-x-3">
-                    <Users className="text-blue-600" size={24} />
-                    <div>
-                      <div className="font-semibold text-gray-900">Team Event</div>
-                      <div className="text-sm text-gray-600">Game, practice, or team activity</div>
+                <>
+                  <button
+                    onClick={() => setEventType('team-event')}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Users className="text-blue-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Team Event</div>
+                        <div className="text-sm text-gray-600">Game, practice, or team activity</div>
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+
+                  <button
+                    onClick={() => setEventType('workout')}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Dumbbell className="text-purple-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Workout</div>
+                        <div className="text-sm text-gray-600">Add a single workout for the whole team</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => { setEventType('workout'); setWorkoutType('program'); }}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <ClipboardList className="text-blue-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Assign Training Program</div>
+                        <div className="text-sm text-gray-600">Assign a full multi-day program to the whole team</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => setEventType('meal')}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-orange-500 hover:bg-orange-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Utensils className="text-orange-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Meal</div>
+                        <div className="text-sm text-gray-600">Add a single meal for the whole team</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => { setEventType('meal'); setMealType('plan'); }}
+                    className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Apple className="text-green-600" size={24} />
+                      <div>
+                        <div className="font-semibold text-gray-900">Assign Meal Plan</div>
+                        <div className="text-sm text-gray-600">Assign a full meal plan to the whole team</div>
+                      </div>
+                    </div>
+                  </button>
+                </>
               )}
 
               {view === 'player' && (
