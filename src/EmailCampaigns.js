@@ -141,8 +141,8 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
   // Step 1 — category. Step 2 — filters.
   const [category, setCategory] = useState('all');
   const [teams, setTeams] = useState([]);
-  const [filters, setFilters] = useState({ teamId: '', staffStatus: '', signedUpAfter: '', signedUpBefore: '' });
-  // Resolved user ids for the chosen team; null = no team filter active.
+  const [filters, setFilters] = useState({ teamIds: [], staffStatus: '', signedUpAfter: '', signedUpBefore: '' });
+  // Resolved user ids for the chosen team(s); null = no team filter active.
   const [teamMemberIds, setTeamMemberIds] = useState(null);
 
   const [count, setCount] = useState(null);
@@ -165,6 +165,9 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
   // cannot start while one is in flight: null → 'confirm' → 'snapshotting'
   // → 'sending' → 'done' | 'error'.
   const [blast, setBlast] = useState(null); // { phase, confirmText, confirmedCount, campaignId, tally, error }
+
+  // Stable string key for the selected team ids — safe to use as an effect dep.
+  const teamIdsKey = filters.teamIds.join(',');
 
   useEffect(() => {
     (async () => {
@@ -198,18 +201,19 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     })();
   }, []);
 
-  // Resolve the chosen team to user ids BEFORE counting, so the count and the
-  // list can share one query.
+  // Resolve the chosen team(s) to user ids BEFORE counting, so the count and
+  // the list can share one query. Multiple teams are OR'd: a user on any
+  // selected team is included.
   useEffect(() => {
-    if (!filters.teamId) { setTeamMemberIds(null); return; }
+    if (filters.teamIds.length === 0) { setTeamMemberIds(null); return; }
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.from('team_members').select('user_id').eq('team_id', filters.teamId);
+      const { data, error } = await supabase.from('team_members').select('user_id').in('team_id', filters.teamIds);
       if (error) { console.error('EmailCampaigns: team_members query failed:', error); if (!cancelled) setTeamMemberIds([]); return; }
       if (!cancelled) setTeamMemberIds(Array.from(new Set((data || []).map(r => r.user_id).filter(Boolean))));
     })();
     return () => { cancelled = true; };
-  }, [filters.teamId]);
+  }, [teamIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // THE single source of truth for WHICH USERS a campaign reaches.
   // ⚠️ There is deliberately no head:true count option here any more. A row
@@ -223,8 +227,8 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     else if (category === 'leads') q = q.eq('role', 'public');
     // 'all' = All Contacts: every user row with an email.
     q = q.not('email', 'is', null);
-    if (filters.teamId && teamMemberIds !== null) {
-      // A team with no members must resolve to zero recipients, not "no filter".
+    if (filters.teamIds.length > 0 && teamMemberIds !== null) {
+      // Teams with no members must resolve to zero recipients, not "no filter".
       q = q.in('id', teamMemberIds.length > 0 ? teamMemberIds : ['00000000-0000-0000-0000-000000000000']);
     }
     if (category === 'staff' && filters.staffStatus) {
@@ -248,7 +252,7 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
 
   useEffect(() => {
     // Waiting on the team resolve — don't show a count for the wrong list.
-    if (filters.teamId && teamMemberIds === null) { setCount(null); return; }
+    if (filters.teamIds.length > 0 && teamMemberIds === null) { setCount(null); return; }
     let cancelled = false;
     (async () => {
       const { list, error } = await readRecipientList();
@@ -260,7 +264,7 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
       if (!cancelled) { setCount(list.length); setCountError(null); }
     })();
     return () => { cancelled = true; };
-  }, [readRecipientList, filters.teamId, teamMemberIds]);
+  }, [readRecipientList, teamIdsKey, teamMemberIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const templateCategories = useMemo(
     () => Array.from(new Set(templates.map(t => t.category).filter(Boolean))).sort(),
@@ -537,7 +541,7 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Client Category</label>
             <select
               value={category}
-              onChange={(e) => { setCategory(e.target.value); setFilters({ teamId: '', staffStatus: '', signedUpAfter: '', signedUpBefore: '' }); }}
+              onChange={(e) => { setCategory(e.target.value); setFilters({ teamIds: [], staffStatus: '', signedUpAfter: '', signedUpBefore: '' }); }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -556,15 +560,34 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
           <div className="grid sm:grid-cols-2 gap-4 max-w-2xl">
             {(category === 'all' || category === 'players') && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Team</label>
-                <select
-                  value={filters.teamId}
-                  onChange={(e) => setFilters({ ...filters, teamId: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Any team</option>
-                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teams</label>
+                <div className="border border-gray-300 rounded-lg overflow-y-auto max-h-40 divide-y divide-gray-100">
+                  {teams.map(t => (
+                    <label key={t.id} className="flex items-center space-x-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        checked={filters.teamIds.includes(t.id)}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                            ? [...filters.teamIds, t.id]
+                            : filters.teamIds.filter(id => id !== t.id);
+                          setFilters({ ...filters, teamIds: next });
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>{t.name}</span>
+                    </label>
+                  ))}
+                </div>
+                {filters.teamIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFilters({ ...filters, teamIds: [] })}
+                    className="text-xs text-blue-600 hover:underline mt-1"
+                  >
+                    Clear selection ({filters.teamIds.length} selected)
+                  </button>
+                )}
               </div>
             )}
             {category === 'staff' && (
@@ -675,6 +698,9 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
           {stepHeader('Preview and Send')}
           <div className="text-sm text-gray-600 space-y-1">
             <p><span className="font-medium text-gray-900">Recipients:</span> {countLabel} ({activeCategoryLabel})</p>
+            {filters.teamIds.length > 0 && (
+              <p><span className="font-medium text-gray-900">Teams:</span> {teams.filter(t => filters.teamIds.includes(t.id)).map(t => t.name).join(', ')}</p>
+            )}
             <p><span className="font-medium text-gray-900">Return address:</span> {returnEmail || '—'}</p>
             <p><span className="font-medium text-gray-900">Subject:</span> {subject || <span className="italic text-gray-400">no subject yet</span>}</p>
           </div>
