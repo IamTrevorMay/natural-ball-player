@@ -5,6 +5,9 @@
 - **Backend:** Supabase (Postgres + Auth + Storage + Edge Functions)
 - **Deploy:** Vercel via Git integration (auto-deploys on push to main)
 
+## Edge function `verify_jwt` (CRITICAL)
+`supabase functions deploy` defaults `verify_jwt` to **true**. Any function reached WITHOUT a Supabase JWT (OAuth redirect, third-party webhook, logged-out browser) then gets a gateway-level 401 (`UNAUTHORIZED_NO_AUTH_HEADER`) *before its handler runs* — so nothing appears in the function's own logs, only in `function_edge_logs`. `supabase/config.toml` pins `verify_jwt = false` for the seven functions that need it (`whoop-callback`, `signup`, `square-webhook`, `public-availability`, `public-book-checkout`, `unsubscribe`, `ingest-newsletter`). **Add any new no-JWT function to that file**, or the next bulk redeploy will silently break it — this is exactly what killed WHOOP account linking between 2026-08-22 and 2026-09-01.
+
 ## Key IDs
 - Supabase project: `cjilkqzifyhssbsiqgfu` (NBP Portal)
 - Vercel project: `prj_esGXWgj1jyLoC45LO4jAwX7u7jW8`

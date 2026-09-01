@@ -1,0 +1,56 @@
+# Supabase CLI project config.
+#
+# The ONLY reason this file exists is to pin `verify_jwt` per edge function.
+# `supabase functions deploy` defaults verify_jwt to TRUE. Any function that is
+# called by something without a Supabase JWT — an OAuth redirect, a third-party
+# webhook, a logged-out browser — gets a gateway-level 401 before its handler
+# ever runs, and the failure is invisible in the function's own logs.
+#
+# This bit us on 2026-09-01: a bulk redeploy silently reset whoop-callback to
+# verify_jwt=true, so every athlete finishing WHOOP OAuth got
+# `UNAUTHORIZED_NO_AUTH_HEADER`. Keep this file in sync when adding a function
+# that is reached without a JWT.
+#
+# Each function below authenticates its own callers — see the note per entry.
+
+project_id = "cjilkqzifyhssbsiqgfu"
+
+# WHOOP OAuth redirect target (via the /api/whoop/callback rewrite in
+# vercel.json). WHOOP sends the user's BROWSER here, so there is no JWT.
+# Auth is the HMAC-SHA256-signed `state` param, timing-safe compared, with a
+# 10-minute replay window.
+[functions.whoop-callback]
+verify_jwt = false
+
+# Self-serve account creation. The caller has no account yet, so no JWT exists.
+[functions.signup]
+verify_jwt = false
+
+# Square server-to-server webhook. Auth is Square's HMAC signature header.
+[functions.square-webhook]
+verify_jwt = false
+
+# Public booking: read open occurrences. No-login /book route.
+[functions.public-availability]
+verify_jwt = false
+
+# Public booking: create pending booking + Square payment link. No-login /book
+# route; guests never touch public_bookings directly (RLS is staff-only).
+[functions.public-book-checkout]
+verify_jwt = false
+
+# One-click email unsubscribe. Auth is the opaque per-recipient token in the
+# link; recipients are logged out when they click it.
+[functions.unsubscribe]
+verify_jwt = false
+
+# Inbound newsletter ingestion (external sender, no JWT).
+[functions.ingest-newsletter]
+verify_jwt = false
+
+# Everything else (whoop, create-user, delete-user, update-user-email,
+# send-email, send-campaign, reset-user-password, square-checkout,
+# square-catalog-sync, square-apply-discount, square-subscriptions-backfill,
+# square-backfill-resolve, public-booking-refund, generate-report, fetch-rss)
+# intentionally keeps the verify_jwt=true default — they are called from the
+# authenticated app and do their own role checks on top.
