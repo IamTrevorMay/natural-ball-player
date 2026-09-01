@@ -5924,7 +5924,7 @@ function PitchingStatsView({ playerId, canEdit }) {
         {canEdit && !adding && (
           <button onClick={() => setAdding(true)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center space-x-1">
             <Plus size={16} />
-            <span>Log Pitch</span>
+            <span>Log Outing</span>
           </button>
         )}
       </div>
