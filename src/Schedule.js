@@ -5951,7 +5951,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
 
   // For staff viewing a training slot, fetch who is booked and their active package.
   useEffect(() => {
-    if (event.event_type !== 'training_slot' || userRole === 'player') return;
+    if (event.event_type !== 'training_slot') return;
     setSlotResLoading(true);
     (async () => {
       try {
@@ -6279,7 +6279,7 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                 the note could not be read at all. */}
             {event.notes && <div className="text-sm text-gray-500 break-words">{event.notes}</div>}
 
-            {isPlayer ? (
+            {isPlayer && (
               withinCancelWindow ? (
                 showCancelConfirm ? (
                   /* #306: the athlete used to pick their own reason here, and
@@ -6317,30 +6317,30 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                   Cancellations close 12 hours before the session. Please contact your coach if you can't make it.
                 </div>
               )
-            ) : (
-              <div className="space-y-2 pt-2 border-t border-gray-100">
-                {slotResLoading ? (
-                  <div className="text-xs text-gray-400">Loading bookings…</div>
-                ) : slotReservations.length === 0 ? (
-                  <div className="text-xs text-gray-400">No bookings for this session.</div>
-                ) : (
-                  slotReservations.map(res => (
-                    <div key={res.id} className="flex items-start justify-between gap-2 bg-gray-50 rounded-lg p-2 text-xs">
-                      <div className="min-w-0">
-                        <div className="font-medium text-gray-900 truncate">{res.users?.full_name || 'Unknown'}</div>
-                        {res._pkg ? (
-                          <div className="text-gray-500 mt-0.5 truncate">{res._pkg.store_products?.name}{res._pkg.remaining_qty != null ? ` · ${res._pkg.remaining_qty} session${res._pkg.remaining_qty !== 1 ? 's' : ''} left` : ''}</div>
-                        ) : (
-                          <div className="text-gray-400 mt-0.5">No active package</div>
-                        )}
-                      </div>
-                      <span className={`flex-shrink-0 px-2 py-0.5 rounded-full font-medium ${res.status === 'confirmed' ? 'bg-green-100 text-green-700' : res.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{res.status}</span>
-                    </div>
-                  ))
-                )}
-                <div className="text-xs text-gray-400">Manage attendance from the Slots tab.</div>
-              </div>
             )}
+
+            <div className="space-y-2 pt-2 border-t border-gray-100">
+              {slotResLoading ? (
+                <div className="text-xs text-gray-400">Loading bookings…</div>
+              ) : slotReservations.length === 0 ? (
+                <div className="text-xs text-gray-400">No bookings for this session.</div>
+              ) : (
+                slotReservations.map(res => (
+                  <div key={res.id} className="flex items-start justify-between gap-2 bg-gray-50 rounded-lg p-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900 truncate">{res.users?.full_name || 'Unknown'}</div>
+                      {!isPlayer && (res._pkg ? (
+                        <div className="text-gray-500 mt-0.5 truncate">{res._pkg.store_products?.name}{res._pkg.remaining_qty != null ? ` · ${res._pkg.remaining_qty} session${res._pkg.remaining_qty !== 1 ? 's' : ''} left` : ''}</div>
+                      ) : (
+                        <div className="text-gray-400 mt-0.5">No active package</div>
+                      ))}
+                    </div>
+                    <span className={`flex-shrink-0 px-2 py-0.5 rounded-full font-medium ${res.status === 'confirmed' ? 'bg-green-100 text-green-700' : res.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{res.status}</span>
+                  </div>
+                ))
+              )}
+              {!isPlayer && <div className="text-xs text-gray-400">Manage attendance from the Slots tab.</div>}
+            </div>
 
             <button onClick={onClose} className="w-full border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Close</button>
           </div>
