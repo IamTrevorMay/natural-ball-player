@@ -18,6 +18,7 @@ import MentalTrainingModal from './MentalTrainingModal';
 import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
+import { FACILITY_FINE_ENABLED, FACILITY_FINE_LABEL } from './facilityFineDocument';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -414,6 +415,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [waiverData, setWaiverData] = useState(null);
   const [contractData, setContractData] = useState(null);
   const [loiData, setLoiData] = useState(null);
+  // #378: facility fine acknowledgment status. `unavailable` is a third state,
+  // distinct from "not yet signed" - see fetchFacilityFineData below.
+  const [facilityFineData, setFacilityFineData] = useState(null);
+  const [facilityFineUnavailable, setFacilityFineUnavailable] = useState(false);
   const [armCareRoutines, setArmCareRoutines] = useState([]);
   const [editingRoutineId, setEditingRoutineId] = useState(null);
   const [routineDraft, setRoutineDraft] = useState({ title: '', content: '' });
@@ -507,6 +512,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     fetchWaiverData();
     fetchContractData();
     fetchLoiData();
+    fetchFacilityFineData();
     fetchArmCareRoutines();
     fetchGoals();
     fetchAssessmentData();
@@ -1728,6 +1734,37 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       setLoiData(data);
     } catch (error) {
       console.error('Error fetching LOI data:', error);
+    }
+  };
+
+  // #378: read-only status of the facility fine acknowledgment. The signing
+  // flow itself is src/FacilityFinePage.js (#189) - this only mirrors it into
+  // the Documents list so an athlete (and staff viewing them) sees the same
+  // set of documents in both places. Gated by FACILITY_FINE_ENABLED; see
+  // src/facilityFineDocument.js for the switch and why it ships off.
+  //
+  // There can legitimately be more than one row per user (one per uploaded
+  // version of the document), so this takes the newest rather than
+  // .maybeSingle(), which throws when more than one row matches.
+  const fetchFacilityFineData = async () => {
+    if (!FACILITY_FINE_ENABLED) return;
+    try {
+      const { data, error } = await supabase
+        .from('facility_fine_signatures')
+        .select('*')
+        .eq('user_id', userId)
+        .order('signed_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      setFacilityFineData((data && data[0]) || null);
+      setFacilityFineUnavailable(false);
+    } catch (error) {
+      // The table or its policies may not have been migrated on this database
+      // yet. Never render that as a red "Incomplete": a false unsigned badge
+      // sends a family off to sign a document that cannot be saved.
+      console.error('Error fetching facility fine data:', error);
+      setFacilityFineData(null);
+      setFacilityFineUnavailable(true);
     }
   };
 
@@ -3887,6 +3924,75 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 )}
               </div>
 
+              {/* Facility Fine (#378). Hidden until FACILITY_FINE_ENABLED is
+                  flipped on in src/facilityFineDocument.js - which must not
+                  happen before Cordell's real policy PDF is uploaded and the
+                  20260902_facility_fine_athlete_read.sql migration is run. */}
+              {FACILITY_FINE_ENABLED && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setExpandedSubmission(expandedSubmission === 'doc-facility-fine' ? null : 'doc-facility-fine')}
+                    className="w-full flex items-center justify-between px-4 py-4 hover:bg-gray-50 transition text-left"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${facilityFineData ? 'bg-green-100' : 'bg-gray-100'}`}>
+                        <FileText size={20} className={facilityFineData ? 'text-green-600' : 'text-gray-400'} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-semibold text-gray-900">{FACILITY_FINE_LABEL}</h4>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {facilityFineData ? (
+                            <span className="text-green-600 font-medium">
+                              Signed on {new Date(facilityFineData.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                          ) : facilityFineUnavailable ? 'Status unavailable' : 'Not yet signed'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {facilityFineData
+                        ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Complete</span>
+                        : facilityFineUnavailable
+                          ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Unavailable</span>
+                          : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Incomplete</span>}
+                      {expandedSubmission === 'doc-facility-fine' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+                    </div>
+                  </button>
+                  {expandedSubmission === 'doc-facility-fine' && (
+                    <div className="border-t border-gray-200 p-4">
+                      {facilityFineData ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-600">Printed Name</p>
+                            <p className="text-gray-900 font-medium">{facilityFineData.signature_text || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600 mb-1">Signature</p>
+                            <SignedSignatureImage
+                              signatureValue={facilityFineData.signature_url}
+                              alt="Facility Fine Signature"
+                              className="border border-gray-200 rounded bg-white max-h-20"
+                            />
+                          </div>
+                        </div>
+                      ) : facilityFineUnavailable ? (
+                        <div className="flex items-start space-x-2 py-2">
+                          <AlertTriangle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                          <p className="text-sm text-amber-800">
+                            Signing status could not be read, so we cannot tell whether this document has been signed. This usually means the facility fine tables have not been migrated on this database yet. Ask an admin to check before treating it as unsigned.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="text-center py-4">
+                          <p className="text-sm text-gray-500">Facility fine policy not yet signed.</p>
+                          {!onBack && <p className="text-xs text-gray-400 mt-1">Go to the Facility Fine page from the sidebar to sign.</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Medical History */}
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <button
@@ -4843,7 +4949,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 rel="noopener noreferrer"
                 className="block w-full text-center bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
               >
-                Open Uniform Store
+                Open Team Store
               </a>
               <div>
                 <h3 className="font-semibold text-gray-900 mb-2">How to Order</h3>

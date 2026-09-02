@@ -1203,21 +1203,37 @@ function correctivePrep(athlete) {
   return corr.map((c) => blockOf('Prep / corrective (screen-driven)', c.name, '2 x 8-10', c.note));
 }
 
+/* #385 (Cordell): a coach can restrict which weekdays an athlete may train on so
+   the plan dodges their Naturals-team practice days. `ctx.weekdays` is an optional
+   lookup keyed by SESSION COUNT -- { 3: [3 weekday indices], 4: [4 weekday indices] }
+   -- because a week is 3 days in-season and 4 off-season. The caller
+   (ProgramGenerator) builds it from the coach's picks; the engine only reads it.
+   Absent / short / missing entry -> the engine's own Mon/Tue/Thu/Fri split, i.e.
+   behaviour before #385 is unchanged. The chosen weekday is baked into each day's
+   `name` (WD_NAME) and is what programToProgramDays turns into day_number, so the
+   on-screen preview and the saved calendar placement stay in agreement. */
+function weekdaySlots(ctx, count) {
+  const picked = ctx && ctx.weekdays ? ctx.weekdays[count] : null;
+  return Array.isArray(picked) && picked.length === count ? picked : null;
+}
+
 // Assemble the day list for one week (4-day off-season / 3-day in-season) and
 // prepend the screen-driven prep to the week's first (lower) day.
 function assembleDays(athlete, date, rx, ctx, inSeason) {
   const prep = correctivePrep(athlete);
+  const slots = weekdaySlots(ctx, inSeason ? 3 : 4);
+  const on = (i, dflt) => (slots && slots[i] != null ? slots[i] : dflt);
   const days = inSeason
     ? [
-      lowerMeDay(athlete, date, rx, { ...ctx, weekday: WD.MON }),
-      upperMeDay(athlete, date, rx, { ...ctx, weekday: WD.TUE }),
-      dynamicSplitDay(athlete, date, rx, { ...ctx, weekday: WD.THU }),
+      lowerMeDay(athlete, date, rx, { ...ctx, weekday: on(0, WD.MON) }),
+      upperMeDay(athlete, date, rx, { ...ctx, weekday: on(1, WD.TUE) }),
+      dynamicSplitDay(athlete, date, rx, { ...ctx, weekday: on(2, WD.THU) }),
     ]
     : [
-      lowerMeDay(athlete, date, rx, { ...ctx, weekday: WD.MON }),
-      upperMeDay(athlete, date, rx, { ...ctx, weekday: WD.TUE }),
-      dynamicLowerDay(athlete, date, rx, { ...ctx, weekday: WD.THU }),
-      dynamicUpperDay(athlete, date, rx, { ...ctx, weekday: WD.FRI }),
+      lowerMeDay(athlete, date, rx, { ...ctx, weekday: on(0, WD.MON) }),
+      upperMeDay(athlete, date, rx, { ...ctx, weekday: on(1, WD.TUE) }),
+      dynamicLowerDay(athlete, date, rx, { ...ctx, weekday: on(2, WD.THU) }),
+      dynamicUpperDay(athlete, date, rx, { ...ctx, weekday: on(3, WD.FRI) }),
     ];
   if (days.length) days[0] = { ...days[0], blocks: [...prep, ...days[0].blocks] };
   // Final safety net: no workout ever repeats a movement pattern (#2).
@@ -1267,6 +1283,7 @@ export function generateWeek(athlete, date, seasonStart, seasonEnd, ctx = {}) {
     weekNum: ctx.weekNum ?? 1,
     wave: ctx.wave ?? weekWave(ctx.weekNum ?? 1),
     bias: ctx.bias ?? 'balanced',
+    weekdays: ctx.weekdays || null, // #385 — optional coach-chosen training days
   };
   const inSeason = phase === Phase.IN_SEASON;
   const days = assembleDays(athlete, date, rx, c, inSeason);
@@ -1289,10 +1306,13 @@ export function generateWeek(athlete, date, seasonStart, seasonEnd, ctx = {}) {
  * Builds a lifting phase plan across the length, waves accumulation →
  * intensification → deload every 4th week, and carries a weekday on every day
  * for absolute-offset serialization.
+ * @param options.weekdays optional #385 lookup { 3: [...], 4: [...] } of weekday
+ *   indices (Mon=0…Sun=6) to place a 3-day (in-season) / 4-day (off-season) week
+ *   on. Omitted → the engine's default Mon/Tue/Thu/Fri split.
  * @returns {{athlete, lengthWeeks, phase, phaseLabel, load_style, arm_note,
  *   emphasis, level, grades, bias, phases, weeks, flags}}
  */
-export function generateProgram(athlete, planDate, seasonStart, seasonEnd, lengthWeeks) {
+export function generateProgram(athlete, planDate, seasonStart, seasonEnd, lengthWeeks, options = {}) {
   const L = Math.max(1, Math.min(16, Math.round(Number(lengthWeeks) || 1)));
   const basePhase = phaseForDate(planDate, seasonStart, seasonEnd);
   const level = scLevelFromAge(athlete.chrono_age);
@@ -1307,7 +1327,7 @@ export function generateProgram(athlete, planDate, seasonStart, seasonEnd, lengt
     const phaseEnum = KIND_TO_PHASE[ph.kind] || basePhase;
     const rx = prescriptionFor(phaseEnum, athlete);
     const weekDate = new Date(planDate.getTime() + (w - 1) * 7 * 24 * 60 * 60 * 1000);
-    const c = { weekNum: w, wave, bias, phaseKind: ph.kind };
+    const c = { weekNum: w, wave, bias, phaseKind: ph.kind, weekdays: options.weekdays || null };
     const inSeason = ph.kind === 'inseason';
     const days = assembleDays(athlete, weekDate, rx, c, inSeason);
     weeks.push({

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
-import { Mail, Send, History, LayoutTemplate, Image as ImageIcon, ShieldAlert, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { Mail, Send, History, LayoutTemplate, Image as ImageIcon, ShieldAlert, ChevronLeft, ChevronRight, ChevronDown, Check, RefreshCw } from 'lucide-react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import DOMPurify from 'dompurify';
@@ -107,6 +107,82 @@ const expandRecipients = (rows) => {
   return out;
 };
 
+// ---------------------------------------------------------------------
+// #390 — Campaign History and Failed Emails.
+//
+// Cordell, 2026-09-02: "When I click on the buttons to look at email campaign
+// history and failed emails it does not give me anything." Both sections were
+// deliberate Phase 3 stubs rendering renderPlaceholder, which from the outside
+// is indistinguishable from a dead button. The tables they were waiting on are
+// populated now, so they read real data.
+//
+// The rule these two screens are built around: a query that fails must SAY SO
+// on screen. A silent console.error here is what produced the bug report in
+// the first place.
+// ---------------------------------------------------------------------
+
+const HISTORY_LIMIT = 100;   // campaigns read per load — never unbounded.
+const RECIPIENT_LIMIT = 250; // per-campaign recipient rows shown at once.
+const FAILURE_LIMIT = 200;   // recent delivery failures shown at once.
+
+// PostgREST cannot ORDER BY an expression, so coalesce(sent_at, created_at)
+// cannot be pushed to the server. The window is taken on created_at (a
+// campaign is always created before it is sent, so the newest campaigns are
+// always inside it) and re-sorted here. Within the capped window this is
+// exactly the requested order.
+const campaignTime = (c) => new Date(c.sent_at || c.created_at || 0).getTime();
+
+const fetchRecentCampaigns = async (limit) => {
+  const { data, error } = await supabase
+    .from('email_campaigns')
+    .select('id, subject, created_by, recipient_count, status, sent_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) return { campaigns: null, error };
+  const campaigns = (data || []).slice().sort((a, b) => campaignTime(b) - campaignTime(a));
+  return { campaigns, error: null };
+};
+
+// The SAME five buckets readTally counts, spelled the same way the send path
+// writes them. Nothing new is invented here: a status outside this list is
+// counted in `total` only, exactly as readTally already behaves, so an
+// unaccounted-for row shows up as sent+failed+skipped+pending+unknown < total
+// rather than being quietly re-labelled.
+const TALLY_KEYS = ['sent', 'failed', 'skipped', 'pending', 'unknown'];
+const emptyTally = () => ({ sent: 0, failed: 0, skipped: 0, pending: 0, unknown: 0, total: 0 });
+
+const tallyByCampaign = (rows) => {
+  const out = {};
+  (rows || []).forEach(r => {
+    if (!r.campaign_id) return;
+    const t = out[r.campaign_id] || (out[r.campaign_id] = emptyTally());
+    if (TALLY_KEYS.includes(r.status)) t[r.status] += 1;
+    t.total += 1;
+  });
+  return out;
+};
+
+// Covers both vocabularies: recipient status (pending/sent/failed/skipped/
+// unknown) and campaign status (draft/sending/sent/failed/partial).
+const STATUS_STYLES = {
+  sent: 'bg-green-100 text-green-800',
+  failed: 'bg-red-100 text-red-800',
+  skipped: 'bg-gray-100 text-gray-700',
+  pending: 'bg-blue-100 text-blue-800',
+  unknown: 'bg-amber-100 text-amber-800',
+  draft: 'bg-gray-100 text-gray-700',
+  sending: 'bg-blue-100 text-blue-800',
+  partial: 'bg-amber-100 text-amber-800',
+};
+
+const statusPill = (status) => (
+  <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLES[status] || 'bg-gray-100 text-gray-700'}`}>
+    {status || 'unknown'}
+  </span>
+);
+
+const fmtWhen = (iso) => (iso ? new Date(iso).toLocaleString() : null);
+
 const SECTIONS = [
   { key: 'send', label: 'Send Email Campaign', desc: 'Send an email to all or targeted clients', icon: Send },
   { key: 'history', label: 'Campaign History', desc: 'View history for email campaigns', icon: History },
@@ -135,7 +211,15 @@ const QUILL_MODULES = {
   ],
 };
 
-export default function EmailCampaigns({ userId, section, onSectionChange }) {
+export default function EmailCampaigns({ userId, userRole, section, onSectionChange }) {
+  // #390 — Cordell asked for admins AND coaches to be able to open Campaign
+  // History and Failed Emails. Sending a blast stays admin-only: it is the one
+  // irreversible button in the app and widening it was not asked for. A coach
+  // who lands on 'send' (a stale link, a saved state) is moved to 'history'
+  // rather than shown a wizard they cannot use.
+  const canSendBlast = userRole === 'admin';
+  const visibleSections = canSendBlast ? SECTIONS : SECTIONS.filter(sec => sec.key !== 'send');
+  const effectiveSection = (!canSendBlast && section === 'send') ? 'history' : section;
   const [step, setStep] = useState(1);
 
   // Step 1 — category. Step 2 — filters.
@@ -491,6 +575,158 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     }
   };
 
+  // ---- Campaign History + Failed Emails (#390) -----------------------
+  // Loaded on open, never on a second click. `loaded` guards the auto-load
+  // so switching sections back and forth does not re-query; Refresh is the
+  // deliberate way to re-read.
+  const [history, setHistory] = useState({ loading: false, error: null, warn: null, campaigns: [], tallies: {}, senders: {} });
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [openCampaignId, setOpenCampaignId] = useState(null);
+  const [detail, setDetail] = useState({ campaignId: null, loading: false, error: null, rows: [] });
+
+  const [failedView, setFailedView] = useState({ loading: false, error: null, warn: null, blacklist: [], failures: [], failureTotal: 0 });
+  const [failedLoaded, setFailedLoaded] = useState(false);
+
+  const loadHistory = useCallback(async () => {
+    setOpenCampaignId(null);
+    setDetail({ campaignId: null, loading: false, error: null, rows: [] });
+    setHistory(prev => ({ ...prev, loading: true, error: null, warn: null }));
+
+    const { campaigns, error } = await fetchRecentCampaigns(HISTORY_LIMIT);
+    if (error) {
+      console.error('EmailCampaigns: campaign history query failed:', error);
+      setHistory({ loading: false, error: formatUserError(error), warn: null, campaigns: [], tallies: {}, senders: {} });
+      return;
+    }
+
+    const ids = campaigns.map(c => c.id);
+    let tallies = {};
+    let warn = null;
+    if (ids.length > 0) {
+      // ONE query for every campaign on screen, tallied client-side. 51
+      // campaigns must not become 51 round trips. readAllPages because the
+      // recipient table is already past a single 1000-row page.
+      const { rows, error: tallyError } = await readAllPages(() => supabase
+        .from('email_campaign_recipients')
+        .select('campaign_id, status')
+        .in('campaign_id', ids)
+        .order('id'));
+      if (tallyError) {
+        console.error('EmailCampaigns: history tally query failed:', tallyError);
+        warn = `Per-campaign results could not be fully loaded: ${formatUserError(tallyError)}`;
+      }
+      tallies = tallyByCampaign(rows);
+    }
+
+    // Sender names in one batched read, the same way this file already reads
+    // users (id, full_name). If a name cannot be resolved the row simply
+    // shows no sender rather than guessing at one.
+    const senderIds = Array.from(new Set(campaigns.map(c => c.created_by).filter(Boolean)));
+    const senders = {};
+    if (senderIds.length > 0) {
+      const { data: users, error: usersError } = await supabase
+        .from('users').select('id, full_name').in('id', senderIds);
+      if (usersError) console.error('EmailCampaigns: sender name query failed:', usersError);
+      (users || []).forEach(u => { senders[u.id] = u.full_name; });
+    }
+
+    setHistory({ loading: false, error: null, warn, campaigns, tallies, senders });
+  }, []);
+
+  // Per-campaign recipients. Capped — one campaign can hold hundreds of rows.
+  const openCampaign = useCallback(async (campaignId) => {
+    // Clicking the open row closes it.
+    if (openCampaignId === campaignId) { setOpenCampaignId(null); return; }
+    setOpenCampaignId(campaignId);
+    setDetail({ campaignId, loading: true, error: null, rows: [] });
+    const { data, error } = await supabase
+      .from('email_campaign_recipients')
+      .select('id, email, status, error, sent_at')
+      .eq('campaign_id', campaignId)
+      // Alphabetical on status is not an accident: failed < pending < sent <
+      // skipped < unknown, so the rows somebody opened this to see are the
+      // ones that survive the cap.
+      .order('status')
+      .order('email')
+      .limit(RECIPIENT_LIMIT);
+    if (error) console.error('EmailCampaigns: recipient detail query failed:', error);
+    // Two campaigns clicked quickly must not let the slower answer overwrite
+    // the faster one.
+    setDetail(prev => (prev.campaignId !== campaignId ? prev : {
+      campaignId,
+      loading: false,
+      error: error ? formatUserError(error) : null,
+      rows: error ? [] : (data || []),
+    }));
+  }, [openCampaignId]);
+
+  const loadFailed = useCallback(async () => {
+    setFailedView(prev => ({ ...prev, loading: true, error: null, warn: null }));
+
+    // 1. The blacklist. `email` is unique here (the unsubscribe function
+    // upserts on it), so it is a safe paging key; newest-first is applied
+    // after, on created_at.
+    const { rows: blacklistRows, error: blacklistError } = await readAllPages(() => supabase
+      .from('email_blacklist')
+      .select('email, reason, created_at')
+      .order('email'));
+    if (blacklistError) {
+      console.error('EmailCampaigns: blacklist query failed:', blacklistError);
+      setFailedView({ loading: false, error: formatUserError(blacklistError), warn: null, blacklist: [], failures: [], failureTotal: 0 });
+      return;
+    }
+    const blacklist = blacklistRows.slice()
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+
+    // 2. Delivery failures. A failed recipient row has no sent_at (the send
+    // path only stamps it on 'sent'), so "newest first" can only come from
+    // the campaign the row belongs to — which is why the campaign window is
+    // read first and the failures are ordered against it here.
+    const { campaigns, error: campaignError } = await fetchRecentCampaigns(HISTORY_LIMIT);
+    if (campaignError) {
+      console.error('EmailCampaigns: failures campaign query failed:', campaignError);
+      setFailedView({
+        loading: false, error: null, blacklist, failures: [], failureTotal: 0,
+        warn: `Recent delivery failures could not be loaded: ${formatUserError(campaignError)}`,
+      });
+      return;
+    }
+
+    let failures = [];
+    let warn = null;
+    const ids = campaigns.map(c => c.id);
+    if (ids.length > 0) {
+      const { rows, error: failError } = await readAllPages(() => supabase
+        .from('email_campaign_recipients')
+        .select('id, campaign_id, email, error, sent_at')
+        .eq('status', 'failed')
+        .in('campaign_id', ids)
+        .order('id'));
+      if (failError) {
+        console.error('EmailCampaigns: delivery failure query failed:', failError);
+        warn = `Recent delivery failures may be incomplete: ${formatUserError(failError)}`;
+      }
+      const rank = new Map(campaigns.map((c, i) => [c.id, i]));
+      const byId = new Map(campaigns.map(c => [c.id, c]));
+      failures = rows.slice()
+        .sort((a, b) => (rank.get(a.campaign_id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.campaign_id) ?? Number.MAX_SAFE_INTEGER))
+        .map(r => ({ ...r, campaign: byId.get(r.campaign_id) || null }));
+    }
+
+    setFailedView({
+      loading: false, error: null, warn, blacklist,
+      failures: failures.slice(0, FAILURE_LIMIT),
+      failureTotal: failures.length,
+    });
+  }, []);
+
+  // Opening the section IS the trigger. #390 was partly "I clicked it and
+  // nothing happened" — nothing here waits for a second click.
+  useEffect(() => {
+    if (effectiveSection === 'history' && !historyLoaded) { setHistoryLoaded(true); loadHistory(); }
+    if (effectiveSection === 'failed' && !failedLoaded) { setFailedLoaded(true); loadFailed(); }
+  }, [effectiveSection, historyLoaded, failedLoaded, loadHistory, loadFailed]);
+
   const activeCategoryLabel = (CATEGORIES.find(c => c.value === category) || CATEGORIES[0]).label;
   const countLabel = count === null ? '…' : count;
 
@@ -773,7 +1009,11 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
                 </p>
               )}
               <div className="flex items-center space-x-3">
-                <button type="button" onClick={() => onSectionChange('history')} className="text-sm font-medium underline">
+                <button
+                  type="button"
+                  onClick={() => { setHistoryLoaded(false); onSectionChange('history'); }}
+                  className="text-sm font-medium underline"
+                >
                   View in Campaign History
                 </button>
                 {blast.tally.failed > 0 && (
@@ -864,6 +1104,253 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
     </div>
   );
 
+  // ---- #390 renderers -------------------------------------------------
+
+  const refreshButton = (onClick, busy) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-60 flex-shrink-0"
+    >
+      <RefreshCw size={14} className={busy ? 'animate-spin' : ''} />
+      Refresh
+    </button>
+  );
+
+  const errorBox = (text) => (
+    <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{text}</div>
+  );
+
+  const warnBox = (text) => (
+    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-3 py-2">{text}</div>
+  );
+
+  const renderCampaignDetail = (campaign, tally) => {
+    if (detail.campaignId !== campaign.id) return null;
+    return (
+      <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">
+        {detail.loading && <p className="text-sm text-gray-500">Loading recipients…</p>}
+        {detail.error && errorBox(`Could not load this campaign's recipients: ${detail.error}`)}
+        {!detail.loading && !detail.error && detail.rows.length === 0 && (
+          <p className="text-sm text-gray-500">No recipient rows were ever snapshotted for this campaign.</p>
+        )}
+        {detail.rows.length > 0 && (
+          <>
+            <p className="text-xs text-gray-500">
+              Showing {detail.rows.length}
+              {tally && tally.total > detail.rows.length ? ` of ${tally.total}` : ''} recipient{detail.rows.length === 1 ? '' : 's'} — failures first.
+              {tally && tally.total > detail.rows.length ? ' Only the first page is shown.' : ''}
+            </p>
+            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto border border-gray-200 rounded-lg bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Email</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Status</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Error</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Sent</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {detail.rows.map(r => (
+                    <tr key={r.id}>
+                      <td className="px-3 py-2 text-gray-900 whitespace-nowrap">{r.email}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{statusPill(r.status)}</td>
+                      <td className="px-3 py-2 text-gray-600">{r.error || '—'}</td>
+                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtWhen(r.sent_at) || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderHistory = () => (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold text-gray-900">Campaign History</h4>
+          <p className="text-xs text-gray-500 mt-0.5">
+            The {HISTORY_LIMIT} most recent campaigns, newest first. Click one to see every address it went to.
+          </p>
+        </div>
+        {refreshButton(loadHistory, history.loading)}
+      </div>
+
+      {history.error && errorBox(`Could not load campaign history: ${history.error}`)}
+      {history.warn && warnBox(history.warn)}
+
+      {(history.loading || !historyLoaded) && history.campaigns.length === 0 && !history.error && (
+        <p className="text-sm text-gray-500 py-8 text-center">Loading campaigns…</p>
+      )}
+
+      {/* `historyLoaded` is load-bearing: without it the very first paint —
+          before the effect has run — shows "No campaigns yet", which is the
+          exact wrong thing to flash at somebody who filed #390 because this
+          screen showed him nothing. */}
+      {historyLoaded && !history.loading && !history.error && history.campaigns.length === 0 && (
+        <div className="text-center py-16 px-6">
+          <History size={40} className="mx-auto mb-3 text-gray-300" />
+          <h5 className="text-base font-semibold text-gray-900 mb-1">No campaigns yet</h5>
+          <p className="text-sm text-gray-500 max-w-md mx-auto">
+            Every campaign shows up here the moment it is created in Send Email Campaign, with its results.
+          </p>
+        </div>
+      )}
+
+      {history.campaigns.length > 0 && (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          {history.campaigns.map(c => {
+            const isOpen = openCampaignId === c.id;
+            const tally = history.tallies[c.id];
+            const sender = c.created_by ? history.senders[c.created_by] : null;
+            return (
+              <div key={c.id} className="border-b border-gray-100 last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => openCampaign(c.id)}
+                  className="w-full flex items-start px-4 py-3 hover:bg-gray-50 text-left"
+                >
+                  {isOpen
+                    ? <ChevronDown size={16} className="text-gray-500 mt-0.5 flex-shrink-0" />
+                    : <ChevronRight size={16} className="text-gray-500 mt-0.5 flex-shrink-0" />}
+                  <div className="ml-3 flex-1 min-w-0">
+                    <div className="text-sm font-medium text-gray-900 break-words">
+                      {c.subject || <span className="italic text-gray-400">(no subject)</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span>{c.sent_at ? fmtWhen(c.sent_at) : 'Draft — never sent'}</span>
+                      {sender && <span>{sender}</span>}
+                      <span>{c.recipient_count ?? 0} recipient{c.recipient_count === 1 ? '' : 's'}</span>
+                      {statusPill(c.status)}
+                      {tally ? (
+                        <span className="flex flex-wrap gap-x-2">
+                          <span className="text-green-700">{tally.sent} sent</span>
+                          <span className={tally.failed > 0 ? 'text-red-700' : ''}>· {tally.failed} failed</span>
+                          <span>· {tally.skipped} skipped</span>
+                          {tally.unknown > 0 && <span className="text-amber-700">· {tally.unknown} unconfirmed</span>}
+                          {tally.pending > 0 && <span>· {tally.pending} pending</span>}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">no recipient rows</span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+                {isOpen && renderCampaignDetail(c, tally)}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderFailed = () => (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold text-gray-900">Failed Emails</h4>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Addresses on the blacklist, and the delivery failures recorded by recent campaigns.
+          </p>
+        </div>
+        {refreshButton(loadFailed, failedView.loading)}
+      </div>
+
+      {failedView.error && errorBox(`Could not load failed emails: ${failedView.error}`)}
+      {failedView.warn && warnBox(failedView.warn)}
+
+      {(failedView.loading || !failedLoaded) && !failedView.error && (
+        <p className="text-sm text-gray-500 py-8 text-center">Loading…</p>
+      )}
+
+      {failedLoaded && !failedView.loading && !failedView.error && (
+        <>
+          <section className="space-y-2">
+            <h5 className="text-sm font-semibold text-gray-900">Blacklist ({failedView.blacklist.length})</h5>
+            <p className="text-xs text-gray-500">
+              These addresses are skipped by every future blast and recorded as “skipped”. The unsubscribe
+              link in a campaign email adds an address here automatically.
+            </p>
+            {failedView.blacklist.length === 0 ? (
+              <p className="text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-6 text-center">
+                Nobody is on the blacklist.
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-[50vh] overflow-y-auto border border-gray-200 rounded-lg">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Email</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Reason</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Added</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {failedView.blacklist.map(b => (
+                      <tr key={b.email}>
+                        <td className="px-3 py-2 text-gray-900 whitespace-nowrap">{b.email}</td>
+                        <td className="px-3 py-2 text-gray-600">{b.reason || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtWhen(b.created_at) || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-2">
+            <h5 className="text-sm font-semibold text-gray-900">Recent delivery failures ({failedView.failureTotal})</h5>
+            <p className="text-xs text-gray-500">
+              Recipients the email provider rejected, from the {HISTORY_LIMIT} most recent campaigns, newest
+              campaign first{failedView.failureTotal > failedView.failures.length ? ` — showing the first ${FAILURE_LIMIT}` : ''}.
+              A failure carries no send time of its own, so the time shown is its campaign’s.
+            </p>
+            {failedView.failures.length === 0 ? (
+              <p className="text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-6 text-center">
+                No delivery failures recorded.
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto border border-gray-200 rounded-lg">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Email</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Campaign</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">Error</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-600">When</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {failedView.failures.map(f => (
+                      <tr key={f.id}>
+                        <td className="px-3 py-2 text-gray-900 whitespace-nowrap">{f.email}</td>
+                        <td className="px-3 py-2 text-gray-600">
+                          {f.campaign?.subject || <span className="italic text-gray-400">(no subject)</span>}
+                        </td>
+                        <td className="px-3 py-2 text-red-700">{f.error || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
+                          {fmtWhen(f.sent_at || f.campaign?.sent_at || f.campaign?.created_at) || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+
   const renderPlaceholder = (title, body) => (
     <div className="text-center py-16 px-6">
       <Mail size={40} className="mx-auto mb-3 text-gray-300" />
@@ -882,15 +1369,15 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
       <div className="flex flex-col lg:flex-row gap-4 items-start">
         {/* Left rail — the five EZFacility items */}
         <aside className="bg-white rounded-lg shadow w-full lg:w-72 flex-shrink-0 divide-y divide-gray-100">
-          {SECTIONS.map(({ key, label, desc, icon: Icon }) => (
+          {visibleSections.map(({ key, label, desc, icon: Icon }) => (
             <button
               key={key}
               onClick={() => onSectionChange(key)}
-              className={`w-full text-left px-4 py-3 transition flex items-start space-x-3 ${section === key ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+              className={`w-full text-left px-4 py-3 transition flex items-start space-x-3 ${effectiveSection === key ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
             >
-              <Icon size={17} className={`mt-0.5 flex-shrink-0 ${section === key ? 'text-blue-600' : 'text-gray-400'}`} />
+              <Icon size={17} className={`mt-0.5 flex-shrink-0 ${effectiveSection === key ? 'text-blue-600' : 'text-gray-400'}`} />
               <span>
-                <span className={`block text-sm font-medium ${section === key ? 'text-blue-700' : 'text-gray-900'}`}>{label}</span>
+                <span className={`block text-sm font-medium ${effectiveSection === key ? 'text-blue-700' : 'text-gray-900'}`}>{label}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">{desc}</span>
               </span>
             </button>
@@ -899,11 +1386,11 @@ export default function EmailCampaigns({ userId, section, onSectionChange }) {
 
         {/* Content area */}
         <div className="bg-white rounded-lg shadow flex-1 min-w-0 p-6">
-          {section === 'send' && renderWizard()}
-          {section === 'history' && renderPlaceholder('Campaign History', 'Every sent campaign will be listed here with its subject, date, sender, recipient count and per-recipient sent/failed results. Arrives in Phase 3, once the blast path exists.')}
-          {section === 'templates' && renderPlaceholder('Email Template Library', 'Create, edit and organize reusable templates by category — they feed the picker in Compose Message. Arrives in Phase 3.')}
-          {section === 'images' && renderPlaceholder('Email Image Library', 'Upload images to use inside campaign emails. Arrives in Phase 3.')}
-          {section === 'failed' && renderPlaceholder('Failed Emails', 'Addresses that bounced or complained land here and are skipped by future blasts. Populated automatically once the blast path (Phase 2) exists.')}
+          {effectiveSection === 'send' && renderWizard()}
+          {effectiveSection === 'history' && renderHistory()}
+          {effectiveSection === 'templates' && renderPlaceholder('Email Template Library', 'Create, edit and organize reusable templates by category — they feed the picker in Compose Message. Arrives in Phase 3.')}
+          {effectiveSection === 'images' && renderPlaceholder('Email Image Library', 'Upload images to use inside campaign emails. Arrives in Phase 3.')}
+          {effectiveSection === 'failed' && renderFailed()}
         </div>
       </div>
 

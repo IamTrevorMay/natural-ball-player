@@ -16,6 +16,19 @@ function isIsoDate(s: string): boolean {
   return mi >= 1 && mi <= 12 && di >= 1 && di <= 31;
 }
 
+// #382: loose plausibility check for the optional parent/guardian email. Matches
+// the file's string-ops-no-regex style. Deliberately permissive: this endpoint
+// creates accounts, so an implausible value is dropped to null rather than
+// failing the signup.
+function plausibleEmail(s: string): boolean {
+  if (!s || s.includes(" ")) return false;
+  const at = s.indexOf("@");
+  if (at <= 0 || at !== s.lastIndexOf("@")) return false;
+  const domain = s.slice(at + 1);
+  const dot = domain.indexOf(".");
+  return dot > 0 && dot < domain.length - 1;
+}
+
 // Baseball "U" age division from a date of birth (#200). NBP uses a May 1
 // cutoff: a player's division for the season is the age they reach during the
 // season's calendar year, and the season rolls over on May 1. So from May 1
@@ -110,6 +123,7 @@ Deno.serve(async (req) => {
       phone,
       date_of_birth: rawDob,
       signup_intent: rawIntent,
+      parent1_email: rawParentEmail,
       account_type: rawAccountType,
     } = await req.json();
     // "public" = an outside customer signing up to book & pay for facility
@@ -176,6 +190,14 @@ Deno.serve(async (req) => {
       return json({ error: "Please choose whether you want a Naturals team, training only, or both." }, 400);
     }
 
+    // #382: optional parent/guardian email -> users.parent1_email. Optional at the
+    // API level even though the UI requires it for under-18s, so an older client
+    // that never sends the field can still create an account. Lower-cased like the
+    // athlete email so campaign de-duplication matches consistently. Never rejects.
+    const parentEmailTrimmed =
+      typeof rawParentEmail === "string" ? rawParentEmail.trim().toLowerCase() : "";
+    const parent1_email = plausibleEmail(parentEmailTrimmed) ? parentEmailTrimmed : null;
+
     // 1. Create the auth user and trigger the confirmation email via signUp.
     const anonClient = createClient(supabaseUrl, supabaseAnonKey);
     const { data: signUpData, error: signUpError } = await anonClient.auth.signUp({
@@ -210,6 +232,7 @@ Deno.serve(async (req) => {
       role: "player",
       phone: phone || null,
       date_of_birth,
+      parent1_email,
     });
     if (userError) {
       // Roll back the orphaned auth user so the email can be reused.

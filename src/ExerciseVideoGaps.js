@@ -146,35 +146,47 @@ function validateVideoUrl(raw) {
 }
 
 // ---------------------------------------------------------------------------
-// Row-level security: workout_templates is owner-gated.
+// Row-level security: workout_templates.
 //
-// Measured on the live database:
+// Measured on the live database BEFORE #388:
 //     UPDATE  qual: (created_by = auth.uid())  with_check: (created_by = auth.uid())
 //
-// 868 of 872 templates belong to one admin, 3 have created_by = NULL (nobody
-// can ever update those), 1 belongs to a second admin. So for almost everyone,
-// an UPDATE here comes back 200/204 with NO error and NO rows — PostgREST does
-// not consider "the policy matched nothing" an error.
+// 868 of 872 templates belong to one admin, 3 have created_by = NULL, 1 belongs
+// to a second admin. Owner-only UPDATE against 872 templates with 2 owners means
+// no admin and no coach can edit a template they did not create — which is what
+// Cordell hit in #388, and why this screen used to refuse most of the list.
 //
-// Reporting that as success is the exact silent-failure class that has already
-// cost this project a two-day production outage, so this screen never infers
-// success from the absence of an error. Every write asks for .select('id') back
-// and ZERO RETURNED ROWS IS A BLOCK.
+// supabase/migrations/20260902_workout_templates_staff_write.sql adds a second,
+// permissive UPDATE policy:
+//     USING / WITH CHECK  public.get_user_role() IN ('admin', 'coach')
+// Permissive policies for the same command are OR-ed, so the owner-only rule is
+// untouched and staff simply gain the write. DELETE is deliberately NOT widened.
 //
-// The policy itself is not this screen's to change: no migration here, and none
-// suggested. The UI just says plainly that template edits belong to whoever
-// created the template.
+// THIS FILE CANNOT VERIFY THE MIGRATION HAS BEEN RUN. If it has not, an UPDATE
+// still comes back 200/204 with NO error and NO rows — PostgREST does not
+// consider "the policy matched nothing" an error. Reporting that as success is
+// the exact silent-failure class that has already cost this project a two-day
+// production outage, so this screen never infers success from the absence of an
+// error. Every write asks for .select('id') back and ZERO RETURNED ROWS IS A
+// BLOCK, reported as "not saved" with the migration named as the likely cause.
 // ---------------------------------------------------------------------------
 
 export const OWNERSHIP = {
-  EDITABLE: 'editable',   // created_by === me — the policy will allow it
-  OTHER: 'other_owner',   // someone else made it — the policy will refuse
-  ORPHAN: 'no_owner',     // created_by IS NULL — nobody can ever update it
+  EDITABLE: 'editable',   // created_by === me — the owner-only policy allows it
+  STAFF: 'staff_write',   // someone else made it, but I am admin/coach — allowed
+                          // by the #388 staff policy, and proved after the write
+  OTHER: 'other_owner',   // someone else made it and I am not staff — refused
+  ORPHAN: 'no_owner',     // created_by IS NULL — this screen does not write these
   UNKNOWN: 'unknown',     // we could not resolve the current user; attempt and prove
 };
 
 export const RLS_PLAIN_SENTENCE =
-  'Workout templates can only be edited by the coach who created them. Whether to change that is an admin decision, not something this screen can do.';
+  'A workout template belongs to whoever created it. Admins and coaches can also edit templates they did not create, which relies on the #388 staff-write policy being present in the database.';
+
+// Shown when the database returns zero rows for an update this screen expected
+// to be allowed. The overwhelmingly likely cause is the #388 migration.
+export const MIGRATION_MISSING_SENTENCE =
+  "That didn't save. The database is still refusing this change; the #388 migration (supabase/migrations/20260902_workout_templates_staff_write.sql) may not have been run yet.";
 
 // What a Supabase write ACTUALLY did, given the response. The body moved to
 // writeOutcome.js when #306 needed the same guarantee on a different table —
@@ -381,17 +393,22 @@ export default function ExerciseVideoGaps({ userRole }) {
   useEffect(() => { load(); }, [load]);
 
   // --- who can write what --------------------------------------------------
+  // #388: the rule is "I created it OR I am staff", not "I created it". Only
+  // admins and coaches reach this screen at all, so in practice every owned
+  // template is now writable; OTHER and UNKNOWN survive as the honest answer if
+  // isStaff is ever false here.
   const templateOwnership = useMemo(() => {
     const map = new Map();
     templates.forEach((t) => {
       const owner = t.created_by || null;
       if (!owner) map.set(t.id, OWNERSHIP.ORPHAN);
+      else if (currentUserId && owner === currentUserId) map.set(t.id, OWNERSHIP.EDITABLE);
+      else if (isStaff) map.set(t.id, OWNERSHIP.STAFF);
       else if (!currentUserId) map.set(t.id, OWNERSHIP.UNKNOWN);
-      else if (userRole === 'admin') map.set(t.id, OWNERSHIP.EDITABLE);
-      else map.set(t.id, owner === currentUserId ? OWNERSHIP.EDITABLE : OWNERSHIP.OTHER);
+      else map.set(t.id, OWNERSHIP.OTHER);
     });
     return map;
-  }, [templates, currentUserId, userRole]);
+  }, [templates, currentUserId, isStaff]);
 
   // --- collect the raw gaps ------------------------------------------------
   const gaps = useMemo(() => {
@@ -463,11 +480,13 @@ export default function ExerciseVideoGaps({ userRole }) {
   // Facility-wide picture of what this user is actually allowed to write.
   const ownershipStats = useMemo(() => {
     let editableEntries = 0;
+    let staffEntries = 0;
     let otherEntries = 0;
     let orphanEntries = 0;
     let unknownEntries = 0;
     let programEntries = 0;
     const editableTemplates = new Set();
+    const staffTemplates = new Set();
     const otherTemplates = new Set();
     const orphanTemplates = new Set();
     gaps.forEach((g) => {
@@ -475,11 +494,18 @@ export default function ExerciseVideoGaps({ userRole }) {
       if (g.ownership === OWNERSHIP.OTHER) { otherEntries += 1; otherTemplates.add(g.templateId); }
       else if (g.ownership === OWNERSHIP.ORPHAN) { orphanEntries += 1; orphanTemplates.add(g.templateId); }
       else if (g.ownership === OWNERSHIP.UNKNOWN) { unknownEntries += 1; editableTemplates.add(g.templateId); }
-      else { editableEntries += 1; editableTemplates.add(g.templateId); }
+      // #388: not mine, but I am staff. Attemptable, and proved after the write.
+      else if (g.ownership === OWNERSHIP.STAFF) {
+        staffEntries += 1;
+        editableTemplates.add(g.templateId);
+        staffTemplates.add(g.templateId);
+      } else { editableEntries += 1; editableTemplates.add(g.templateId); }
     });
-    const attemptableEntries = editableEntries + unknownEntries;
+    const attemptableEntries = editableEntries + staffEntries + unknownEntries;
     return {
       editableEntries,
+      staffEntries,
+      staffTemplates: staffTemplates.size,
       unknownEntries,
       attemptableEntries,
       otherEntries,
@@ -639,6 +665,10 @@ export default function ExerciseVideoGaps({ userRole }) {
     // 200-with-zero-rows tells the user nothing, and counting it as a write
     // would be a lie.
     const candidateTemplateIds = new Set();
+    // Templates this account does not own but expects to write because it is
+    // staff (#388). If one of these comes back with zero rows, the staff policy
+    // is missing rather than the ownership check being wrong.
+    const staffOverrideTemplateIds = new Set();
     const candidateProgramIds = [];
     const blockedOtherTemplates = new Set();
     const blockedOrphanTemplates = new Set();
@@ -658,6 +688,7 @@ export default function ExerciseVideoGaps({ userRole }) {
         blockedOrphanTemplates.add(gap.templateId);
         return;
       }
+      if (gap.ownership === OWNERSHIP.STAFF) staffOverrideTemplateIds.add(gap.templateId);
       candidateTemplateIds.add(gap.templateId);
     });
 
@@ -667,6 +698,7 @@ export default function ExerciseVideoGaps({ userRole }) {
     let templatesUpdated = 0;
     let templateEntriesWritten = 0;
     let templateEntriesBlockedUnexpected = 0;
+    let templateEntriesBlockedStaffPolicy = 0;
     let programRowsWritten = 0;
     let programRowsBlocked = 0;
 
@@ -724,11 +756,13 @@ export default function ExerciseVideoGaps({ userRole }) {
             console.error('Updating workout template failed:', tpl.id, updErr);
             failures.push({ what: `template "${tpl.name || tpl.id}"`, message: formatUserError(updErr) });
           } else if (outcome.outcome === 'blocked') {
-            // We believed this one was ours and the database disagreed. Never
-            // report it as written.
+            // We believed this one was writable and the database disagreed.
+            // Never report it as written. If it was a staff-override template,
+            // the #388 policy is the thing that is missing.
             console.warn('Update refused by row-level security (0 rows) for template', tpl.id);
             blockedUnexpectedTemplates.add(tpl.id);
             templateEntriesBlockedUnexpected += changed;
+            if (staffOverrideTemplateIds.has(tpl.id)) templateEntriesBlockedStaffPolicy += changed;
           } else {
             templatesUpdated += 1;
             templateEntriesWritten += changed;
@@ -816,6 +850,7 @@ export default function ExerciseVideoGaps({ userRole }) {
         templateEntriesBlockedOther,
         templateEntriesBlockedOrphan,
         templateEntriesBlockedUnexpected,
+        templateEntriesBlockedStaffPolicy,
         templateEntriesBlocked,
         templatesBlocked,
         programRowsWritten,
@@ -833,6 +868,7 @@ export default function ExerciseVideoGaps({ userRole }) {
         templateEntriesBlockedOther,
         templateEntriesBlockedOrphan,
         templateEntriesBlockedUnexpected,
+        templateEntriesBlockedStaffPolicy,
         templateEntriesBlocked:
           templateEntriesBlockedOther + templateEntriesBlockedOrphan + templateEntriesBlockedUnexpected,
         templatesBlocked:
@@ -1060,6 +1096,12 @@ export default function ExerciseVideoGaps({ userRole }) {
                 </span>{' '}
                 {ownershipStats.attemptableEntries === 1 ? 'is' : 'are'} in templates you can edit
                 ({plural(ownershipStats.editableTemplates, 'template')}).
+                {ownershipStats.staffEntries > 0 && (
+                  <> {plural(ownershipStats.staffEntries, 'entry')} of those sit in{' '}
+                  {plural(ownershipStats.staffTemplates, 'template')} created by someone else and are
+                  editable because you are staff (#388). Each of those writes is checked against what
+                  the database actually changed.</>
+                )}
                 {ownershipStats.otherEntries > 0 && (
                   <> {plural(ownershipStats.otherEntries, 'entry')} sit in{' '}
                   {plural(ownershipStats.otherTemplates, 'template')} created by someone else and
@@ -1067,12 +1109,12 @@ export default function ExerciseVideoGaps({ userRole }) {
                 )}
                 {ownershipStats.orphanEntries > 0 && (
                   <> {plural(ownershipStats.orphanEntries, 'entry')} sit in{' '}
-                  {plural(ownershipStats.orphanTemplates, 'template')} with no owner recorded, which
-                  nobody can update.</>
+                  {plural(ownershipStats.orphanTemplates, 'template')} with no owner recorded; this
+                  screen does not write to those.</>
                 )}
               </p>
             )}
-            {userRole !== 'admin' && <p>{RLS_PLAIN_SENTENCE}</p>}
+            <p>{RLS_PLAIN_SENTENCE}</p>
             {ownershipStats.programEntries > 0 && (
               <p>
                 The {plural(ownershipStats.programEntries, 'assigned-program row')} below{' '}
@@ -1174,14 +1216,19 @@ export default function ExerciseVideoGaps({ userRole }) {
                 {applyResult.templateEntriesBlockedOrphan > 0 && (
                   <li>
                     {plural(applyResult.templateEntriesBlockedOrphan, 'workout entry')} in templates with no
-                    owner recorded, which nobody can update.
+                    owner recorded. This screen does not write to those; nothing was sent for them.
                   </li>
                 )}
                 {applyResult.templateEntriesBlockedUnexpected > 0 && (
                   <li>
                     {plural(applyResult.templateEntriesBlockedUnexpected, 'workout entry')} the database
-                    refused even though this account appeared to own the template — the update returned
-                    zero rows. Treated as not saved.
+                    refused even though this account appeared able to write the template — the update
+                    returned zero rows. Treated as not saved.
+                    {applyResult.templateEntriesBlockedStaffPolicy > 0 && (
+                      <> {plural(applyResult.templateEntriesBlockedStaffPolicy, 'entry')} of those{' '}
+                      {applyResult.templateEntriesBlockedStaffPolicy === 1 ? 'was' : 'were'} in a
+                      template created by someone else. <strong>{MIGRATION_MISSING_SENTENCE}</strong></>
+                    )}
                   </li>
                 )}
                 {applyResult.programRowsBlocked > 0 && (
@@ -1419,8 +1466,8 @@ export default function ExerciseVideoGaps({ userRole }) {
                                   </p>
                                 ) : (
                                   <p className="text-red-700">
-                                    <span className="font-medium">Will not save</span> — you don't own
-                                    {' '}{stagedRow.blockedEntries === 1 ? 'this template' : 'these templates'}.
+                                    <span className="font-medium">Will not save</span> — nothing here is
+                                    writable from this account. See the reason next to the count.
                                   </p>
                                 )}
                                 {(stagedRow.blockedEntries || 0) > 0 && (stagedRow.writableEntries || 0) > 0 && (
@@ -1546,7 +1593,7 @@ export default function ExerciseVideoGaps({ userRole }) {
           role="presentation"
         >
           <div
-            className="w-full max-w-lg rounded-lg bg-white shadow-xl flex flex-col"
+            className="w-full max-w-lg rounded-lg bg-white shadow-xl max-h-[90vh] flex flex-col overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -1579,8 +1626,8 @@ export default function ExerciseVideoGaps({ userRole }) {
                   <li className="text-red-700">
                     <strong>{stagedStats.blockedEntries.toLocaleString()}</strong> further entr
                     {stagedStats.blockedEntries === 1 ? 'y' : 'ies'} will <strong>not</strong> be
-                    written: they live in templates this account cannot edit. Nothing will be sent for
-                    them.
+                    written: they live in templates this screen does not write to. Nothing will be sent
+                    for them.
                   </li>
                 )}
                 <li>

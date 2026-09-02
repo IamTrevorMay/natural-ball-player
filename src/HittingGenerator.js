@@ -7,6 +7,9 @@ import {
 } from './hittingEngine';
 import { extractMetricsFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
+import TrainingDaysPicker, {
+  ALL_TRAINING_DAYS, remapProgramDayRows, fitMessage, weekdayOfDayNumber,
+} from './TrainingDaysPicker';
 
 /* --------------------------------------------------------------------------- *
  *  Hitting Program Generator — "Barrel Path" (engine #3).
@@ -150,6 +153,9 @@ export default function HittingGenerator({ userId, userRole }) {
   const [age, setAge] = useState('16');
   const [weeks, setWeeks] = useState('16');
   const [daysPerWeek, setDaysPerWeek] = useState('3'); // hitting cadence: 3 → M/W/F, 2 → Tue/Thu
+  /* #385 — weekdays the athlete is available to hit on (Mon=0…Sun=6). All seven
+     (the default) leaves the engine's own M/W/F or Tue/Thu cadence untouched. */
+  const [trainingDays, setTrainingDays] = useState([...ALL_TRAINING_DAYS]);
   const [values, setValues] = useState({ ...BLANK });
 
   const [openPhase, setOpenPhase] = useState({});
@@ -274,11 +280,27 @@ export default function HittingGenerator({ userId, userRole }) {
     return generatePlan({ values: V, level, age: parseInt(age, 10) || null, weeks: parseInt(weeks, 10) || 16, days: parseInt(daysPerWeek, 10) || 3 });
   }, [values, level, age, weeks, daysPerWeek]);
 
+  /* #385 — serialize once, then move the rows onto the coach's available weekdays.
+     hittingEngine is not ours to change, so the placement happens here on the rows
+     it emits: day_number = (week-1)*7 + weekdayIndex + 1. Computed live (not only
+     at save) so the coach sees the resulting days, and Save can be blocked when the
+     cadence does not fit the days chosen. */
+  const dayPlacement = useMemo(() => {
+    if (!gen) return { ok: true, moved: false, needed: 0, rows: [] };
+    const base = planToProgramDays(gen.phases, gen.plan, parseInt(daysPerWeek, 10) || 3);
+    return remapProgramDayRows(base, trainingDays);
+  }, [gen, daysPerWeek, trainingDays]);
+  const dayFitError = dayPlacement.ok ? '' : fitMessage(dayPlacement.needed, trainingDays.length);
+  const placedOn = useMemo(() => [...new Set(dayPlacement.rows
+    .filter((r) => r.day_number <= 7).map((r) => weekdayOfDayNumber(r.day_number)))].sort((a, b) => a - b),
+  [dayPlacement]);
+
   const save = async () => {
     if (!gen) return;
+    if (!dayPlacement.ok) { setError(dayFitError); return; } // #385
     setSaving(true); setError(''); setSaveMsg('');
     try {
-      const rows = planToProgramDays(gen.phases, gen.plan, parseInt(daysPerWeek, 10) || 3);
+      const rows = dayPlacement.rows; // #385 — already placed on the available days
       const topFindings = gen.findings.slice(0, 3).map((f) => f.title).join('; ');
       const { data: prog, error: pErr } = await supabase
         .from('training_programs')
@@ -385,12 +407,26 @@ export default function HittingGenerator({ userId, userRole }) {
               </div>
               <div>
                 <span className={label}>Days / week</span>
+                {/* #385: the weekday is no longer implied here — the training-day
+                    picker below decides where the sessions actually land. */}
                 <select className={inp} value={daysPerWeek} onChange={(e) => setDaysPerWeek(e.target.value)}>
-                  <option value="3">3× · Mon / Wed / Fri</option>
-                  <option value="2">2× · Tue / Thu</option>
+                  <option value="3">3× per week</option>
+                  <option value="2">2× per week</option>
                 </select>
               </div>
             </div>
+          </div>
+
+          {/* #385 — which weekdays this athlete may hit on (e.g. around Naturals practices). */}
+          <div className={card}>
+            <TrainingDaysPicker
+              accent="cyan"
+              value={trainingDays}
+              onChange={setTrainingDays}
+              placedOn={placedOn}
+              error={dayFitError}
+              note={`${daysPerWeek}× a week. Default all-seven keeps the engine's ${daysPerWeek === '2' ? 'Tue / Thu' : 'Mon / Wed / Fri'} cadence.`}
+            />
           </div>
 
           {groups.map((g) => (
@@ -517,7 +553,7 @@ export default function HittingGenerator({ userId, userRole }) {
                   <input type="checkbox" checked={assignAthlete} onChange={(e) => setAssignAthlete(e.target.checked)} />
                   Assign to {selectedName || 'athlete'} (appears on their profile)
                 </label>
-                <button onClick={save} disabled={saving || !selectedId}
+                <button onClick={save} disabled={saving || !selectedId || !dayPlacement.ok}
                   className="mt-4 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg">
                   <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Roadmap (one day per phase)'}
                 </button>
