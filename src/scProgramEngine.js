@@ -46,7 +46,12 @@
       week. programToProgramDays() serializes with day_number = 1-BASED ABSOLUTE
       CALENDAR-DAY OFFSET across the whole program: (week-1)*7 + weekday + 1.
       Rest days emit no rows. duration_weeks = N. (Fixes the schedule placement
-      bug: the calendar drops each day at start_date + (day_number-1) days.)
+      bug: Schedule.js drops each day at DROP_DATE + (day_number-1) days, where the
+      drop date is the calendar cell the program is dragged onto -- NOT the
+      assignment's start_date, which is never used for placement. So weekday 0 is
+      "the day the program is dropped on", and the Mon/Tue/Thu/Fri names below are
+      the real weekdays only when the program is dropped on a Monday. See "THE
+      ANCHOR" in TrainingDaysPicker.js.)
 
    7. BENCHMARK-VS-DATA. gradeStrength() grades the athlete's force metrics
       (vertical / broad jump, relative squat & trap-bar deadlift) good/dev/def vs

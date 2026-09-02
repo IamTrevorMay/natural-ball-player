@@ -8,7 +8,7 @@ import {
 import { extractMetricsFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import TrainingDaysPicker, {
-  ALL_TRAINING_DAYS, remapProgramDayRows, fitMessage, weekdayOfDayNumber,
+  ALL_TRAINING_DAYS, remapProgramDayRows, fitMessage, weekdayOfDayNumber, DROP_ANCHOR_SAVE_NOTE,
 } from './TrainingDaysPicker';
 
 /* --------------------------------------------------------------------------- *
@@ -333,7 +333,7 @@ export default function HittingGenerator({ userId, userRole }) {
         });
         if (aErr) throw aErr;
       }
-      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}.`);
+      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}. ${DROP_ANCHOR_SAVE_NOTE}`);
     } catch (e) {
       setError(e.message || 'Save failed.');
     } finally {
