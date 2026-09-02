@@ -8,14 +8,31 @@ import { useModalTracking } from './usage';
  * ------------------------------------------------------------------ */
 const MLM_UNLOCKED_URL   = 'https://www.brandonguyer.com/unlocked';
 const MLM_5WEEK_URL      = 'https://www.brandonguyer.com/5weekrecordings';
-// The "HERE" checkout link from Brandon Guyer's email, confirmed by Nicholas 27 Aug 2026.
-// The discount code below is entered on this page; the price the player pays is set there,
-// not here.
-const MLM_CHECKOUT_URL   = 'https://www.brandonguyer.com/5weektrainingcheckout';
+// #375 FIX (2 Sep 2026). The checkout link used to point at
+// /5weektrainingcheckout, which sells the 5-Week Fast Track ALONE for $747 —
+// while this pop-up promised $497 for everything. A parent clicking through
+// landed on the wrong programme at the wrong price.
+//
+// Brandon Guyer's own words, relayed by Cordell on the issue:
+//   "You can have them use this link https://www.brandonguyer.com/unlocked.
+//    This will sign them up for the unlocked program for $497. We will then
+//    have them use discount code NPBLIFETIME at checkout to save $100 and
+//    bring the price down to $397."
+// Cordell then confirmed: "The user will just have to manually input
+// NBPLIFETIME when they get to the page."
+//
+// 🔴 UNRESOLVED — CHECK BEFORE TELLING ANY FAMILY ABOUT THIS BUTTON:
+// Brandon typed the code as "NPBLIFETIME" (N-P-B). Cordell wrote it twice as
+// "NBPLIFETIME" (N-B-P), which is also what was already in this file and reads
+// like "NBP LIFETIME". One of the two is a typo. If the code shown here is not
+// the code configured on Brandon's checkout, the family is charged $100 more
+// than we told them. Confirm the exact spelling with Brandon, then set it below.
+const MLM_CHECKOUT_URL   = 'https://www.brandonguyer.com/unlocked';
 const MLM_DISCOUNT_CODE  = 'NBPLIFETIME';
-const MLM_PRICE          = '$497';
+const MLM_PRICE          = '$497';   // Unlocked list price on Brandon's page
+const MLM_CODE_SAVING    = '$100';   // what NBPLIFETIME takes off
+const MLM_PRICE_NET      = '$397';   // what the player actually pays
 const MLM_5WEEK_LIST     = '$747';
-const MLM_UNLOCKED_LIST  = '$497';
 /* ------------------------------------------------------------------ */
 
 // Note for whoever picks this up next: the portal cannot itself verify or record
@@ -95,24 +112,27 @@ export default function MentalTrainingModal({ onClose }) {
         {/* Body */}
         <div className="overflow-y-auto flex-1 min-h-0 px-5 py-4 space-y-4">
           <p className="text-sm text-gray-700">
-            NBP players get <span className="font-semibold">LIFETIME access to the entire MLM
-            system for {MLM_PRICE}</span>, which includes:
+            NBP players get the <span className="font-semibold">Unlocked Self-Paced Training
+            Program</span> for <span className="font-semibold">{MLM_PRICE_NET}</span> — that is
+            the {MLM_PRICE} price on Brandon Guyer's site, less {MLM_CODE_SAVING} with the NBP
+            code below.
           </p>
 
           <ul className="space-y-2 text-sm text-gray-700">
             <li className="border border-gray-200 rounded-lg px-3 py-2">
-              <span className="font-medium text-gray-900">5-Week Fast Track LIVE Online Training Program</span>
-              <span className="text-gray-500"> — normally {MLM_5WEEK_LIST}</span>
-            </li>
-            <li className="border border-gray-200 rounded-lg px-3 py-2">
               <span className="font-medium text-gray-900">Unlocked Self-Paced Training Program</span>
-              <span className="text-gray-500"> — normally {MLM_UNLOCKED_LIST}</span>
+              <span className="text-gray-500"> — {MLM_PRICE}, or {MLM_PRICE_NET} with your code</span>
             </li>
             <li className="border border-gray-200 rounded-lg px-3 py-2">
               <span className="font-medium text-gray-900">MLM+ app</span>
-              <span className="text-gray-500"> — included with both programs</span>
+              <span className="text-gray-500"> — included with the program</span>
             </li>
           </ul>
+
+          <p className="text-xs text-gray-500">
+            The 5-Week Fast Track LIVE program ({MLM_5WEEK_LIST}) is a separate purchase on
+            Brandon's site and is not included in this offer.
+          </p>
 
           {/* Discount code */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-3">
@@ -138,7 +158,9 @@ export default function MentalTrainingModal({ onClose }) {
           </div>
 
           <p className="text-sm text-gray-600">
-            Enter the code {MLM_DISCOUNT_CODE} at checkout to get the NBP price.
+            Type {MLM_DISCOUNT_CODE} into the discount box at checkout — it is not applied
+            automatically. That takes {MLM_CODE_SAVING} off, bringing the price to{' '}
+            <span className="font-semibold">{MLM_PRICE_NET}</span>.
           </p>
 
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs pt-1">
