@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabaseClient';
-import { X, ShoppingBag, Loader2, CheckCircle, Copy, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { X, ShoppingBag, Loader2, CheckCircle, Copy, AlertTriangle, ShieldAlert, BadgePercent } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
 import { formatUserError } from './errorMessage';
-import { familyLabel } from './productFamily';
+import { familyKey, familyLabel, frequencyOf } from './productFamily';
+import { classifyWriteOutcome } from './writeOutcome';
 import {
   checkExistingAssignments,
   frequencyLabel,
@@ -39,6 +40,165 @@ const STATUS_STYLES = {
 
 function fmtMoney(cents) {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+// ---------------------------------------------------------------------------
+// #384 — BILLING FREQUENCY.
+//
+// Cordell: "the square portal has the option to choose the frequency of the
+// package / subscription as well as discount it."
+//
+// There is no `frequency` column anywhere in this schema — grep store_products
+// and store_purchases in 20260616_square_store.sql and nothing of the sort
+// exists. In this data model the frequency IS the Square subscription plan
+// variation: square-catalog-sync writes ONE store_products row per
+// SUBSCRIPTION_PLAN_VARIATION, each carrying that variation's own
+// square_variation_id and its own price, and the frequency then survives only
+// in the product NAME as the trailing "(MONTHLY price)" suffix productFamily.js
+// owns.
+//
+// So choosing a frequency is not a new value to invent and post to Square — it
+// is choosing WHICH row of the family to assign. square-checkout already bills
+// whatever square_variation_id the chosen row carries, so this control charges
+// the right cadence with no edge-function change at all.
+//
+// The options are therefore read off the catalogue that is already loaded,
+// never from a list written here: a package that exists at one frequency gets
+// no control, and a cadence Square invents next year shows up on its own.
+// ---------------------------------------------------------------------------
+function frequencyVersions(products, product) {
+  if (!product) return [];
+  const key = familyKey(product);
+  if (!key) return [product];
+  return (products || [])
+    .filter((p) => p && p.kind === product.kind && familyKey(p) === key)
+    .sort((a, b) => (
+      (frequencyOf(a) || '').localeCompare(frequencyOf(b) || '')
+      || String((a && a.name) || '').localeCompare(String((b && b.name) || ''))
+    ));
+}
+
+// What one charge actually covers.
+//
+// This replaces the old " / mo", which was printed for EVERY recurring product.
+// The catalogue genuinely contains EVERY_TWO_WEEKS and ANNUAL variations
+// (productFamily.js), so that text described a fortnightly package as monthly —
+// out by 2.17x on what a family pays in a month, on the one line staff read
+// before charging them. A cadence we cannot name now says so instead of
+// guessing, the same rule frequencyLabel() already follows.
+const PERIOD_SUFFIX = {
+  MONTHLY: ' /month',
+  EVERY_TWO_WEEKS: ' /2 weeks',
+  EVERY_SIX_MONTHS: ' /6 months',
+  QUARTERLY: ' /quarter',
+  ANNUAL: ' /year',
+};
+
+function periodSuffix(product) {
+  if (!product || !product.recurring) return '';
+  return PERIOD_SUFFIX[frequencyOf(product)] || ' each billing cycle';
+}
+
+// ---------------------------------------------------------------------------
+// #384 — DISCOUNTS.
+//
+// Square supports exactly two shapes and so does store_discounts
+// (20260616_square_discounts.sql:9-10): `percentage numeric(5,2)` and
+// `amount_cents integer`. Those two, and nothing else, are offered here.
+// ---------------------------------------------------------------------------
+const DISCOUNT_OFF = 'off';
+const DISCOUNT_PERCENT = 'percent';
+const DISCOUNT_AMOUNT = 'amount';
+
+// The jsonb key a portal-recorded (NOT Square-applied) discount is written
+// under. store_purchases.metadata is jsonb NOT NULL DEFAULT '{}' and the UPDATE
+// policy already admits admin and coach (20260713_package_usage:
+// store_purchases_update_staff), so recording an intent needs no migration —
+// the same reasoning packageExtension.js documents for its own audit trail.
+const REQUESTED_DISCOUNT_KEY = 'requested_discount';
+
+/**
+ * The discounted price, and every reason it might not be one.
+ *
+ * The arithmetic is copied deliberately from square-apply-discount/index.ts:
+ *   percentage   -> Math.max(0, Math.round(base * (100 - pct) / 100))
+ *   amount_cents -> Math.max(0, base - amount)
+ * Same operations, same order, same rounding. If this preview rounded
+ * differently from the function that actually writes price_override_money, the
+ * screen would show one price and the family would be charged another — which
+ * is the precise failure #384 must not ship.
+ *
+ * `incomplete` is not `error`: an empty box is a discount not typed yet, and
+ * shouting at someone mid-keystroke trains them to ignore the red text.
+ */
+function computeDiscount({ mode, raw, priceCents }) {
+  const idle = {
+    active: false, incomplete: false, error: null,
+    percentage: null, amountCents: null, newPriceCents: null, offCents: null,
+  };
+  if (mode !== DISCOUNT_PERCENT && mode !== DISCOUNT_AMOUNT) return idle;
+
+  const text = String(raw ?? '').trim();
+  if (!text) return { ...idle, active: true, incomplete: true };
+
+  const bad = (error) => ({ ...idle, active: true, error });
+  const n = Number(text);
+  if (!Number.isFinite(n)) return bad('Enter a number.');
+  if (n < 0) return bad('A discount cannot be negative.');
+  if (!Number.isFinite(priceCents)) {
+    return bad('This product has no price on file, so there is nothing to discount.');
+  }
+
+  if (mode === DISCOUNT_PERCENT) {
+    if (n > 100) return bad('A percentage discount cannot be more than 100%.');
+    if (n === 0) return bad('Enter a discount greater than zero.');
+    const newPriceCents = Math.max(0, Math.round(priceCents * (100 - n) / 100));
+    return {
+      active: true, incomplete: false, error: null,
+      percentage: n, amountCents: null,
+      newPriceCents, offCents: priceCents - newPriceCents,
+    };
+  }
+
+  // Amount off, typed in dollars.
+  const amountCents = Math.round(n * 100);
+  if (amountCents === 0) return bad('Enter a discount greater than zero.');
+  if (amountCents > priceCents) {
+    return bad(`That is more than the ${fmtMoney(priceCents)} price of this package.`);
+  }
+  const newPriceCents = Math.max(0, priceCents - amountCents);
+  return {
+    active: true, incomplete: false, error: null,
+    percentage: null, amountCents,
+    newPriceCents, offCents: priceCents - newPriceCents,
+  };
+}
+
+/**
+ * The synced Square catalogue discount that means exactly what was typed, or
+ * null.
+ *
+ * This matters because square-apply-discount does NOT accept a percentage or an
+ * amount — it accepts a `discount_id` and reads the numbers out of
+ * store_discounts itself (square-apply-discount/index.ts:97-113). So a typed
+ * figure can only ever reach Square if a discount object with that exact figure
+ * already exists in the Square catalogue. Matching is exact on purpose: a
+ * "close enough" match would bill a family a number nobody chose.
+ */
+function matchSquareDiscount(discounts, disc) {
+  if (!disc || !disc.active || disc.error || disc.incomplete) return null;
+  return (discounts || []).find((d) => (
+    (disc.percentage != null && d.percentage != null && Number(d.percentage) === disc.percentage)
+    || (disc.amountCents != null && d.amount_cents != null && Number(d.amount_cents) === disc.amountCents)
+  )) || null;
+}
+
+function discountPhrase(disc) {
+  if (!disc || !disc.active || disc.error || disc.incomplete) return '';
+  if (disc.percentage != null) {
+    return `${disc.percentage}% off`;
+  }
+  return `${fmtMoney(disc.amountCents)} off`;
 }
 
 // #344: returns null — never the string "Invalid Date" — for a missing or
@@ -99,6 +259,23 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
   // just now"; the fallback wording says the date is unknown. Same source of
   // truth as PackagesModal.js.
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
+
+  // #384 — the frequency + discount controls.
+  //
+  // `viewer` is the signed-in staff member, and it is loaded because two
+  // separate things downstream are admin-only and coaches can open this modal
+  // (Profile.js gates the Assign Payment button on admin OR coach):
+  //   * store_discounts SELECT is `get_user_role() = 'admin'`
+  //     (20260616_square_discounts.sql:23-25), so a coach gets an EMPTY LIST
+  //     WITH NO ERROR — indistinguishable from "Square has no discounts" unless
+  //     we know the role;
+  //   * square-apply-discount returns 403 for anyone but an admin
+  //     (square-apply-discount/index.ts:74).
+  const [viewer, setViewer] = useState(null);
+  const [discounts, setDiscounts] = useState([]);
+  const [discountsError, setDiscountsError] = useState(null);
+  const [discountMode, setDiscountMode] = useState(DISCOUNT_OFF);
+  const [discountRaw, setDiscountRaw] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -182,6 +359,43 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
     return () => { cancelled = true; };
   }, []);
 
+  // Who is doing this, and — only if that is an admin — what discounts Square
+  // has actually synced. The query is skipped for a coach rather than run and
+  // silently filtered to nothing, so this screen never reports an RLS refusal
+  // as "no discounts exist".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      const authUser = auth && auth.user;
+      if (cancelled || !authUser) return;
+      const { data: me, error: meErr } = await supabase
+        .from('users')
+        .select('id, full_name, role')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (meErr) console.error('Could not read the signed-in account\'s role:', meErr);
+      setViewer(me || { id: authUser.id, full_name: null, role: null });
+      if (!me || me.role !== 'admin') return;
+      const { data, error: dErr } = await supabase
+        .from('store_discounts')
+        .select('id, name, percentage, amount_cents')
+        .eq('active', true)
+        .order('name');
+      if (cancelled) return;
+      if (dErr) {
+        console.error('Failed to load synced Square discounts:', dErr);
+        setDiscountsError(dErr);
+        setDiscounts([]);
+      } else {
+        setDiscountsError(null);
+        setDiscounts(data || []);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const check = useMemo(
     () => checkExistingAssignments({
       product: selected,
@@ -192,13 +406,221 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
     [selected, purchases, purchasesError, purchasesLoading],
   );
 
+  const isAdmin = viewer != null && viewer.role === 'admin';
+
+  // Every catalogue row that is the same package at a different cadence. One
+  // entry means the package exists at a single frequency and there is nothing
+  // to choose.
+  const versions = useMemo(() => frequencyVersions(products, selected), [products, selected]);
+
+  // Recomputed against `selected.price_cents`, so switching frequency
+  // re-validates the discount against the NEW price — a $50-off agreement that
+  // is fine on a $240 monthly plan is not fine on a $120 fortnightly one, and
+  // this is what catches that.
+  const disc = useMemo(
+    () => computeDiscount({
+      mode: discountMode,
+      raw: discountRaw,
+      priceCents: selected ? selected.price_cents : null,
+    }),
+    [discountMode, discountRaw, selected],
+  );
+
+  const squareDiscount = useMemo(() => matchSquareDiscount(discounts, disc), [discounts, disc]);
+
+  // The one question this whole feature turns on: will the family actually be
+  // charged less?
+  //
+  // Only if all four hold. square-apply-discount is the ONLY deployed thing
+  // that can change what Square bills, and it needs (a) an admin caller, (b) a
+  // subscription — it looks up product_kind='package' with a non-null
+  // square_subscription_id and 404s otherwise (index.ts:80-91) — and (c) an
+  // existing store_discounts row, because it takes a discount_id and not a
+  // number. Anything else is a note in the portal, and this flag is what the
+  // wording keys off so the two can never disagree.
+  const discountReachesSquare = !!(
+    disc.active && !disc.error && !disc.incomplete
+    && squareDiscount && isAdmin
+    && selected && selected.kind === 'package'
+  );
+
+  const resetDiscount = () => { setDiscountMode(DISCOUNT_OFF); setDiscountRaw(''); };
+
+  // Write the staff member's intent onto the purchase we just created.
+  //
+  // 🔴 It goes in `metadata`, NOT in `discounted_price_cents`. That column is
+  // read across the app as WHAT SQUARE ACTUALLY CHARGED — invoiceMatch.js's
+  // purchaseAmountCents() reconciles Square invoices against it, and
+  // WorkStore.js prints `discounted_price_cents ?? amount_cents` as the money
+  // received. Writing a price Square never charged into it would silently
+  // corrupt invoice reconciliation for every discounted row. Only
+  // square-apply-discount, which has just told Square, may set that column.
+  const recordDiscountIntent = async ({ purchaseId, product, appliedInSquare, squareDiscountId, note }) => {
+    if (!purchaseId) {
+      return { ok: false, reason: 'square-checkout did not return the new purchase id, so nothing could be written down.' };
+    }
+    // Re-read and merge: jsonb cannot be appended to through PostgREST, and
+    // square-checkout has just written idempotency_key / payment_link_id /
+    // plan_variation_id onto this row. Replacing the object wholesale is the
+    // exact defect PLANNING.md logs as M1 against square-apply-discount.
+    const { data: fresh, error: readErr } = await supabase
+      .from('store_purchases')
+      .select('id, metadata')
+      .eq('id', purchaseId)
+      .maybeSingle();
+    if (readErr) {
+      console.error('Could not read back the new purchase to record the discount:', readErr);
+      return { ok: false, reason: formatUserError(readErr, 'The new purchase could not be read back.') };
+    }
+    if (!fresh) {
+      return { ok: false, reason: 'The new purchase could not be read back, so the discount was not written down.' };
+    }
+    const base = fresh.metadata && typeof fresh.metadata === 'object' && !Array.isArray(fresh.metadata)
+      ? fresh.metadata
+      : {};
+    const record = {
+      at: new Date().toISOString(),
+      by: viewer ? viewer.id : null,
+      by_name: (viewer && viewer.full_name) || null,
+      source: 'AssignPackageModal',
+      product_id: product.id,
+      product_name: product.name,
+      frequency: frequencyOf(product),
+      base_cents: product.price_cents,
+      percentage: disc.percentage,
+      amount_cents: disc.amountCents,
+      new_price_cents: disc.newPriceCents,
+      applied_in_square: !!appliedInSquare,
+      square_discount_id: squareDiscountId || null,
+      note: note || null,
+    };
+    // .select() is what makes this honest: an UPDATE refused by RLS returns 200
+    // with no error and zero rows. See writeOutcome.js.
+    const { data: updated, error: updErr } = await supabase
+      .from('store_purchases')
+      .update({ metadata: { ...base, [REQUESTED_DISCOUNT_KEY]: record } })
+      .eq('id', purchaseId)
+      .select('id');
+    const outcome = classifyWriteOutcome({ error: updErr, data: updated, expected: 1 });
+    if (outcome.outcome === 'errored') {
+      console.error('Could not record the discount on the new purchase:', updErr);
+      return { ok: false, reason: formatUserError(updErr, 'The discount could not be written down.') };
+    }
+    if (outcome.outcome !== 'written') {
+      console.warn('Discount record refused (0 rows) for purchase', purchaseId);
+      return { ok: false, reason: 'The database accepted the request but changed no rows, which means it refused the write. Nothing about the discount was recorded.' };
+    }
+    return { ok: true };
+  };
+
+  // What happened to the discount, as one of exactly three states. This is the
+  // only place that decides, and the result screen reads it verbatim — there is
+  // no second opinion anywhere that could tell staff a different story.
+  //
+  //   'applied'  — Square has it. The family is billed the discounted price.
+  //   'recorded' — written on the purchase in the portal ONLY. Square still
+  //                bills full price until a human changes it there.
+  //   'lost'     — not applied AND not even written down. Say so loudest.
+  const settleDiscount = async ({ purchaseId, product, session }) => {
+    const shape = {
+      phrase: discountPhrase(disc),
+      baseCents: product.price_cents,
+      newPriceCents: disc.newPriceCents,
+      period: periodSuffix(product),
+      squareName: squareDiscount ? squareDiscount.name : null,
+    };
+
+    if (discountReachesSquare) {
+      try {
+        const res = await fetch(
+          `${process.env.REACT_APP_SUPABASE_URL || 'https://cjilkqzifyhssbsiqgfu.supabase.co'}/functions/v1/square-apply-discount`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session?.access_token}`,
+            },
+            body: JSON.stringify({ user_id: playerId, discount_id: squareDiscount.id }),
+          },
+        );
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error || 'Square rejected the discount.');
+
+        // 🔴 square-apply-discount takes a user_id, NOT a purchase_id: it picks
+        // the athlete's most recent package purchase itself
+        // (index.ts:80-89). That is normally the row we just made, but it is
+        // not guaranteed, and a discount silently landing on a DIFFERENT
+        // subscription is worse than one that never applied. It echoes the row
+        // it touched, so check it, and refuse to claim success when it differs.
+        if (purchaseId && json.purchase_id && json.purchase_id !== purchaseId) {
+          const noted = await recordDiscountIntent({
+            purchaseId, product, appliedInSquare: false,
+            squareDiscountId: squareDiscount.id,
+            note: `square-apply-discount applied this to purchase ${json.purchase_id}, not the one just assigned.`,
+          });
+          return {
+            ...shape,
+            state: 'misapplied',
+            otherPurchaseId: json.purchase_id,
+            recorded: noted.ok,
+            recordProblem: noted.ok ? null : noted.reason,
+          };
+        }
+        return {
+          ...shape,
+          state: 'applied',
+          billedCents: typeof json.discounted_price_cents === 'number'
+            ? json.discounted_price_cents
+            : disc.newPriceCents,
+        };
+      } catch (err) {
+        // Square said no. The package is already assigned, so fall through to
+        // recording the intent rather than losing it — and carry the reason.
+        console.error('square-apply-discount failed after assignment:', err);
+        const noted = await recordDiscountIntent({
+          purchaseId, product, appliedInSquare: false,
+          squareDiscountId: squareDiscount.id,
+          note: `square-apply-discount failed: ${err.message}`,
+        });
+        return {
+          ...shape,
+          state: noted.ok ? 'recorded' : 'lost',
+          squareError: err.message,
+          recordProblem: noted.ok ? null : noted.reason,
+        };
+      }
+    }
+
+    const noted = await recordDiscountIntent({
+      purchaseId, product, appliedInSquare: false,
+      squareDiscountId: squareDiscount ? squareDiscount.id : null,
+      note: null,
+    });
+    return {
+      ...shape,
+      state: noted.ok ? 'recorded' : 'lost',
+      recordProblem: noted.ok ? null : noted.reason,
+    };
+  };
+
   const handleAssign = async (product) => {
-    // Unchanged from before #344: same endpoint, same body, same rows written,
-    // same notification. The duplicate check is pre-flight only.
+    // The assignment itself is UNCHANGED from #344: same endpoint, same body,
+    // same rows written, same notification. #384's frequency control works
+    // entirely by changing WHICH product.id is passed here, so the charge is
+    // right without square-checkout knowing anything new. The discount is a
+    // strictly separate second step below, after the assignment has already
+    // succeeded — a discount that fails must never cost the athlete the package.
     setAssigning(product.id);
     setError('');
+    const wanted = disc.active && !disc.error && !disc.incomplete ? disc : null;
     try {
-      trackAction('assign_package', { product_id: product.id, player_id: playerId });
+      trackAction('assign_package', {
+        product_id: product.id,
+        player_id: playerId,
+        frequency: frequencyOf(product),
+        discount: wanted ? discountPhrase(wanted) : null,
+        discount_reaches_square: discountReachesSquare,
+      });
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(
         `${process.env.REACT_APP_SUPABASE_URL || 'https://cjilkqzifyhssbsiqgfu.supabase.co'}/functions/v1/square-checkout`,
@@ -217,7 +639,18 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
       );
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Assignment failed');
-      setResult({ product_name: product.name, checkout_url: json.checkout_url });
+
+      const outcome = wanted
+        ? await settleDiscount({ purchaseId: json.purchase_id, product, session })
+        : null;
+
+      setResult({
+        product_name: product.name,
+        checkout_url: json.checkout_url,
+        purchase_id: json.purchase_id || null,
+        product,
+        discount: outcome,
+      });
       onAssigned?.();
     } catch (err) {
       setError(err.message);
@@ -418,6 +851,359 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
     );
   };
 
+  // ---------------------------------------------------------------------------
+  // #384 — the frequency picker.
+  //
+  // Only drawn when the catalogue actually holds this package at more than one
+  // cadence. Every option is a real store_products row with its own Square
+  // plan variation and its own price, so the price moves with the choice.
+  // ---------------------------------------------------------------------------
+  const renderFrequency = () => {
+    if (!selected || versions.length < 2) return null;
+    return (
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">
+          Billing frequency
+        </h3>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {versions.map((v) => {
+            const active = v.id === selected.id;
+            // square-checkout refuses a kind='package' row with no
+            // square_plan_id / square_variation_id (index.ts:189-193) — those
+            // are the older SUBSCRIPTION_PLAN rows square-catalog-sync inserts
+            // with square_variation_id NULL. Say so here rather than let staff
+            // find out from a 400 after pressing Assign. Not disabled: the
+            // product list has always allowed picking one, and the edge
+            // function's own message is the authority on why it failed.
+            const notBillable = v.kind === 'package' && !(v.square_plan_id && v.square_variation_id);
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => { setError(''); setSelected(v); }}
+                disabled={assigning != null}
+                className={`text-left border rounded-lg px-3 py-2 transition disabled:opacity-60 ${
+                  active
+                    ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-200'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <p className={`text-sm font-medium ${active ? 'text-indigo-900' : 'text-gray-900'}`}>
+                  {frequencyLabel(v)}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {fmtMoney(v.price_cents)}{periodSuffix(v)}
+                </p>
+                {notBillable && (
+                  <p className="text-xs text-red-700 mt-0.5">
+                    Not set up as a subscription plan in Square — assigning this will fail.
+                  </p>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Each option is a separate plan in Square, with its own price. Picking one here charges that
+          plan — the same choice the Square dashboard offers.
+        </p>
+      </div>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // #384 — the discount controls, and the one paragraph that has to be true.
+  //
+  // The controls are the easy half. The hard half is the status box at the
+  // bottom, which says which of two completely different things is about to
+  // happen: a real price override in Square, or a note in the portal while the
+  // family keeps paying full price. Those are never worded the same.
+  // ---------------------------------------------------------------------------
+  const renderDiscount = () => {
+    if (!selected) return null;
+    const price = selected.price_cents;
+    const period = periodSuffix(selected);
+    const showing = disc.active && !disc.error && !disc.incomplete;
+
+    return (
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">
+          Discount
+        </h3>
+
+        <div className="flex flex-wrap gap-2">
+          {[
+            [DISCOUNT_OFF, 'No discount'],
+            [DISCOUNT_PERCENT, 'Percentage off'],
+            [DISCOUNT_AMOUNT, 'Amount off'],
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => { setDiscountMode(mode); if (mode === DISCOUNT_OFF) setDiscountRaw(''); }}
+              disabled={assigning != null}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition disabled:opacity-60 ${
+                discountMode === mode
+                  ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {discountMode !== DISCOUNT_OFF && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2">
+              {discountMode === DISCOUNT_AMOUNT && <span className="text-gray-500 text-sm">$</span>}
+              <input
+                type="number"
+                min="0"
+                step={discountMode === DISCOUNT_PERCENT ? '1' : '0.01'}
+                max={discountMode === DISCOUNT_PERCENT ? '100' : undefined}
+                value={discountRaw}
+                onChange={(e) => setDiscountRaw(e.target.value)}
+                disabled={assigning != null}
+                placeholder={discountMode === DISCOUNT_PERCENT ? '20' : '50.00'}
+                className="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 disabled:opacity-60"
+              />
+              {discountMode === DISCOUNT_PERCENT && <span className="text-gray-500 text-sm">%</span>}
+              <span className="text-sm text-gray-500">off</span>
+            </div>
+
+            {disc.error && (
+              <p className="text-sm text-red-700">{disc.error}</p>
+            )}
+
+            {showing && (
+              <p className="text-sm text-gray-900">
+                <span className="text-gray-500 line-through">{fmtMoney(price)}{period}</span>
+                {' → '}
+                <span className="font-semibold">{fmtMoney(disc.newPriceCents)}{period}</span>
+                <span className="text-gray-500"> ({fmtMoney(disc.offCents)} off)</span>
+              </p>
+            )}
+
+            {/* Discounts that already exist in Square. These are the ONLY ones
+                that can be applied for real from here, because
+                square-apply-discount takes a discount_id and reads the numbers
+                out of store_discounts itself — it cannot be handed a figure. */}
+            {isAdmin && selected.kind === 'package' && discounts.length > 0 && (
+              <div className="pt-1">
+                <p className="text-xs text-gray-500 mb-1.5">
+                  Discounts synced from Square — these can be applied for real:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {discounts.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      disabled={assigning != null}
+                      onClick={() => {
+                        if (d.percentage != null) {
+                          setDiscountMode(DISCOUNT_PERCENT);
+                          setDiscountRaw(String(Number(d.percentage)));
+                        } else if (d.amount_cents != null) {
+                          setDiscountMode(DISCOUNT_AMOUNT);
+                          setDiscountRaw((d.amount_cents / 100).toFixed(2));
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition disabled:opacity-60 ${
+                        squareDiscount && squareDiscount.id === d.id
+                          ? 'border-green-400 bg-green-50 text-green-800'
+                          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {d.name}
+                      {' · '}
+                      {d.percentage != null
+                        ? `${Number(d.percentage)}% off`
+                        : d.amount_cents != null
+                          ? `${fmtMoney(d.amount_cents)} off`
+                          : 'no value set'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {isAdmin && selected.kind === 'package' && discounts.length === 0 && !discountsError && (
+              <p className="text-xs text-gray-500">
+                No discounts are synced from Square. Create one in the Square dashboard, then run
+                “Sync from Square” in Work Portal → Store, and it becomes applicable from here.
+              </p>
+            )}
+            {discountsError && (
+              <p className="text-xs text-red-700">
+                {formatUserError(discountsError, 'The Square discount list could not be loaded.')}{' '}
+                That list is unknown, not empty.
+              </p>
+            )}
+
+            {showing && renderDiscountFate()}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // The status box. Green ONLY when a real Square price override is going to
+  // happen; amber every other time, naming the amount the family will actually
+  // be charged. A silent mismatch between this screen and the family's card is
+  // the failure this whole block exists to prevent.
+  const renderDiscountFate = () => {
+    const period = periodSuffix(selected);
+    if (discountReachesSquare) {
+      return (
+        <div className="rounded-lg border border-green-300 bg-green-50 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <BadgePercent size={18} className="text-green-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-green-900">
+              <p className="font-semibold">
+                This will be applied in Square as “{squareDiscount.name}”.
+              </p>
+              <p className="mt-1">
+                After assigning, {firstName} is billed{' '}
+                <span className="font-medium">{fmtMoney(disc.newPriceCents)}{period}</span>{' '}
+                instead of {fmtMoney(selected.price_cents)}{period}, every cycle, until the discount is
+                removed. This is a real price override on the Square subscription — not a note.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Why it cannot reach Square, most specific reason first. Each of these is
+    // a different fix, so they are not collapsed into one vague sentence.
+    let reason;
+    if (selected.kind !== 'package') {
+      reason = 'Only recurring subscriptions can be discounted automatically from the portal. This is a one-time charge, and square-checkout builds its Square payment link at the full list price.';
+    } else if (!isAdmin) {
+      reason = 'Applying a discount in Square is admin-only. Your account can record it here, but an admin has to apply it.';
+    } else if (!squareDiscount) {
+      reason = 'No discount in the Square catalogue matches this exact figure. The portal can only apply a discount that already exists in Square — it cannot create one.';
+    } else {
+      reason = 'The portal cannot apply this discount in Square.';
+    }
+
+    return (
+      <div className="rounded-lg border border-amber-400 bg-amber-50 px-4 py-3">
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-900">
+            <p className="font-semibold">
+              This discount will be recorded in the portal only. Square will still bill{' '}
+              {fmtMoney(selected.price_cents)}{period}.
+            </p>
+            <p className="mt-1">{reason}</p>
+            {/* The remedy is genuinely different for the two kinds, so it is
+                not written as one vague "fix it in Square". A subscription has
+                a price you can override; a one-time payment link does not —
+                square-checkout has already minted it at product.price_cents
+                (square-checkout/index.ts:132) and a payment link's amount
+                cannot be edited afterwards. */}
+            {selected.kind === 'package' ? (
+              <p className="mt-1">
+                {firstName} will be charged the full {fmtMoney(selected.price_cents)}{period} every
+                cycle until somebody changes it in the Square dashboard. Assign here, then open the
+                subscription in Square and override the price to {fmtMoney(disc.newPriceCents)}.
+              </p>
+            ) : (
+              <p className="mt-1">
+                The payment link this creates will be for the full {fmtMoney(selected.price_cents)}, and
+                a Square payment link&apos;s amount cannot be edited afterwards. To charge{' '}
+                {fmtMoney(disc.newPriceCents)} instead, cancel this in Square and raise a new invoice
+                for that amount.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // The result screen's discount block. It reads the outcome settleDiscount()
+  // decided; it never re-derives anything, so it cannot contradict what
+  // actually happened.
+  // ---------------------------------------------------------------------------
+  const renderDiscountOutcome = () => {
+    const d = result && result.discount;
+    if (!d) return null;
+
+    if (d.state === 'applied') {
+      return (
+        <div className="rounded-lg border border-green-300 bg-green-50 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <BadgePercent size={18} className="text-green-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-green-900">
+              <p className="font-semibold">
+                {d.phrase} applied in Square{d.squareName ? ` as “${d.squareName}”` : ''}.
+              </p>
+              <p className="mt-1">
+                {firstName} is billed{' '}
+                <span className="font-medium">{fmtMoney(d.billedCents)}{d.period}</span> instead of{' '}
+                {fmtMoney(d.baseCents)}{d.period}, every cycle, until it is removed.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (d.state === 'misapplied') {
+      return (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <ShieldAlert size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-red-900">
+              <p className="font-semibold">The discount landed on a different subscription.</p>
+              <p className="mt-1">
+                Square applied {d.phrase} to purchase {d.otherPurchaseId}, not the one just assigned.
+                Check {firstName}&apos;s subscriptions in Square before doing anything else — one of
+                them is now billing a price nobody chose.
+              </p>
+              {!d.recorded && d.recordProblem && (
+                <p className="mt-1 text-xs">{d.recordProblem}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const lost = d.state === 'lost';
+    return (
+      <div className={`rounded-lg border px-4 py-3 ${lost ? 'border-red-300 bg-red-50' : 'border-amber-400 bg-amber-50'}`}>
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={18} className={`${lost ? 'text-red-600' : 'text-amber-600'} flex-shrink-0 mt-0.5`} />
+          <div className={`text-sm ${lost ? 'text-red-900' : 'text-amber-900'}`}>
+            <p className="font-semibold">
+              {d.phrase} was NOT applied in Square. {playerName || 'This athlete'} will be charged{' '}
+              {fmtMoney(d.baseCents)}{d.period}.
+            </p>
+            {d.squareError && (
+              <p className="mt-1">Square rejected the change: {d.squareError}</p>
+            )}
+            <p className="mt-1">
+              {lost
+                ? 'It was not recorded in the portal either, so there is no note of it anywhere. '
+                : 'It is recorded on this purchase in the portal so the agreement is not lost. '}
+              {result.product && result.product.kind === 'package'
+                ? `To make it real, open ${firstName}'s subscription in the Square dashboard and override the price to ${fmtMoney(d.newPriceCents)}.`
+                : `The payment link above is for the full ${fmtMoney(d.baseCents)} and a Square payment link's amount cannot be edited. To charge ${fmtMoney(d.newPriceCents)} instead, cancel it in Square and raise a new invoice for that amount.`}
+            </p>
+            {d.recordProblem && (
+              <p className="mt-1 text-xs">{d.recordProblem}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const step = result ? 'result' : selected ? 'review' : 'list';
 
   return (
@@ -428,7 +1214,7 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
           capped at 60vh, so header + 60vh + footer can never push the Assign
           button off-screen no matter how many existing packages an athlete has
           or how long the warning gets. */}
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full flex flex-col">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <ShoppingBag size={22} className="text-indigo-600 flex-shrink-0" />
@@ -441,8 +1227,12 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
           </button>
         </div>
 
-        {/* The ONLY scrolling element in this modal. */}
-        <div className="overflow-y-auto max-h-[60vh] px-6 py-4 space-y-4">
+        {/* The ONLY scrolling element in this modal. `flex-1 min-h-0` is what
+            lets it actually shrink inside the 90vh-capped column — without
+            min-h-0 a flex child refuses to go below its content height and the
+            footer is pushed off a short screen, which is the failure the modal
+            rule exists to stop. */}
+        <div className="flex-1 min-h-0 overflow-y-auto max-h-[60vh] px-6 py-4 space-y-4">
           {step === 'result' && (
             <div className="space-y-4">
               <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
@@ -455,6 +1245,8 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
                   </p>
                 </div>
               </div>
+              {renderDiscountOutcome()}
+
               <div className="flex items-center gap-2">
                 <input
                   readOnly
@@ -480,10 +1272,14 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
                 <p className="font-medium text-gray-900">{selected.name}</p>
                 {selected.description && <p className="text-sm text-gray-500">{selected.description}</p>}
                 <p className="text-sm text-gray-700 font-semibold mt-1">
-                  {fmtMoney(selected.price_cents)}{selected.recurring ? ' / mo' : ''}
+                  {fmtMoney(selected.price_cents)}{periodSuffix(selected)}
                   {selected.bundle_qty ? ` · ${selected.bundle_qty} sessions` : ''}
                 </p>
               </div>
+
+              {renderFrequency()}
+
+              {renderDiscount()}
 
               {error && (
                 <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-2 text-sm">{error}</div>
@@ -556,12 +1352,12 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
                               <p className="text-sm text-gray-500 truncate">{p.description}</p>
                             )}
                             <p className="text-sm text-gray-700 font-semibold mt-1">
-                              {fmtMoney(p.price_cents)}{p.recurring ? ' / mo' : ''}
+                              {fmtMoney(p.price_cents)}{periodSuffix(p)}
                               {p.bundle_qty ? ` · ${p.bundle_qty} sessions` : ''}
                             </p>
                           </div>
                           <button
-                            onClick={() => { setError(''); setSelected(p); }}
+                            onClick={() => { setError(''); resetDiscount(); setSelected(p); }}
                             className="ml-4 bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition"
                           >
                             Assign
@@ -603,7 +1399,7 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
           {step === 'review' && (
             <div className="flex items-center justify-between gap-3">
               <button
-                onClick={() => setSelected(null)}
+                onClick={() => { resetDiscount(); setSelected(null); }}
                 disabled={assigning != null}
                 className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition disabled:opacity-60"
               >
@@ -621,6 +1417,16 @@ export default function AssignPackageModal({ playerId, playerName, onClose, onAs
                 {check.requiresAck && (
                   <span className="text-xs text-amber-800 hidden sm:inline">
                     This adds a second live charge.
+                  </span>
+                )}
+                {/* #384: the discount banner lives in the scrolling body, and
+                    this button does not. Somebody who never scrolls must still
+                    not be able to press Assign believing the family is about to
+                    be charged less than they are. */}
+                {disc.active && !disc.error && !disc.incomplete && !discountReachesSquare && (
+                  <span className="text-xs text-amber-800">
+                    Discount is portal-only — Square still bills {fmtMoney(selected.price_cents)}
+                    {periodSuffix(selected)}.
                   </span>
                 )}
                 <button
