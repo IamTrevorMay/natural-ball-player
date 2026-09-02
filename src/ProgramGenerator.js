@@ -3,6 +3,9 @@ import { supabase } from './supabaseClient';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
 import { extractMetricSourcesFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
+import TrainingDaysPicker, {
+  ALL_TRAINING_DAYS, weekdayPlacement, fitMessage, formatDays,
+} from './TrainingDaysPicker';
 import {
   Position, Sex, makeAthlete, trainingStage, maturityBand, loadStyle,
   generateProgram, programToProgramDays, macroCalendar,
@@ -178,6 +181,23 @@ const ASSESSMENT_FIELDS = [
   ['rel_trap_bar_dl', 'Trap-bar deadlift (× BW)'],
 ];
 
+/* #385 — the weekdays scProgramEngine puts its sessions on by default, keyed by
+   session count (3 in-season, 4 off-season). Mon=0…Sun=6, mirroring the engine's
+   own WD constants. */
+const SC_DEFAULT_WEEKDAYS = { 3: [0, 1, 3], 4: [0, 1, 3, 4] }; // Mon/Tue/Thu (+Fri)
+
+/* Resolve a session count onto the coach's available days. Returns null when that
+   many sessions cannot fit. Crucially, when the engine's OWN days are all still
+   available this returns those exact days, so the all-seven default is a true
+   no-op — an even spread across seven days would be Mon/Wed/Fri/Sun and would
+   silently move every existing program. */
+function scWeekdaySlots(count, allowed) {
+  const dflt = SC_DEFAULT_WEEKDAYS[count];
+  const p = weekdayPlacement(dflt, allowed);
+  if (!p.ok) return null;
+  return p.moved ? dflt.map((d) => p.map.get(d)) : dflt;
+}
+
 const iso = (d) => d.toISOString().slice(0, 10);
 function defaultSeason() {
   // Sensible default: a spring season for the current/next year.
@@ -245,6 +265,16 @@ export default function ProgramGenerator({ userId, userRole }) {
   // Program length (weeks) — independent of season; the coach picks a duration.
   const [programLength, setProgramLength] = useState('8');
   const [autoFit, setAutoFit] = useState(false);
+
+  /* #385 — weekdays the athlete is actually available to lift on (Mon=0…Sun=6).
+     Defaults to all seven, which reproduces the engine's own Mon/Tue/Thu/Fri
+     split exactly, so ignoring this control changes nothing. */
+  const [trainingDays, setTrainingDays] = useState([...ALL_TRAINING_DAYS]);
+  const [dayFitError, setDayFitError] = useState('');
+  const scSlots = useMemo(() => ({
+    3: scWeekdaySlots(3, trainingDays),
+    4: scWeekdaySlots(4, trainingDays),
+  }), [trainingDays]);
 
   const [program, setProgram] = useState(null);
   const [macro, setMacro] = useState([]);
@@ -432,7 +462,24 @@ export default function ProgramGenerator({ userId, userRole }) {
         len = Math.max(1, Math.min(16, w || 1));
         setProgramLength(String(len));
       }
-      const prog = generateProgram(ath, pd, ss, se, len);
+      /* #385 — put the week's sessions on the days the athlete is available.
+         scSlots holds a weekday list per session count (3 in-season / 4 off-season),
+         or null for a count that cannot fit the chosen days. A null makes the engine
+         fall back to its own Mon/Tue/Thu/Fri split, which would quietly ignore the
+         coach — so we generate, look at how many sessions the heaviest week actually
+         wants, and refuse to KEEP a program whose count had no slot list. */
+      const weekdays = scSlots;
+      const prog = generateProgram(ath, pd, ss, se, len, { weekdays });
+      const needed = Math.max(...prog.weeks.map((w) => w.days.length));
+      if (!weekdays[needed]) {
+        const msg = fitMessage(needed, trainingDays.length);
+        setDayFitError(msg);
+        setError(`This ${len}-week block has ${needed} sessions in its heaviest week. ${msg}`);
+        setProgram(null);
+        setMacro([]);
+        return;
+      }
+      setDayFitError('');
       setProgram(prog);
       // Training age is owned by the athlete's profile (edit it on the Profile → General tab).
       // The generator only reads it, so we no longer write it back here.
@@ -671,6 +718,19 @@ export default function ProgramGenerator({ userId, userRole }) {
                 </label>
               </div>
             </div>
+          </div>
+
+          {/* #385 — which weekdays this athlete may lift on (e.g. around Naturals practices). */}
+          <div className={card}>
+            <TrainingDaysPicker
+              accent="blue"
+              value={trainingDays}
+              onChange={(d) => { setTrainingDays(d); setDayFitError(''); }}
+              placedOn={scSlots[4] || scSlots[3]}
+              error={dayFitError}
+              note={`Off-season weeks are 4 sessions (Lower · Upper · DE-Lower · DE-Upper); in-season weeks are 3${
+                scSlots[3] ? ` and land on ${formatDays(scSlots[3])}` : ''}.`}
+            />
           </div>
 
           <button onClick={generate}

@@ -3,6 +3,10 @@ import { supabase } from './supabaseClient';
 import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { extractMetricsFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
+import TrainingDaysPicker, {
+  ALL_TRAINING_DAYS, remapProgramDayRows, weekdayPlacement, fitMessage,
+  WEEKDAY_ABBR, weekdayOfDayNumber,
+} from './TrainingDaysPicker';
 import {
   LEVELS, POSITIONS, PHASES, PHASE_ORDER, ATHLETE_TYPES,
   gameDemand, readiness, assessmentGates, stressUnits, moundRamp, buildWeek, seedLog,
@@ -155,6 +159,16 @@ function ThrowMetricBar({ mkey, s }) {
   );
 }
 
+/* #385 helpers. Module scope so they are stable across renders (and so the
+   useMemo dependency lists below stay honest). */
+// Indices of the days in a built microcycle that carry programming — everything
+// except a pure OFF day, which is exactly what programToProgramDays serializes.
+const activeIdx = (days) => days.map((d, i) => (d.code === 'OFF' ? -1 : i)).filter((i) => i >= 0);
+// The weekday a session actually lands on; '—' once a rest day no longer maps.
+const placedLabel = (placement, i, fallback) => (placement.moved
+  ? (placement.map.has(i) ? WEEKDAY_ABBR[placement.map.get(i)] : '—')
+  : fallback);
+
 export default function ThrowingGenerator({ userId, userRole }) {
   const [players, setPlayers] = useState([]);
   const [search, setSearch] = useState('');
@@ -168,6 +182,9 @@ export default function ThrowingGenerator({ userId, userRole }) {
   const [typeId, setTypeId] = useState('intermediate');
   const [weekInPhase, setWeekInPhase] = useState(2);
   const [weeks, setWeeks] = useState('4');
+  /* #385 — weekdays the athlete is available to throw on (Mon=0…Sun=6). All seven
+     (the default) leaves the engine's 7-day microcycle exactly where it puts it. */
+  const [trainingDays, setTrainingDays] = useState([...ALL_TRAINING_DAYS]);
   const [mob, setMob] = useState(72);
   const [str, setStr] = useState(68);
   const [bio, setBio] = useState(70);
@@ -346,6 +363,21 @@ export default function ThrowingGenerator({ userId, userRole }) {
     [levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase, numWeeks, chronicWeekly, benchS],
   );
 
+  /* #385 — the microcycle is a 7-day cycle; the days that carry programming are
+     every day the serializer emits, i.e. everything except a pure OFF day. Those
+     are moved onto the weekdays the coach made available. throwingEngine is not
+     ours to change, so the move happens on the rows it emits (day_number =
+     (week-1)*7 + weekdayIndex + 1) and on the previews below, so the screen and
+     the saved calendar always agree. */
+  const weekPlacement = useMemo(() => weekdayPlacement(activeIdx(week), trainingDays), [week, trainingDays]);
+  const saveRows = useMemo(
+    () => remapProgramDayRows(programToProgramDays(fullProgram, serOpts), trainingDays),
+    [fullProgram, serOpts, trainingDays],
+  );
+  const dayFitError = saveRows.ok ? '' : fitMessage(saveRows.needed, trainingDays.length);
+  const placedOn = useMemo(() => [...new Set(saveRows.rows
+    .filter((r) => r.day_number <= 7).map((r) => weekdayOfDayNumber(r.day_number)))].sort((a, b) => a - b),
+  [saveRows]);
   const acuteWeekly = week.reduce((s, d) => s + d.su, 0);
   const acwr = chronicWeekly > 0 ? acuteWeekly / chronicWeekly : 0;
   const phase = PHASES[phaseId];
@@ -358,13 +390,11 @@ export default function ThrowingGenerator({ userId, userRole }) {
 
   const save = async () => {
     if (!week) return;
+    if (!saveRows.ok) { setError(dayFitError); return; } // #385
     setSaving(true); setError(''); setSaveMsg('');
     try {
-      const program = buildProgram({
-        levelId, posId, phaseId, typeId, mob, str, bio, ready, weekInPhase,
-        weeks: numWeeks, chronic: chronicWeekly, bench: benchS,
-      });
-      const rows = programToProgramDays(program, serOpts);
+      // #385 — the same rows already previewed above, placed on the available days.
+      const rows = saveRows.rows;
       const { data: prog, error: pErr } = await supabase
         .from('training_programs')
         .insert({
@@ -513,6 +543,20 @@ export default function ThrowingGenerator({ userId, userRole }) {
             </div>
           </div>
 
+          {/* #385 — which weekdays this athlete may throw on (e.g. around Naturals practices). */}
+          <div className={card}>
+            <TrainingDaysPicker
+              accent="orange"
+              value={trainingDays}
+              onChange={setTrainingDays}
+              placedOn={placedOn}
+              error={dayFitError}
+              note={`${PHASES[phaseId].label} runs ${activeIdx(week).length} programmed days a week `
+                + '(arm-care and recovery days included — only a full OFF day is free), so at least that '
+                + 'many days must stay selected.'}
+            />
+          </div>
+
           <div className={card}>
             <div className={eyebrow}>Assessment gates</div>
             <Slider text="Mobility (shoulder / hip / T-spine)" value={mob} set={setMob} />
@@ -648,6 +692,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
                           const wk = fullProgram[wnum - 1];
                           if (!wk) return null;
                           const dayRows = weekToProgramDays(wk.days, serOpts);
+                          const wkPlace = weekdayPlacement(activeIdx(wk.days), trainingDays); // #385
                           return (
                             <div key={wnum} className="border-t border-gray-100 pt-2">
                               <div className="text-xs font-semibold text-gray-600 mb-1">
@@ -662,7 +707,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
                                   return (
                                     <div key={di} className="text-xs">
                                       <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-mono font-bold text-gray-700 w-8 shrink-0">{d.day}</span>
+                                        <span className="font-mono font-bold text-gray-700 w-8 shrink-0">{placedLabel(wkPlace, di, d.day)}</span>
                                         <span className={`font-semibold ${hot ? 'text-orange-600' : 'text-gray-800'}`}>{d.label}</span>
                                         {d.mound && <span className="text-[9px] font-mono text-amber-600 border border-amber-300 rounded px-1">MOUND</span>}
                                         <span className="font-mono text-gray-400">
@@ -716,7 +761,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
                     const hot = d.intent >= 90;
                     return (
                       <tr key={i} className="border-t border-gray-100">
-                        <td className={`py-2 pr-3 font-mono font-bold ${off ? 'text-gray-300' : 'text-gray-800'}`}>{d.day}</td>
+                        <td className={`py-2 pr-3 font-mono font-bold ${off ? 'text-gray-300' : 'text-gray-800'}`}>{placedLabel(weekPlacement, i, d.day)}</td>
                         <td className="py-2 pr-3">
                           <span className={`font-semibold ${off ? 'text-gray-300' : hot ? 'text-orange-600' : 'text-gray-800'}`}>{d.label}</span>
                           {d.mound && <span className="ml-1.5 text-[9px] font-mono text-amber-600 border border-amber-300 rounded px-1">MOUND</span>}
@@ -796,7 +841,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
                   return (
                     <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
                       <div className={`w-full rounded-t ${c}`} style={{ height: `${Math.max(3, h)}%` }} />
-                      <div className="text-[9px] font-mono text-gray-400 mt-1">{d.day[0]}</div>
+                      <div className="text-[9px] font-mono text-gray-400 mt-1">{placedLabel(weekPlacement, i, d.day)[0]}</div>
                     </div>
                   );
                 })}
