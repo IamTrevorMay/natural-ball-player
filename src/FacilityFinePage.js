@@ -12,6 +12,68 @@ import { formatUserError } from './errorMessage';
 // starting "Facility Fine". This page locates it, renders it inline, and writes
 // a row to facility_fine_signatures once signed.
 
+// #378 — renders the uploaded facility fine document reliably across file types.
+// PDFs render natively; Office documents (.docx and friends) go through the
+// Microsoft Office Online viewer; anything else falls back to a prominent
+// open/download link so review never silently fails. This mirrors
+// ContractDocViewer in ContractPage.js, which solved the identical problem for
+// the player contract. Worth collapsing the two into one shared component the
+// next time either is touched.
+function FacilityFineDocViewer({ doc }) {
+  if (!doc) return null;
+  const ext = (doc.ext || '').toLowerCase();
+  const isPdf = ext === 'pdf';
+  const isOffice = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(ext);
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+      <div className="border-b border-gray-200 px-4 py-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-gray-900">{doc.title}</h3>
+        <a
+          href={doc.signedUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          download
+          className="text-sm text-blue-600 hover:underline whitespace-nowrap"
+        >
+          Download / Open in new tab
+        </a>
+      </div>
+      {isPdf ? (
+        <iframe title={doc.title} src={doc.signedUrl} className="w-full" style={{ height: '70vh', border: 0 }} />
+      ) : isOffice ? (
+        <iframe
+          title={doc.title}
+          src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(doc.signedUrl)}`}
+          className="w-full"
+          style={{ height: '70vh', border: 0 }}
+        />
+      ) : (
+        <div className="p-8 text-center">
+          <p className="text-gray-600 mb-4">This document can't be previewed here.</p>
+          <a
+            href={doc.signedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            download
+            className="inline-block bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition"
+          >
+            Open the document to review
+          </a>
+        </div>
+      )}
+      <div className="border-t border-gray-200 px-4 py-3 bg-gray-50">
+        <p className="text-xs text-gray-500">
+          Trouble viewing it above?{' '}
+          <a href={doc.signedUrl} target="_blank" rel="noopener noreferrer" download className="text-blue-600 hover:underline">
+            Open it in a new tab
+          </a>{' '}to read before signing.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function FacilityFinePage({ userId, onSigned }) {
   const [loading, setLoading] = useState(true);
   const [doc, setDoc] = useState(null); // { id, title, signedUrl }
@@ -35,7 +97,12 @@ export default function FacilityFinePage({ userId, onSigned }) {
     const { data: signed } = await supabase.storage
       .from('staff-documents')
       .createSignedUrl(row.file_path, 60 * 60);
-    return signed?.signedUrl ? { id: row.id, title: row.title, signedUrl: signed.signedUrl } : null;
+    // #378: the uploaded facility fine document is a .docx, and a .docx in a
+    // plain <iframe> downloads or renders nothing. Carry the extension through
+    // so the viewer below can pick the right strategy, exactly as ContractPage
+    // has done since the player contract hit the same problem.
+    const ext = (row.file_path || '').split('.').pop().toLowerCase();
+    return signed?.signedUrl ? { id: row.id, title: row.title, ext, signedUrl: signed.signedUrl } : null;
   };
 
   const fetchSignature = async (documentId) => {
@@ -164,9 +231,14 @@ export default function FacilityFinePage({ userId, onSigned }) {
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 flex items-start gap-3">
           <AlertTriangle className="text-amber-600 flex-shrink-0" size={22} />
           <div>
-            <h2 className="text-lg font-semibold text-amber-900">No facility fine document uploaded yet</h2>
+            <h2 className="text-lg font-semibold text-amber-900">Facility fine policy not available</h2>
             <p className="text-sm text-amber-800 mt-1">
-              An admin needs to upload a PDF to Settings → Documents with a title starting "Facility Fine". Once uploaded, players will be prompted to sign here.
+              We could not load the facility fine document for your account. Either it has not
+              been uploaded yet, or your account does not have permission to view it. Please
+              contact an admin — do not assume you have nothing to sign.
+            </p>
+            <p className="text-xs text-amber-700 mt-2">
+              Admins: upload it under Settings → Documents with a title starting "Facility Fine".
             </p>
           </div>
         </div>
@@ -181,14 +253,7 @@ export default function FacilityFinePage({ userId, onSigned }) {
         <p className="text-sm text-gray-500 mt-1">Read the document below, then add your signature to acknowledge.</p>
       </div>
 
-      <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-        <iframe
-          src={doc.signedUrl}
-          title={doc.title}
-          className="w-full"
-          style={{ height: '70vh' }}
-        />
-      </div>
+      <FacilityFineDocViewer doc={doc} />
 
       {existing ? (
         <div className="bg-green-50 border border-green-200 rounded-lg p-5 flex items-start gap-3">
