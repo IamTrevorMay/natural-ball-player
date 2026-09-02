@@ -32,6 +32,17 @@ import './App.css';
 
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
+// #382: age in whole years from a 'YYYY-MM-DD' DOB. Kept byte-identical to the
+// copies in Profile.js, AutoProgram.js, HittingGenerator.js, NutritionGenerator.js
+// and ProgramGenerator.js rather than introducing a second, subtly different age
+// check. NOTE: WaiverPage.js does NOT derive minor status from DOB — its
+// `is_minor` is a checkbox the signer ticks — so there was no shared rule to import.
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const age = Math.floor((new Date() - new Date(dob + 'T00:00:00')) / (365.25 * 24 * 60 * 60 * 1000));
+  return Number.isFinite(age) ? age : null;
+};
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -163,7 +174,13 @@ export default function App() {
       .order('created_at', { ascending: false })
       .limit(1);
     const doc = docRows && docRows[0];
-    if (!doc) { setFacilityFineSigned(true); return; }
+    // #378: "I can't see a document" is NOT evidence that the user signed one.
+    // Athletes could never read staff_documents, so this branch quietly marked
+    // all ~1,000 of them as signed and suppressed the reminder dot — which is
+    // why only 3 facility fine signatures exist against 210 waivers. Report
+    // null (unknown) instead: the sidebar tests `=== false`, so null shows no
+    // dot but also makes no false claim. Do not restore `true` here.
+    if (!doc) { setFacilityFineSigned(null); return; }
     const { data } = await supabase
       .from('facility_fine_signatures')
       .select('id')
@@ -387,7 +404,7 @@ function LoginPage({ onLogin }) {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
-  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '', account_type: 'player' });
+  const [signup, setSignup] = useState({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '', parent1_email: '', account_type: 'player' });
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupSent, setSignupSent] = useState(false);
   const [signupError, setSignupError] = useState('');
@@ -403,6 +420,18 @@ function LoginPage({ onLogin }) {
   }, []);
 
   const isPublicSignup = signup.account_type === 'public';
+
+  // #382: a parent/guardian email is required for athletes under 18 and offered
+  // as optional for 18+. Public (booking-only) accounts are never asked. DOB is
+  // itself `required` for the athlete path, so by the time the form can submit
+  // this age is always known; a blank DOB simply leaves the field optional.
+  const signupAge = ageFromDob(signup.date_of_birth);
+  const parentEmailRequired = !isPublicSignup && signupAge !== null && signupAge < 18;
+  // Warn (don't block) when the parent address is just the athlete's own address.
+  const parentEmailSameAsAthlete =
+    !isPublicSignup &&
+    !!signup.parent1_email.trim() &&
+    signup.parent1_email.trim().toLowerCase() === signup.email.trim().toLowerCase();
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -437,7 +466,7 @@ function LoginPage({ onLogin }) {
     setShowSignup(false);
     setSignupSent(false);
     setSignupError('');
-    setSignup({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '', account_type: 'player' });
+    setSignup({ full_name: '', email: '', phone: '', password: '', date_of_birth: '', signup_intent: '', parent1_email: '', account_type: 'player' });
   };
 
   const handleForgotPassword = async (e) => {
@@ -552,6 +581,30 @@ function LoginPage({ onLogin }) {
                   required={!isPublicSignup}
                 />
                 <p className="text-xs text-gray-400 mt-1">Used to place you in the right age group.</p>
+              </div>
+              )}
+              {!isPublicSignup && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Parent / Guardian Email {!parentEmailRequired && <span className="text-gray-400 font-normal">(optional)</span>}
+                </label>
+                <input
+                  type="email"
+                  value={signup.parent1_email}
+                  onChange={(e) => setSignup(s => ({ ...s, parent1_email: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required={parentEmailRequired}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  {parentEmailRequired
+                    ? 'Required for athletes under 18 so we can reach a parent or guardian.'
+                    : 'So we can reach a parent or guardian about schedules, billing and team news.'}
+                </p>
+                {parentEmailSameAsAthlete && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    That's the same address as the athlete's. If a parent has their own email, use it here.
+                  </p>
+                )}
               </div>
               )}
               {!isPublicSignup && (
@@ -1112,7 +1165,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
             {/* #281: admin only — this screen fronts a 937-address mailing list. Whether
                 coaches should get it too is an open question for Cordell, flagged in the PR. */}
-            {currentView === 'email-campaigns' && userRole === 'admin' && <EmailCampaigns userId={userId} section={emailCampaignSection} onSectionChange={setEmailCampaignSection} />}
+            {currentView === 'email-campaigns' && (userRole === 'admin' || userRole === 'coach') && <EmailCampaigns userId={userId} userRole={userRole} section={emailCampaignSection} onSectionChange={setEmailCampaignSection} />}
             {currentView === 'manage-athletes' && (userRole === 'admin' || userRole === 'coach') && <ManageAthletes userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('manage-athletes')} />}
             {currentView === 'manage-coaches' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="coaches" onNavigateToProfile={openProfileFrom('manage-coaches')} />}
             {currentView === 'manage-interns' && userRole === 'admin' && <ManageCoaches userId={userId} userRole={effectiveRole} mode="interns" onNavigateToProfile={openProfileFrom('manage-interns')} />}
@@ -1498,8 +1551,14 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
               )}
             </>
           );
-          if (userRole !== 'admin') {
-            // Byte-for-byte the button players and coaches see today.
+          // #390: Cordell asked for "admins AND coaches" to see Campaign History
+          // and Failed Emails, and RLS on all three email_* tables already
+          // permits admin+coach SELECT. So coaches now get the group too — but
+          // the "Send Email Campaign" child is filtered out for them below,
+          // because sending is the one irreversible button in the app and
+          // nobody asked to give coaches that.
+          if (userRole !== 'admin' && userRole !== 'coach') {
+            // Byte-for-byte the button players see today.
             return (
               <button
                 onClick={() => setCurrentView('messages')}
@@ -1570,12 +1629,12 @@ function Sidebar({ userRole, userName, userAvatar, currentView, setCurrentView, 
                     {emailCampaignExpanded && (
                       <div className="ml-2 space-y-1 mt-1">
                         {[
-                          { key: 'send', label: 'Send Email Campaign' },
+                          { key: 'send', label: 'Send Email Campaign', adminOnly: true },
                           { key: 'history', label: 'Campaign History' },
                           { key: 'templates', label: 'Email Template Library' },
                           { key: 'images', label: 'Email Image Library' },
                           { key: 'failed', label: 'Failed Emails' },
-                        ].map(item => (
+                        ].filter(item => !item.adminOnly || userRole === 'admin').map(item => (
                           <button
                             key={item.key}
                             onClick={() => onEmailCampaignNav && onEmailCampaignNav(item.key)}

@@ -412,9 +412,9 @@ export default function Messages({ userId, userRole }) {
         </div>
 
         {/* List + Detail in one row */}
-        <div className="flex h-[450px]">
+        <div className="flex flex-col sm:flex-row h-[70vh] sm:h-[450px]">
           {/* Conversation List */}
-          <div className="w-72 flex-shrink-0 border-r border-gray-200 flex flex-col">
+          <div className="w-full sm:w-72 flex-shrink-0 max-h-52 sm:max-h-none border-b sm:border-b-0 sm:border-r border-gray-200 flex flex-col">
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
               {messageConvos.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
@@ -481,9 +481,9 @@ export default function Messages({ userId, userRole }) {
         </div>
 
         {/* List + Detail in one row */}
-        <div className="flex h-[450px]">
+        <div className="flex flex-col sm:flex-row h-[70vh] sm:h-[450px]">
           {/* Chat List */}
-          <div className="w-72 flex-shrink-0 border-r border-gray-200 flex flex-col">
+          <div className="w-full sm:w-72 flex-shrink-0 max-h-52 sm:max-h-none border-b sm:border-b-0 sm:border-r border-gray-200 flex flex-col">
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
               {chatRooms.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
