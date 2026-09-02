@@ -387,10 +387,11 @@ export default function ExerciseVideoGaps({ userRole }) {
       const owner = t.created_by || null;
       if (!owner) map.set(t.id, OWNERSHIP.ORPHAN);
       else if (!currentUserId) map.set(t.id, OWNERSHIP.UNKNOWN);
+      else if (userRole === 'admin') map.set(t.id, OWNERSHIP.EDITABLE);
       else map.set(t.id, owner === currentUserId ? OWNERSHIP.EDITABLE : OWNERSHIP.OTHER);
     });
     return map;
-  }, [templates, currentUserId]);
+  }, [templates, currentUserId, userRole]);
 
   // --- collect the raw gaps ------------------------------------------------
   const gaps = useMemo(() => {
@@ -1071,7 +1072,7 @@ export default function ExerciseVideoGaps({ userRole }) {
                 )}
               </p>
             )}
-            <p>{RLS_PLAIN_SENTENCE}</p>
+            {userRole !== 'admin' && <p>{RLS_PLAIN_SENTENCE}</p>}
             {ownershipStats.programEntries > 0 && (
               <p>
                 The {plural(ownershipStats.programEntries, 'assigned-program row')} below{' '}
