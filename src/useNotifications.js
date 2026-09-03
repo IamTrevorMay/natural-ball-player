@@ -34,6 +34,88 @@ import { supabase } from './supabaseClient';
 // no action is needed.
 export const PAYMENT_DUE_NOTICES_ENABLED = false;
 
+// #224 — Cordell asked for this in as many words: "Can you get a notification
+// system to remind athletes who dont have their whoop connected to connect so
+// we can start synching that data."
+//
+// It matters more than it looks. Measured against the live database on
+// 2026-09-02: 20 of 976 athletes have a WHOOP linked. Most of that gap is not
+// disinterest — WHOOP linking was silently broken from early June to 31 August
+// (zero tokens created in that window; see the #394 investigation), so an
+// athlete who tried over the summer clicked through, came back, and got
+// nothing. They have no way of knowing it failed. This is what tells them.
+//
+// WHERE THE ANSWER COMES FROM. `users.whoop_connected` — the SAME column the
+// whoop edge function itself treats as the source of truth (whoop/index.ts:479
+// -483), and the same one it clears on disconnect (:324). A player can read
+// their own row: the users SELECT policy is `id = auth.uid() OR
+// get_user_is_staff()`.
+//
+// The first version of this asked the edge function instead, because
+// `whoop_tokens` has RLS enabled with zero policies and the browser can never
+// read it. That was true but beside the point — the flag we actually need is on
+// the user's own row. Worse, that version depended on `getSession()` having a
+// token at App mount and returned silently when it did not, with no retry and
+// no log, so on a fresh sign-in it did nothing and said nothing. A plain
+// PostgREST read is cheaper (one indexed row, not a function invocation on
+// every player page load) and has no such ordering trap.
+//
+// IT FAILS CLOSED, AND THAT DIRECTION IS LOAD-BEARING. The nudge shows only
+// when the read SUCCEEDS and the flag is not true. An error, a missing row, an
+// unhydrated session — all leave it hidden, and all log. Getting this backwards
+// would tell an athlete who IS connected to go and connect again, which is
+// precisely the confusion #394 was about. A missed nudge costs nothing; a false
+// one costs trust.
+export function useWhoopNudge(userId, userRole) {
+  const [needsWhoop, setNeedsWhoop] = useState(false);
+
+  useEffect(() => {
+    // Players only. Staff have no athlete data of their own to sync, and a
+    // coach nagged on every page load is how a notification bell starts being
+    // ignored.
+    if (!userId || userRole !== 'player') {
+      setNeedsWhoop(false);
+      return;
+    }
+    let cancelled = false;
+
+    const check = async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('whoop_connected')
+        .eq('id', userId)
+        .maybeSingle();
+      if (error) {
+        console.error('Whoop nudge: could not read whoop_connected (nudge stays hidden):', error.message);
+        return false;
+      }
+      if (!data) {
+        // RLS returning zero rows for your own id means the session was not
+        // ready. Not an error to PostgREST, which is why this is logged
+        // separately — a silent empty result is how the first version failed.
+        console.warn('Whoop nudge: no user row returned yet (session not ready?)');
+        return false;
+      }
+      if (!cancelled && data.whoop_connected !== true) setNeedsWhoop(true);
+      return true;
+    };
+
+    (async () => {
+      const ok = await check();
+      // One retry. On a fresh sign-in the auth session can still be hydrating
+      // when App mounts; without this the check runs once, too early, and never
+      // runs again because neither dependency changes afterwards.
+      if (!ok && !cancelled) {
+        setTimeout(() => { if (!cancelled) check(); }, 1500);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId, userRole]);
+
+  return needsWhoop;
+}
+
 async function fetchWorkDmThreadIdsForUser(userId) {
   const [asUserA, asUserB] = await Promise.all([
     supabase.from('work_dm_threads').select('id').eq('user_a_id', userId),

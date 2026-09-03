@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
 import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
@@ -78,7 +78,7 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment }) {
+export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -95,6 +95,10 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     // would advertise notifications the panel below deliberately doesn't render.
     + (PAYMENT_DUE_NOTICES_ENABLED ? (mainCounts?.pendingPayments?.length || 0) : 0)
     + (mainCounts?.packageFlags?.length || 0)
+    // #224: the WHOOP nudge counts as one. It clears itself the moment the
+    // athlete connects — useWhoopNudge only ever sets this when the server
+    // says `connected === false`, so there is no state to reset by hand.
+    + (needsWhoop && onOpenWhoop ? 1 : 0)
     + (workCounts?.unreadMessages || 0)
     + (workCounts?.pendingHours?.length || 0)
     + (workCounts?.pendingTimeOff?.length || 0);
@@ -128,6 +132,36 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
           <div className="max-h-96 overflow-y-auto">
             {total === 0 && (
               <div className="px-4 py-6 text-center text-sm text-gray-500">No new notifications</div>
+            )}
+
+            {/* #224: WHOOP not connected. Players only, and only when the
+                server has positively said so — see useWhoopNudge. Placed first
+                because it is the one item here the athlete can act on in
+                fifteen seconds, and because the summer outage means a lot of
+                athletes believe they already did it. */}
+            {needsWhoop && onOpenWhoop && (
+              <button
+                onClick={() => { setOpen(false); onOpenWhoop(); }}
+                className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <div className="flex items-start space-x-3">
+                  <div className="mt-0.5"><Activity size={16} className="text-emerald-500" /></div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-900">
+                      <span className="font-medium">Connect your WHOOP</span>
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Your recovery, sleep and strain aren't syncing yet, so your programming
+                      isn't using them. Tap to link it.
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Connected it before and still seeing this? Linking was broken until
+                      1 September — please connect again.
+                    </p>
+                  </div>
+                  {currentPortal !== 'main' && <PortalTag kind="main" />}
+                </div>
+              </button>
             )}
 
             {/* Main portal notifications */}

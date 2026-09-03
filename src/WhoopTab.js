@@ -391,7 +391,7 @@ function WorkoutsTable({ workouts }) {
 
 // ---- Main WhoopTab Component ----
 
-export default function WhoopTab({ userId, userRole, loggedInUserId }) {
+export default function WhoopTab({ userId, userRole, loggedInUserId, athleteName }) {
   // #394: this tab is shown BOTH on your own profile and on an athlete's
   // profile when staff open it. The data call is already target-aware
   // (`target_user_id=${userId}`), but the not-connected screen was not: it told
@@ -491,8 +491,21 @@ export default function WhoopTab({ userId, userRole, loggedInUserId }) {
     }
   };
 
+  // #394 follow-up. This action IS correctly targeted — it sends
+  // `target_user_id` and the edge function enforces who may disconnect whom —
+  // but the old wording ("Disconnect WHOOP?") never said WHOSE. On an athlete's
+  // page, where the surrounding screen is full of that athlete's data, a member
+  // of staff could reasonably read it as being about their own account. It
+  // unlinks the athlete and deletes their cached recovery data, and only the
+  // athlete can put it back. Say so before, not after.
   const handleDisconnect = async () => {
-    if (!window.confirm('Disconnect WHOOP? This will remove all cached recovery data.')) return;
+    const who = isSelf
+      ? 'Disconnect your WHOOP account?'
+      : `Disconnect ${athleteName ? `${athleteName}'s` : "this athlete's"} WHOOP account? This unlinks THEIR account, not yours.`;
+    const consequence = isSelf
+      ? ' Your cached recovery, sleep and strain data will be removed, and you will need to link it again.'
+      : ' Their cached recovery, sleep and strain data will be removed, and only they can link it again — from their own login.';
+    if (!window.confirm(who + consequence)) return;
     const headers = await getAuthHeaders();
     await fetch(`${functionUrl}?action=disconnect`, {
       method: 'POST',

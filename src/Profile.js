@@ -2576,7 +2576,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'whoop' && (
-            <WhoopTab userId={userId} userRole={userRole} loggedInUserId={loggedInUserId} />
+            <WhoopTab userId={userId} userRole={userRole} loggedInUserId={loggedInUserId} athleteName={userData?.full_name} />
           )}
 
           {activeProfileTab === 'trackman' && (
@@ -4906,7 +4906,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
       )}
 
       {showStore && (
-        <StoreModal userId={userData.id} onClose={() => setShowStore(false)} />
+        <StoreModal userId={userData.id} loggedInUserId={loggedInUserId} onClose={() => setShowStore(false)} />
       )}
 
       {showUniformStore && (
