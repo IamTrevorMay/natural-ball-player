@@ -391,7 +391,20 @@ function WorkoutsTable({ workouts }) {
 
 // ---- Main WhoopTab Component ----
 
-export default function WhoopTab({ userId, userRole }) {
+export default function WhoopTab({ userId, userRole, loggedInUserId }) {
+  // #394: this tab is shown BOTH on your own profile and on an athlete's
+  // profile when staff open it. The data call is already target-aware
+  // (`target_user_id=${userId}`), but the not-connected screen was not: it told
+  // a coach looking at an athlete to "link YOUR WHOOP account", and its button
+  // calls ?action=connect, which the edge function scopes to the CALLER. So a
+  // coach clicking it would have linked their own WHOOP from the athlete's
+  // page. That is what Cordell reported: he opened JW Grose's WHOOP tab and was
+  // asked to connect his own.
+  //
+  // `loggedInUserId` may be undefined if some future caller forgets to pass it.
+  // Defaulting to "this is me" keeps the old behaviour rather than hiding the
+  // connect button from a player on their own profile, which would be worse.
+  const isSelf = loggedInUserId == null || loggedInUserId === userId;
   const [connected, setConnected] = useState(null);
   const [cycles, setCycles] = useState([]);
   const [sleep, setSleep] = useState([]);
@@ -512,6 +525,31 @@ export default function WhoopTab({ userId, userRole }) {
     return (
       <div className="flex items-center justify-center py-16">
         <div className="w-8 h-8 border-3 border-gray-200 border-t-blue-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // #394: staff looking at somebody else get told the truth and given no
+  // button, because there is no button that could do what they want — only the
+  // athlete can authorise their own WHOOP account.
+  if (!connected && !isSelf) {
+    return (
+      <div className="max-w-md mx-auto py-12 text-center">
+        <div className="w-14 h-14 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mb-4 mx-auto">
+          <Activity size={28} />
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-1">
+          This athlete hasn't connected WHOOP
+        </h3>
+        <p className="text-sm text-gray-500 mb-2">
+          There is no WHOOP account linked to them, so there is no recovery, sleep or strain
+          data to show yet.
+        </p>
+        <p className="text-sm text-gray-500">
+          Only the athlete can link it, from their own login: <span className="font-medium
+          text-gray-700">Profile &rarr; Whoop &rarr; Connect WHOOP Account</span>. Ask them to
+          do that and their data will appear here.
+        </p>
       </div>
     );
   }
