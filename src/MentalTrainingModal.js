@@ -21,12 +21,12 @@ const MLM_5WEEK_URL      = 'https://www.brandonguyer.com/5weekrecordings';
 // Cordell then confirmed: "The user will just have to manually input
 // NBPLIFETIME when they get to the page."
 //
-// 🔴 UNRESOLVED — CHECK BEFORE TELLING ANY FAMILY ABOUT THIS BUTTON:
-// Brandon typed the code as "NPBLIFETIME" (N-P-B). Cordell wrote it twice as
-// "NBPLIFETIME" (N-B-P), which is also what was already in this file and reads
-// like "NBP LIFETIME". One of the two is a typo. If the code shown here is not
-// the code configured on Brandon's checkout, the family is charged $100 more
-// than we told them. Confirm the exact spelling with Brandon, then set it below.
+// ✅ RESOLVED 2 Sep 2026 — the code below is CONFIRMED CORRECT.
+// Brandon's email typed it as "NPBLIFETIME" (N-P-B); Cordell wrote it three
+// times as "NBPLIFETIME" (N-B-P), and N-B-P is what actually works at
+// checkout. Brandon's spelling was the typo. Do not "correct" it back.
+// If this ever changes, the family is charged $100 more than this pop-up
+// promises, so re-confirm with Brandon before editing this line.
 const MLM_CHECKOUT_URL   = 'https://www.brandonguyer.com/unlocked';
 const MLM_DISCOUNT_CODE  = 'NBPLIFETIME';
 const MLM_PRICE          = '$497';   // Unlocked list price on Brandon's page
