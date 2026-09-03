@@ -22,9 +22,31 @@ import { CalendarDays } from 'lucide-react';
  *
  *      day_number = (week - 1) * 7 + weekdayIndex + 1     (1-based, absolute)
  *
- *  Schedule.js drops a program at `start_date + (day_number - 1)` days, so index 0
- *  is really "the weekday the program is dropped on". Everything below preserves
- *  that existing convention rather than changing it — see the report / README notes.
+ *  THE ANCHOR — verified 2026-09-02, follow-up to #385. The ONE place day_number
+ *  becomes a calendar date is Schedule.js handleProgramDrop (src/Schedule.js ~1734,
+ *  arithmetic at ~1794-1796): each day is placed at
+ *
+ *      dropDate + (day_number - 1) days
+ *
+ *  where dropDate is the calendar cell the coach DRAGS the program onto — chosen
+ *  later, possibly by someone else, possibly weeks after generation. The
+ *  `training_program_assignments.start_date` the three generators write is NOT a
+ *  placement anchor: nothing anywhere combines it with day_number (it only feeds the
+ *  active/past filter and the date printed on the athlete profile).
+ *
+ *  So weekday index 0 means "the day the program is dropped on", NOT literally
+ *  Monday. The names below — and the "Mon"/"Tue" tokens the three engines bake into
+ *  day titles — are the true weekdays only when the program is dropped on a Monday.
+ *  Dropped on a Wednesday, every session shifts two days later and a deselected day
+ *  can still be hit.
+ *
+ *  Why this is not silently "fixed" by snapping the anchor to Monday: day_number is
+ *  OVERLOADED. Hand-built programs from CoachTools write day_number = i + 1, a plain
+ *  sequential 1..N ("day 1, day 2, day 3" — CoachTools.js ~1692 / ~1724 / ~1951), and
+ *  Schedule.js cannot tell the two kinds apart. Snapping the drop to Monday would
+ *  scatter those consecutive days across a week and could place day 1 in the past.
+ *  The convention is therefore preserved and the UI states it plainly instead — see
+ *  DROP_ANCHOR_NOTE below.
  *
  *  OVER-SUBSCRIPTION POLICY (chosen once, applied in all three generators):
  *  if a week needs more session days than the coach has made available, generation
@@ -44,6 +66,22 @@ const cleanDays = (xs) => [...new Set(Array.isArray(xs) ? xs : [])]
 
 /** Pretty "Mon · Wed · Fri" for any list of weekday indices. */
 export const formatDays = (xs) => cleanDays(xs).map((d) => WEEKDAY_ABBR[d]).join(' · ');
+
+/**
+ * The plain-English truth about what the weekday names above mean. Shown in the
+ * picker (so it is on screen in all three generators) and repeated in each
+ * generator's save confirmation, which is the moment before a coach goes and drops
+ * the program on the calendar. See "THE ANCHOR" at the top of this file.
+ */
+export const DROP_ANCHOR_NOTE = 'These weekday names are counted from the drop date: whichever '
+  + 'calendar day you drag this program onto becomes day 1 ("Mon"). Drop it on a Monday and the '
+  + 'days above are the real weekdays; drop it on a Wednesday and every session shifts two days '
+  + 'later, so a day you deselected can still be hit.';
+
+/** Same truth, self-contained, for the save confirmation in each generator. */
+export const DROP_ANCHOR_SAVE_NOTE = 'Drop it on a Monday when you put it on the calendar: the day '
+  + 'you drop it on becomes day 1, so dropping on any other weekday shifts every session and can '
+  + 'land one on a day you deselected.';
 
 /**
  * Choose `n` weekdays out of the allowed set, spread as evenly as possible so a
@@ -224,8 +262,16 @@ export default function TrainingDaysPicker({
       {placedOn && placedOn.length > 0 && !error && (
         <div className="text-xs text-gray-600 bg-gray-50 rounded p-2 mt-2">
           Sessions land on: <span className="font-semibold">{formatDays(placedOn)}</span>
+          <span className="text-gray-500">
+            {` (day${placedOn.length === 1 ? '' : 's'} ${placedOn.map((d) => d + 1).join(', ')} of each week)`}
+          </span>
         </div>
       )}
+      {/* The weekday names are relative to the drop date, not the calendar — say so
+          rather than letting the labels imply a promise the schedule cannot keep. */}
+      <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+        <span className="font-semibold">Drop this program on a Monday.</span> {DROP_ANCHOR_NOTE}
+      </div>
       {error && (
         <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 mt-2">{error}</div>
       )}

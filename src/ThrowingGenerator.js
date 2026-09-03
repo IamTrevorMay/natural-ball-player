@@ -5,7 +5,7 @@ import { extractMetricsFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import TrainingDaysPicker, {
   ALL_TRAINING_DAYS, remapProgramDayRows, weekdayPlacement, fitMessage,
-  WEEKDAY_ABBR, weekdayOfDayNumber,
+  WEEKDAY_ABBR, weekdayOfDayNumber, DROP_ANCHOR_SAVE_NOTE,
 } from './TrainingDaysPicker';
 import {
   LEVELS, POSITIONS, PHASES, PHASE_ORDER, ATHLETE_TYPES,
@@ -427,7 +427,7 @@ export default function ThrowingGenerator({ userId, userRole }) {
         });
         if (aErr) throw aErr;
       }
-      setSaveMsg(`Saved "${programName}" (${numWeeks} wk, ${rows.length} sessions)${assignAthlete ? ` and assigned to ${selectedName}` : ''}.`);
+      setSaveMsg(`Saved "${programName}" (${numWeeks} wk, ${rows.length} sessions)${assignAthlete ? ` and assigned to ${selectedName}` : ''}. ${DROP_ANCHOR_SAVE_NOTE}`);
     } catch (e) {
       setError(e.message || 'Save failed.');
     } finally {

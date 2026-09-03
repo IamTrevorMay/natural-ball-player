@@ -4,7 +4,7 @@ import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDo
 import { extractMetricSourcesFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
 import TrainingDaysPicker, {
-  ALL_TRAINING_DAYS, weekdayPlacement, fitMessage, formatDays,
+  ALL_TRAINING_DAYS, weekdayPlacement, fitMessage, formatDays, DROP_ANCHOR_SAVE_NOTE,
 } from './TrainingDaysPicker';
 import {
   Position, Sex, makeAthlete, trainingStage, maturityBand, loadStyle,
@@ -537,7 +537,7 @@ export default function ProgramGenerator({ userId, userRole }) {
         });
         if (aErr) throw aErr;
       }
-      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}. ${rows.length} training day(s) across ${durationWeeks} week(s). It now appears in the program library${assignAthlete ? ' and on the athlete\'s profile' : ''}.`);
+      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}. ${rows.length} training day(s) across ${durationWeeks} week(s). It now appears in the program library${assignAthlete ? ' and on the athlete\'s profile' : ''}. ${DROP_ANCHOR_SAVE_NOTE}`);
     } catch (e) {
       setError(e.message || 'Save failed.');
     } finally {

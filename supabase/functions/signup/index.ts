@@ -90,6 +90,26 @@ function clientIp(req: Request): string {
   return req.headers.get("x-real-ip") || req.headers.get("cf-connecting-ip") || "unknown";
 }
 
+// #392: Best-effort cleanup step. A PostgREST query builder (serviceClient.from(...))
+// is *thenable* but is NOT a Promise: it has .then() and no .catch(), so calling
+// .catch() on one throws "TypeError: ... .catch is not a function" — which then
+// replaced the real signup error in the 500 response and aborted the rest of the
+// rollback. Awaiting inside try/catch works for both a thenable builder and a real
+// Promise (auth.admin.deleteUser). PostgREST also reports a failed statement by
+// *resolving* with { error }, so that is checked too. Never throws and never
+// returns a failure: cleanup must not mask the original error, but what could not
+// be cleaned up is logged so orphaned rows are not lost silently.
+async function safeCleanup(label: string, run: () => unknown): Promise<void> {
+  try {
+    const result = (await run()) as { error?: { message?: string } | null } | null;
+    if (result?.error) {
+      console.error(`rollback: ${label} failed:`, result.error.message);
+    }
+  } catch (e) {
+    console.error(`rollback: ${label} threw:`, (e as Error).message);
+  }
+}
+
 // Public self-signup (#151). No auth required — always creates a `player`.
 // New athletes are auto-added to the "New Users" team so coaches are notified.
 // Email confirmation is enforced by the project's Auth settings; signUp triggers
@@ -243,10 +263,20 @@ Deno.serve(async (req) => {
     // Helper: roll back everything on partial failure so the signup is atomic
     // from the caller's perspective.
     const rollback = async (msg: string) => {
-      await serviceClient.from("team_members").delete().eq("user_id", newUserId).catch(() => {});
-      await serviceClient.from("player_profiles").delete().eq("user_id", newUserId).catch(() => {});
-      await serviceClient.from("users").delete().eq("id", newUserId).catch(() => {});
-      await serviceClient.auth.admin.deleteUser(newUserId).catch(() => {});
+      // Every step is attempted regardless of the outcome of the ones before it,
+      // and `msg` — the original error — is always what reaches the caller.
+      await safeCleanup("team_members delete", () =>
+        serviceClient.from("team_members").delete().eq("user_id", newUserId)
+      );
+      await safeCleanup("player_profiles delete", () =>
+        serviceClient.from("player_profiles").delete().eq("user_id", newUserId)
+      );
+      await safeCleanup("users delete", () =>
+        serviceClient.from("users").delete().eq("id", newUserId)
+      );
+      await safeCleanup("auth user delete", () =>
+        serviceClient.auth.admin.deleteUser(newUserId)
+      );
       return json({ error: msg }, 500);
     };
 
