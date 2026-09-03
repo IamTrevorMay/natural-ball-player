@@ -2576,7 +2576,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'whoop' && (
-            <WhoopTab userId={userId} userRole={userRole} />
+            <WhoopTab userId={userId} userRole={userRole} loggedInUserId={loggedInUserId} />
           )}
 
           {activeProfileTab === 'trackman' && (
