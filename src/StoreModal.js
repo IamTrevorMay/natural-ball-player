@@ -43,7 +43,13 @@ function StatusPill({ status }) {
   );
 }
 
-export default function StoreModal({ userId, onClose }) {
+// `userId` is the profile being VIEWED, not necessarily the person clicking.
+// `loggedInUserId` is the person clicking. They are the same today — the Pay
+// button that opens this is gated on `!onBack` (Profile.js:2182), i.e. your own
+// profile only — but see the #394-shaped note on handleBuy below for why this
+// component no longer assumes that.
+export default function StoreModal({ userId, onClose, loggedInUserId }) {
+  const isSelf = loggedInUserId == null || loggedInUserId === userId;
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +72,25 @@ export default function StoreModal({ userId, onClose }) {
     return () => { cancelled = true; };
   }, [userId]);
 
+  // Same shape as #394, one layer down, and this one moves money.
+  //
+  // The read above is scoped to `userId` (the viewed athlete) and rendered
+  // under "My Purchases". This call used to send no target at all, and
+  // square-checkout falls back to `buyerId = user.id` — the CALLER
+  // (square-checkout/index.ts:80). So the list showed the athlete's purchases
+  // while the button bought for whoever pressed it: a store_purchases row
+  // against the coach, a payment link in the coach's name and email.
+  //
+  // Not reachable today: the only entry point is gated `!onBack`, so only the
+  // athlete themself can open this, and buying for yourself is correct. It is
+  // fixed anyway because the gate immediately below it (Profile.js:2195) has
+  // ALREADY been widened to coaches for #340. "Let a coach take payment from
+  // the athlete's page" is an obvious next ask, and one edit to line 2182 would
+  // turn this into a real money bug with nothing here to resist it.
+  //
+  // square-checkout enforces the permission itself — it 403s a non-staff caller
+  // who passes a target other than themselves — so sending it is safe for
+  // players and correct for staff. AssignPackageModal.js:634 already does this.
   const handleBuy = async (product) => {
     setBuying(product.id);
     setError('');
@@ -81,6 +106,7 @@ export default function StoreModal({ userId, onClose }) {
           },
           body: JSON.stringify({
             product_id: product.id,
+            target_user_id: userId,
             return_url: `${window.location.origin}/?store_return=1`,
           }),
         },
@@ -156,7 +182,12 @@ export default function StoreModal({ userId, onClose }) {
 
           {purchases.length > 0 && (
             <div className="pt-4 border-t">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">My Purchases</h3>
+              {/* "My Purchases" is only true when you are looking at yourself.
+                  If this ever opens on someone else's profile, saying "My"
+                  over their rows is how a coach misreads whose money this is. */}
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                {isSelf ? 'My Purchases' : 'This Athlete’s Purchases'}
+              </h3>
               <div className="space-y-1">
                 {purchases.map(pu => (
                   <div key={pu.id} className="flex items-center justify-between text-sm px-2 py-1.5 hover:bg-gray-50 rounded">

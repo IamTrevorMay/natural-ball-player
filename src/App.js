@@ -26,7 +26,7 @@ import PublicPortal from './PublicPortal';
 import NotificationBell, { deletePendingPayment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
-import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
+import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, Dumbbell } from 'lucide-react';
 import './App.css';
 
@@ -1075,10 +1075,24 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
 
   const mainCounts = useMainPortalCounts(userId, effectiveRole);
   const workCounts = useWorkPortalCounts(userId, effectiveRole);
+  // #224: players only, and only when the server positively reports no linked
+  // WHOOP. `effectiveRole` rather than `userRole` so an admin using "View as
+  // Coach" is not nagged about an athlete account they do not have.
+  const needsWhoop = useWhoopNudge(userId, effectiveRole);
 
   const handleNotifJump = (portal, view) => {
     if (portal === 'main') setCurrentView(view);
     else { setWorkPortalView(view); setCurrentPortal('work'); }
+  };
+
+  // #224: the WHOOP tab lives inside Profile, so this opens the profile with
+  // that tab already selected rather than dropping the athlete on the profile
+  // page to go hunting for it. 'whoop' is an accepted initialTab
+  // (Profile.js:83) and a player may see the tab on their own profile
+  // (Profile.js:2441).
+  const handleOpenWhoop = () => {
+    setProfileInitialTab('whoop');
+    setCurrentView('profile');
   };
 
   // #316: shared with WorkPortal.js — see deletePendingPayment in NotificationBell.js
@@ -1141,6 +1155,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             onJump={handleNotifJump}
             userRole={effectiveRole}
             onDeletePayment={handleDeletePayment}
+            needsWhoop={needsWhoop}
+            onOpenWhoop={handleOpenWhoop}
           />
         </div>
 
