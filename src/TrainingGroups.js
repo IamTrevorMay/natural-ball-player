@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { Layers, Users, Plus, Trash2, X, GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
+import { Layers, Users, Plus, Trash2, X, GripVertical, ChevronDown, ChevronRight, Edit2, Check } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 
 // #219: Training Groups management. Staff (admin/coach) separate the Naturals
@@ -21,6 +21,8 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [newGroup, setNewGroup] = useState({ name: '', age_group: '' });
   const [expandedGroups, setExpandedGroups] = useState({});
+  const [editingGroupId, setEditingGroupId] = useState(null);
+  const [editingName, setEditingName] = useState('');
 
   const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
 
@@ -121,6 +123,20 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
       setShowNewGroup(false);
       await fetchAll();
       flashMsg('success', `Created training group "${name}".`);
+    } catch (err) {
+      flashMsg('error', formatUserError(err));
+    }
+  };
+
+  const handleRenameGroup = async (group) => {
+    const name = editingName.trim();
+    if (!name || name === group.name) { setEditingGroupId(null); return; }
+    try {
+      const { error } = await supabase.from('teams').update({ name }).eq('id', group.id);
+      if (error) throw error;
+      setEditingGroupId(null);
+      await fetchAll();
+      flashMsg('success', `Renamed to "${name}".`);
     } catch (err) {
       flashMsg('error', formatUserError(err));
     }
@@ -259,29 +275,60 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
                     key={group.id}
                     className="rounded-lg border-2 border-gray-200 bg-white transition"
                   >
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(group.id)}
-                      className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 transition rounded-lg"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-semibold text-gray-900 truncate">{group.name}</div>
-                        <div className="text-xs text-gray-400">
-                          {group.age_group ? `${group.age_group} · ` : ''}{members.length} athlete{members.length === 1 ? '' : 's'}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0 ml-2">
-                        {isOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                    <div className="w-full flex items-center justify-between p-3 rounded-lg">
+                      {editingGroupId === group.id ? (
+                        <form
+                          className="flex items-center gap-2 flex-1 min-w-0"
+                          onSubmit={(e) => { e.preventDefault(); handleRenameGroup(group); }}
+                        >
+                          <input
+                            autoFocus
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') setEditingGroupId(null); }}
+                            className="flex-1 min-w-0 px-2 py-1 border border-blue-400 rounded text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button type="submit" className="p-1 text-blue-600 hover:text-blue-800" title="Save"><Check size={16} /></button>
+                          <button type="button" onClick={() => setEditingGroupId(null)} className="p-1 text-gray-400 hover:text-gray-600" title="Cancel"><X size={16} /></button>
+                        </form>
+                      ) : (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group); }}
-                          title="Delete training group"
-                          className="p-1.5 text-gray-300 hover:text-red-500 transition"
+                          onClick={() => toggleGroup(group.id)}
+                          className="flex-1 min-w-0 flex items-center justify-between text-left hover:bg-gray-50 transition rounded"
                         >
-                          <Trash2 size={16} />
+                          <div className="min-w-0">
+                            <div className="font-semibold text-gray-900 truncate">{group.name}</div>
+                            <div className="text-xs text-gray-400">
+                              {group.age_group ? `${group.age_group} · ` : ''}{members.length} athlete{members.length === 1 ? '' : 's'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 ml-2">
+                            {isOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                          </div>
                         </button>
-                      </div>
-                    </button>
+                      )}
+                      {editingGroupId !== group.id && (
+                        <div className="flex items-center gap-1 shrink-0 ml-1">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setEditingGroupId(group.id); setEditingName(group.name); }}
+                            title="Rename training group"
+                            className="p-1.5 text-gray-300 hover:text-blue-500 transition"
+                          >
+                            <Edit2 size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group); }}
+                            title="Delete training group"
+                            className="p-1.5 text-gray-300 hover:text-red-500 transition"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {isOpen && (
                       <div className="px-3 pb-3">
                         {members.length === 0 ? (
