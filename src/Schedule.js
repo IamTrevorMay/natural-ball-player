@@ -3700,6 +3700,18 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                       const entryTitle = entry.event.title || entry.event.opponent;
                       const entryStart = entry.event.start_time || entry.event.event_time;
                       const entryTimeRange = entryStart ? `${formatTimeDisplay(entryStart)}${entry.event.end_time ? `–${formatTimeDisplay(entry.event.end_time)}` : ''}` : '';
+                      const entryCoachIds = [...new Set([
+                        ...(entry.event.coach_ids || []),
+                        ...(entry.event.coach_id ? [entry.event.coach_id] : []),
+                      ])];
+                      const entryCoachNames = entryCoachIds
+                        .map(id => coaches.find(c => c.id === id)?.full_name)
+                        .filter(Boolean);
+                      const entryTooltipParts = [
+                        entryTimeRange ? `${entryTitle} - ${entryTimeRange}` : entryTitle,
+                        entryCoachNames.length ? `Coach: ${entryCoachNames.join(', ')}` : null,
+                        entry.event.athlete?.full_name ? `Athlete: ${entry.event.athlete.full_name}` : null,
+                      ].filter(Boolean);
                       return (
                         <td
                           key={slot}
@@ -3760,7 +3772,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                             }}
                             onDragEnd={clearDragPreview}
                             onClick={() => onEventClick && onEventClick(entry.event)}
-                            title={entryTimeRange ? `${entryTitle} - ${entryTimeRange}` : entryTitle}
+                            title={entryTooltipParts.join('\n')}
                             className={`${colorClasses} rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}
                           >
                             <span className="truncate text-[8px] font-semibold leading-none">{entryTitle}</span>
