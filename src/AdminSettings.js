@@ -1797,6 +1797,25 @@ function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) 
   );
 }
 
+// Returns the school grade label for a date-of-birth string (YYYY-MM-DD),
+// using September 1 as the enrollment cutoff.
+function gradeFromDOB(dob) {
+  if (!dob) return '';
+  const birth = new Date(dob + 'T00:00:00');
+  const today = new Date();
+  const cutoffYear = today >= new Date(today.getFullYear(), 8, 1)
+    ? today.getFullYear()
+    : today.getFullYear() - 1;
+  let age = cutoffYear - birth.getFullYear();
+  if (birth.getMonth() > 8 || (birth.getMonth() === 8 && birth.getDate() > 1)) age--;
+  const grades = {
+    5: 'K', 6: '1st', 7: '2nd', 8: '3rd', 9: '4th', 10: '5th',
+    11: '6th', 12: '7th', 13: '8th', 14: 'Freshman', 15: 'Sophomore',
+    16: 'Junior', 17: 'Senior',
+  };
+  return grades[age] || (age >= 18 ? 'Senior' : '');
+}
+
 // #310: exported so FacilityEventDetail (Schedule.js) can reuse this for
 // "create a new player inline" instead of a second signup form. onSuccess
 // now also receives the new user's id/full_name (existing AdminSettings.js
@@ -2019,7 +2038,19 @@ export function CreateUserModal({ teams, callerRole, onClose, onSuccess }) {
               <input
                 type="date"
                 value={formData.date_of_birth}
-                onChange={(e) => setFormData({...formData, date_of_birth: e.target.value})}
+                onChange={(e) => {
+                  const dob = e.target.value;
+                  const autoGrade = gradeFromDOB(dob);
+                  const updates = { date_of_birth: dob };
+                  if (autoGrade) updates.grade = autoGrade;
+                  if (!formData.team_id && autoGrade) {
+                    const hsGrades = ['Freshman', 'Sophomore', 'Junior', 'Senior'];
+                    const keyword = hsGrades.includes(autoGrade) ? 'high school' : 'middle school';
+                    const match = teams.find(t => t.name.toLowerCase().includes(keyword));
+                    if (match) updates.team_id = match.id;
+                  }
+                  setFormData({ ...formData, ...updates });
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
