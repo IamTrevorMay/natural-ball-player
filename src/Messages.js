@@ -413,8 +413,10 @@ export default function Messages({ userId, userRole }) {
 
         {/* List + Detail in one row */}
         <div className="flex flex-col sm:flex-row h-[70vh] sm:h-[450px]">
-          {/* Conversation List */}
-          <div className="w-full sm:w-72 flex-shrink-0 max-h-52 sm:max-h-none border-b sm:border-b-0 sm:border-r border-gray-200 flex flex-col">
+          {/* Conversation List — hidden on mobile when a conversation is open so
+              the detail takes full height and the user does not have to scroll
+              past the list to see messages. sm+ keeps the side-by-side layout. */}
+          <div className={`w-full sm:w-72 flex-shrink-0 max-h-52 sm:max-h-none border-b sm:border-b-0 sm:border-r border-gray-200 flex-col ${selectedConversation ? 'hidden sm:flex' : 'flex'}`}>
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
               {messageConvos.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
@@ -482,8 +484,8 @@ export default function Messages({ userId, userRole }) {
 
         {/* List + Detail in one row */}
         <div className="flex flex-col sm:flex-row h-[70vh] sm:h-[450px]">
-          {/* Chat List */}
-          <div className="w-full sm:w-72 flex-shrink-0 max-h-52 sm:max-h-none border-b sm:border-b-0 sm:border-r border-gray-200 flex flex-col">
+          {/* Chat List — same mobile-hide pattern as the Messages section above. */}
+          <div className={`w-full sm:w-72 flex-shrink-0 max-h-52 sm:max-h-none border-b sm:border-b-0 sm:border-r border-gray-200 flex-col ${selectedChat ? 'hidden sm:flex' : 'flex'}`}>
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
               {chatRooms.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
@@ -808,7 +810,7 @@ function ConversationDetail({ conversation, userId, userRole, users, onBack, onR
           <div className="flex items-center space-x-3">
             <button
               onClick={onBack}
-              className="lg:hidden text-gray-600 hover:text-gray-900"
+              className="sm:hidden text-gray-600 hover:text-gray-900"
             >
               <ArrowLeft size={20} />
             </button>
@@ -996,7 +998,7 @@ function ChatRoomDetail({ conversation, userId, userRole, users, onBack, onRefre
           <div className="flex items-center space-x-3">
             <button
               onClick={onBack}
-              className="lg:hidden text-gray-600 hover:text-gray-900"
+              className="sm:hidden text-gray-600 hover:text-gray-900"
             >
               <ArrowLeft size={20} />
             </button>
