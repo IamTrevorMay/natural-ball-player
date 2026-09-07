@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import { fetchUserDirectory, readDirectory } from './userDirectory';
+import { fetchUserDirectory } from './userDirectory';
 import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
 import { formatUserError } from './errorMessage';
@@ -238,40 +238,32 @@ export default function Messages({ userId, userRole }) {
       .select('user_id')
       .eq('conversation_id', conversationId);
 
-    const participantsWithUsers = [];
-    if (participants) {
-      for (const p of participants) {
-        const { data: user } = await readDirectory('user_directory', (t) => supabase
-          .from(t)
-          .select('id, full_name, role')
-          .eq('id', p.user_id)
-          .maybeSingle());
-        if (user) {
-          participantsWithUsers.push({ user_id: p.user_id, users: user });
-        }
-      }
-    }
-
     const { data: messages } = await supabase
       .from('messages')
       .select('*')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
 
-    const messagesWithSenders = [];
-    if (messages) {
-      for (const msg of messages) {
-        const { data: sender } = await readDirectory('user_directory', (t) => supabase
-          .from(t)
-          .select('id, full_name, role')
-          .eq('id', msg.sender_id)
-          .maybeSingle());
-        messagesWithSenders.push({
-          ...msg,
-          sender: sender || { id: msg.sender_id, full_name: 'Unknown', role: 'unknown' }
-        });
-      }
-    }
+    // One batched directory lookup covering everyone on this screen -- the
+    // participants and every message sender together. This was previously a
+    // sequential lookup per participant and per message, so opening a long
+    // thread fired one request per message: a single conversation was measured
+    // putting ~3,900 calls on user_directory in two minutes, and the ones that
+    // landed across a token refresh came back 401 (permission denied for anon).
+    const directory = await fetchUserDirectory([
+      ...(participants || []).map(p => p.user_id),
+      ...(messages || []).map(m => m.sender_id)
+    ]);
+
+    const participantsWithUsers = (participants || [])
+      .filter(p => directory.has(p.user_id))
+      .map(p => ({ user_id: p.user_id, users: directory.get(p.user_id) }));
+
+    const messagesWithSenders = (messages || []).map(msg => ({
+      ...msg,
+      sender: directory.get(msg.sender_id) ||
+        { id: msg.sender_id, full_name: 'Unknown', role: 'unknown' }
+    }));
 
     let teamData = null;
     if (conv.team_id) {

@@ -346,7 +346,7 @@ export default function MyTeam({ userId, userRole, initialTeamId, onNavigateToPr
           )
         `)
         .eq('type', 'team_announcement')
-        .eq('related_team_id', teamId)
+        .eq('team_id', teamId)
         .order('created_at', { ascending: false })
         .limit(5);
 
