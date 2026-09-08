@@ -9110,6 +9110,15 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
         });
         if (warning) { setCapWarning(warning); setLoading(false); return; }
       }
+      const maxPlayers = slot.max_players || 1;
+      const { count: resCount, error: resErr } = await supabase
+        .from('slot_reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('slot_id', slot.id)
+        .eq('slot_date', slot.slot_date)
+        .neq('status', 'cancelled');
+      if (resErr) throw resErr;
+      if (resCount >= maxPlayers) { alert('This session is now fully booked.'); setLoading(false); return; }
       const status = slot.auto_confirm ? 'confirmed' : 'pending';
       const { error } = await supabase.from('slot_reservations').insert({
         slot_id: slot.id, player_id: user.id, slot_date: slot.slot_date, status,
