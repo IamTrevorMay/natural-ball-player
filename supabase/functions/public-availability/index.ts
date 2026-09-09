@@ -78,10 +78,14 @@ Deno.serve(async (req) => {
     const allFacility = feRes.data || [];
     const publicMasters = allFacility.filter((e) => e.is_public && !e.is_exception);
     // Tombstoned occurrences of recurring public events (deleted single dates).
+    // Suppress original series dates for both tombstoned (is_exception=true) and
+    // moved (is_exception=false) occurrences — mirrors the training_slots approach.
+    // Previously only tombstones were added, so the master series still emitted the
+    // old date for moved occurrences, showing stale phantom entries.
     const tombstones = new Set<string>();
     for (const e of allFacility) {
-      if (e.is_exception && e.recurrence_parent_id) {
-        tombstones.add(`${e.recurrence_parent_id}_${e.original_date || e.event_date}`);
+      if (e.recurrence_parent_id && e.original_date) {
+        tombstones.add(`${e.recurrence_parent_id}_${e.original_date}`);
       }
     }
 
