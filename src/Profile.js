@@ -650,6 +650,11 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         weight: data.weight || '',
         date_of_birth: data.date_of_birth || '',
         sport: profile?.sport || '',
+        jersey_number: profile?.jersey_number || '',
+        position: profile?.position || '',
+        grade: profile?.grade || '',
+        bats: profile?.bats || '',
+        throws: profile?.throws || '',
         training_age_years: profile?.training_age_months != null ? String(Math.round((profile.training_age_months / 12) * 10) / 10) : '',
         instagram: data.instagram || '',
         twitter: data.twitter || '',
@@ -720,7 +725,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         const trainingAgeMonths = Number.isFinite(taYears) ? Math.max(0, Math.round(taYears * 12)) : null;
         const { error: profileError } = await supabase
           .from('player_profiles')
-          .update({ sport: editForm.sport || null, training_age_months: trainingAgeMonths })
+          .update({ sport: editForm.sport || null, training_age_months: trainingAgeMonths, jersey_number: editForm.jersey_number || null, position: editForm.position || null, grade: editForm.grade || null, bats: editForm.bats || null, throws: editForm.throws || null })
           .eq('user_id', userId);
 
         if (profileError) throw profileError;
@@ -4773,19 +4778,73 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Jersey Number</p>
-                  <p className="text-gray-900 font-medium">{profile.jersey_number || 'Not set'}</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.jersey_number}
+                      onChange={(e) => setEditForm({...editForm, jersey_number: e.target.value})}
+                      placeholder="e.g. 12"
+                      className="w-full border border-gray-300 rounded px-2 py-1 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900 font-medium">{profile.jersey_number || 'Not set'}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Position</p>
-                  <p className="text-gray-900 font-medium">{profile.position || 'Not set'}</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.position}
+                      onChange={(e) => setEditForm({...editForm, position: e.target.value})}
+                      placeholder="e.g. SS, OF"
+                      className="w-full border border-gray-300 rounded px-2 py-1 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900 font-medium">{profile.position || 'Not set'}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Grade</p>
-                  <p className="text-gray-900 font-medium">{profile.grade || 'Not set'}</p>
+                  {editing ? (
+                    <input
+                      type="text"
+                      value={editForm.grade}
+                      onChange={(e) => setEditForm({...editForm, grade: e.target.value})}
+                      placeholder="e.g. 10th"
+                      className="w-full border border-gray-300 rounded px-2 py-1 mt-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-gray-900 font-medium">{profile.grade || 'Not set'}</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Bats / Throws</p>
-                  <p className="text-gray-900 font-medium">{profile.bats || 'Not set'} / {profile.throws || 'Not set'}</p>
+                  {editing ? (
+                    <div className="flex gap-1 mt-1">
+                      <select
+                        value={editForm.bats}
+                        onChange={(e) => setEditForm({...editForm, bats: e.target.value})}
+                        className="w-1/2 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Bats</option>
+                        <option value="R">R</option>
+                        <option value="L">L</option>
+                        <option value="S">S</option>
+                      </select>
+                      <select
+                        value={editForm.throws}
+                        onChange={(e) => setEditForm({...editForm, throws: e.target.value})}
+                        className="w-1/2 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">Throws</option>
+                        <option value="R">R</option>
+                        <option value="L">L</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <p className="text-gray-900 font-medium">{profile.bats || 'Not set'} / {profile.throws || 'Not set'}</p>
+                  )}
                 </div>
               </div>
             </div>
