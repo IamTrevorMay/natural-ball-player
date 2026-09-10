@@ -23,7 +23,7 @@ import WorkPortalShell from './WorkPortal';
 import PublicBookingPage from './PublicBookingPage';
 import UnsubscribePage from './UnsubscribePage';
 import PublicPortal from './PublicPortal';
-import NotificationBell, { deletePendingPayment } from './NotificationBell';
+import NotificationBell, { deletePendingPayment, dismissEventAssignment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
 import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge } from './useNotifications';
@@ -1098,6 +1098,13 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   // #316: shared with WorkPortal.js — see deletePendingPayment in NotificationBell.js
   const handleDeletePayment = (purchaseId, productName) => deletePendingPayment(purchaseId, productName, mainCounts.refresh);
 
+  // #408: dismissing writes the coach's own row, so it needs the real userId —
+  // NOT a role-scoped or "viewing as" identity. effectiveRole exists to scope
+  // the UI (users.secondary_role, see CLAUDE.md); the row still belongs to the
+  // person actually signed in, and the own-only RLS on
+  // facility_event_notice_reads would reject anything else anyway.
+  const handleDismissEventAssignment = (eventId) => dismissEventAssignment(eventId, userId, mainCounts.refresh);
+
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
       <WorkPortalShell
@@ -1157,6 +1164,7 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             onDeletePayment={handleDeletePayment}
             needsWhoop={needsWhoop}
             onOpenWhoop={handleOpenWhoop}
+            onDismissEventAssignment={handleDismissEventAssignment}
           />
         </div>
 

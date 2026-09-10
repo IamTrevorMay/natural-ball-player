@@ -25,7 +25,7 @@ import BulkTagSessions from './BulkTagSessions';
 import Leads from './Leads';
 import UsageDashboard from './UsageDashboard';
 import AthleteOutreach from './AthleteOutreach';
-import NotificationBell, { deletePendingPayment } from './NotificationBell';
+import NotificationBell, { deletePendingPayment, dismissEventAssignment } from './NotificationBell';
 import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
 
 const PAGE_META = {
@@ -261,6 +261,7 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
             onJump={handleNotifJump}
             userRole={userRole}
             onDeletePayment={handleDeletePayment}
+            onDismissEventAssignment={(eventId) => dismissEventAssignment(eventId, userId, mainCounts.refresh)}
           />
         </div>
 

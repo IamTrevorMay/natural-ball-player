@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+// #408: local-midnight date string. Deliberately the shared helper rather than
+// toISOString().slice(0,10) — that's UTC, so from 2pm HST onward it reports
+// tomorrow and silently drops today's events out of the "still live" window.
+import { fmtLocalDate } from './scheduleUtils';
 
 // 🔴 #341 KILL SWITCH — LEAVE THIS `false` UNTIL SQUARE PAYMENT CONFIRMATIONS
 // ARE VERIFIED ARRIVING.
@@ -127,11 +131,32 @@ async function fetchWorkDmThreadIdsForUser(userId) {
 }
 
 // Counts and details for the Main Portal: unread chat messages + (coach/admin) pending slot reservations.
+// #408: is a facility event still live — i.e. worth telling a coach they've
+// been added to it? A one-off counts if it hasn't happened yet. A repeating
+// event counts while its rule is still running, which is NOT what its own
+// event_date says: that's the series START, so an active Monday series that
+// began in August has an event_date six weeks in the past. Reading the rule
+// instead is the difference between notifying on live series and notifying
+// on none of them.
+//
+// recurrence_rule shape, from the live table: { freq, interval, byDay[],
+// endType: 'never' | 'until', until: 'YYYY-MM-DD' }. Anything unrecognised
+// is treated as live — a coach seeing one notice too many is a smaller
+// failure than the silence #408 was filed about.
+function isFacilityEventLive(ev, todayStr) {
+  if (!ev) return false;
+  if (!ev.is_recurring) return (ev.event_date || '') >= todayStr;
+  const rule = ev.recurrence_rule || {};
+  if (rule.endType === 'until' && rule.until) return rule.until >= todayStr;
+  return true;
+}
+
 export function useMainPortalCounts(userId, userRole) {
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [pendingSlots, setPendingSlots] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [packageFlags, setPackageFlags] = useState([]);
+  const [eventAssignments, setEventAssignments] = useState([]);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
@@ -211,9 +236,51 @@ export function useMainPortalCounts(userId, userRole) {
         console.error('Package flags error (migration pending?):', e);
         setPackageFlags([]);
       }
+
+      // #408: "when I tag a coach on a facility event it does not notify the
+      // coach". coach_ids already recorded the assignment; nothing ever told
+      // them. A notice is an assignment with no dismissal row against it.
+      //
+      // Masters and standalone rows only (recurrence_parent_id IS NULL): a
+      // coach is added to a SERIES, so one notice covers it. Without this
+      // filter every moved/cancelled occurrence child — which carries its own
+      // copy of coach_ids — would notify all over again, weekly.
+      try {
+        const todayStr = fmtLocalDate(new Date());
+        const { data: assigned } = await supabase
+          .from('facility_events')
+          .select('id, title, event_date, start_time, is_recurring, recurrence_rule')
+          .contains('coach_ids', [userId])
+          .is('recurrence_parent_id', null)
+          .order('event_date', { ascending: true })
+          .limit(200);
+        const live = (assigned || []).filter(ev => isFacilityEventLive(ev, todayStr));
+        if (live.length === 0) {
+          setEventAssignments([]);
+        } else {
+          // Ask only about the events we'd actually show. RLS already scopes
+          // this table to own rows, so the user_id filter is belt-and-braces
+          // rather than the thing keeping other coaches' rows out.
+          const { data: dismissed } = await supabase
+            .from('facility_event_notice_reads')
+            .select('event_id')
+            .eq('user_id', userId)
+            .in('event_id', live.map(ev => ev.id));
+          const seen = new Set((dismissed || []).map(r => r.event_id));
+          setEventAssignments(live.filter(ev => !seen.has(ev.id)));
+        }
+      } catch (e) {
+        // facility_event_notice_reads doesn't exist until its migration
+        // (20260910_facility_event_notice_reads.sql) runs. Fail to EMPTY, not
+        // to "everything is unread" — the un-backfilled state would hand
+        // Cordell 109 notices for events he created himself.
+        console.error('Event assignments error (migration pending?):', e);
+        setEventAssignments([]);
+      }
     } else {
       setPendingSlots([]);
       setPackageFlags([]);
+      setEventAssignments([]);
     }
   }, [userId, userRole]);
 
@@ -227,10 +294,15 @@ export function useMainPortalCounts(userId, userRole) {
     const ch3 = supabase.channel(`main-notif-reads-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'message_reads' }, refresh).subscribe();
     const ch4 = supabase.channel(`main-notif-payments-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'store_purchases' }, refresh).subscribe();
     const ch5 = supabase.channel(`main-notif-pkg-flags-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'booking_package_flags' }, refresh).subscribe();
-    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); };
+    // #408: watch facility_events so being tagged lands in the bell without a
+    // reload — the whole complaint was that nothing told the coach. UPDATE
+    // matters as much as INSERT here: the reported case is being added to an
+    // event that already exists, which is an UPDATE to coach_ids.
+    const ch6 = supabase.channel(`main-notif-facility-events-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'facility_events' }, refresh).subscribe();
+    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); supabase.removeChannel(ch6); };
   }, [refresh, userId]);
 
-  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, refresh };
+  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, refresh };
 }
 
 // Counts and details for the Work Portal: unread work messages + (admin) pending hours + pending time off.

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { insertTrainingProgram } from './insertTrainingProgram';
 import { Target, Search, User, Save, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   LEVELS, LEVEL_NAME, METRICS, BM, UNIV, KIND_COLOR,
@@ -302,13 +303,16 @@ export default function HittingGenerator({ userId, userRole }) {
     try {
       const rows = dayPlacement.rows; // #385 — already placed on the available days
       const topFindings = gen.findings.slice(0, 3).map((f) => f.title).join('; ');
-      const { data: prog, error: pErr } = await supabase
-        .from('training_programs')
-        .insert({
-          name: programName || `${selectedName} — Hitting Roadmap`,
-          description: `Hitting roadmap · ${LEVEL_NAME[level]} · top priorities: ${topFindings || 'balanced'} (generated ${new Date().toISOString().slice(0, 10)})`,
-          duration_weeks: parseInt(weeks, 10) || 16, created_by: userId,
-        }).select('id').single();
+      // #393: these day_numbers are (week-1)*7 + weekday + 1 with weekday 0 =
+      // MONDAY, so day 1 MEANS Monday. day_anchor tells handleProgramDrop to
+      // snap this program to the Monday of the week it's dropped on instead of
+      // treating the dropped day as day 1 — without it the whole week rotates
+      // and #385's excluded weekdays come back.
+      const { data: prog, error: pErr } = await insertTrainingProgram({
+        name: programName || `${selectedName} — Hitting Roadmap`,
+        description: `Hitting roadmap · ${LEVEL_NAME[level]} · top priorities: ${topFindings || 'balanced'} (generated ${new Date().toISOString().slice(0, 10)})`,
+        duration_weeks: parseInt(weeks, 10) || 16, created_by: userId, day_anchor: 'weekday',
+      });
       if (pErr) throw pErr;
       for (let i = 0; i < rows.length; i += 1) {
         const d = rows[i];

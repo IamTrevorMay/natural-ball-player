@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { insertTrainingProgram } from './insertTrainingProgram';
 import { Zap, Search, User, Wand2, Save, Check, AlertTriangle, Calendar, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { extractMetricsFromSubmissions } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
@@ -395,13 +396,16 @@ export default function ThrowingGenerator({ userId, userRole }) {
     try {
       // #385 — the same rows already previewed above, placed on the available days.
       const rows = saveRows.rows;
-      const { data: prog, error: pErr } = await supabase
-        .from('training_programs')
-        .insert({
-          name: programName || `${selectedName} — Throwing`,
-          description: `${phase.label} · ${numWeeks}-week ramp · ${phase.goal} (generated ${iso(new Date())})`,
-          duration_weeks: numWeeks, created_by: userId,
-        }).select('id').single();
+      // #393: these day_numbers are (week-1)*7 + weekday + 1 with weekday 0 =
+      // MONDAY, so day 1 MEANS Monday. day_anchor tells handleProgramDrop to
+      // snap this program to the Monday of the week it's dropped on instead of
+      // treating the dropped day as day 1 — without it the whole week rotates
+      // and #385's excluded weekdays come back.
+      const { data: prog, error: pErr } = await insertTrainingProgram({
+        name: programName || `${selectedName} — Throwing`,
+        description: `${phase.label} · ${numWeeks}-week ramp · ${phase.goal} (generated ${iso(new Date())})`,
+        duration_weeks: numWeeks, created_by: userId, day_anchor: 'weekday',
+      });
       if (pErr) throw pErr;
       for (let i = 0; i < rows.length; i += 1) {
         const d = rows[i];

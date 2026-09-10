@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { insertTrainingProgram } from './insertTrainingProgram';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
 import { extractMetricSourcesFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
@@ -502,11 +503,14 @@ export default function ProgramGenerator({ userId, userRole }) {
       const endDate = iso(new Date(new Date(planDate + 'T00:00:00').getTime() + durationWeeks * 7 * 24 * 60 * 60 * 1000));
       const description = `${program.phaseLabel} · ${durationWeeks}-wk progression · ${program.emphasis} (generated ${iso(new Date())})`;
 
-      const { data: prog, error: pErr } = await supabase
-        .from('training_programs')
-        .insert({ name: programName || `${selectedName} — S&C Program`, description, duration_weeks: durationWeeks, created_by: userId })
-        .select('id')
-        .single();
+      // #393: these day_numbers are (week-1)*7 + weekday + 1 with weekday 0 =
+      // MONDAY, so day 1 MEANS Monday. day_anchor tells handleProgramDrop to
+      // snap this program to the Monday of the week it's dropped on instead of
+      // treating the dropped day as day 1 — without it the whole week rotates
+      // and #385's excluded weekdays come back.
+      const { data: prog, error: pErr } = await insertTrainingProgram(
+        { name: programName || `${selectedName} — S&C Program`, description, duration_weeks: durationWeeks, created_by: userId, day_anchor: 'weekday' }
+      );
       if (pErr) throw pErr;
 
       // Insert every day at its ABSOLUTE calendar-day offset (day_number) so the

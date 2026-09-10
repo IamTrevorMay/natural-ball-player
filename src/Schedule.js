@@ -1790,9 +1790,72 @@ export default function Schedule({ userId, userRole }) {
       return;
     }
     if (payload.kind === 'program') {
-      const { data: days } = await supabase.from('training_days').select('id, day_number, title').eq('program_id', payload.id).order('day_number');
+      // #393: day_number means two different things depending on who wrote the
+      // program, and this is the one place that has to tell them apart.
+      //
+      //   'weekday'    — the generators emit (week-1)*7 + weekday + 1 with
+      //                  weekday 0 = MONDAY, so day 1/3/5 MEANS Mon/Wed/Fri.
+      //   'sequential' — Coach Tools hand-built: a plain 1..N running order
+      //                  with no weekday meaning at all.
+      //
+      // Placing a 'weekday' program at drop_date + day_number - 1 makes
+      // whatever day you dropped on become Monday, silently rotating the whole
+      // week: drop the Mon/Fri/Sun program above on a Wednesday and the
+      // sessions land Wed/Sun/Tue — including two on the Tuesday the coach
+      // deselected because the team practises then (#385).
+      //
+      // So a 'weekday' program anchors to the MONDAY OF THE WEEK DROPPED ON,
+      // not to the dropped day. 'sequential' keeps the original arithmetic
+      // exactly — snapping those would scatter a hand-built program across a
+      // week and could place its day 1 in the past.
+      //
+      // day_anchor may be missing here in two ways, and both must read as
+      // 'sequential' (today's behaviour): the column doesn't exist until
+      // 20260910_training_programs_day_anchor.sql runs, and the .select()
+      // below would then error rather than return rows — hence the fallback
+      // query. Defaulting the other way would move real sessions on programs
+      // nobody has verified.
+      let dayAnchor = 'sequential';
+      let days = null;
+      const withAnchor = await supabase
+        .from('training_programs').select('day_anchor').eq('id', payload.id).maybeSingle();
+      if (withAnchor.error) {
+        console.error('day_anchor read failed (migration pending?):', withAnchor.error);
+      } else if (withAnchor.data?.day_anchor === 'weekday') {
+        dayAnchor = 'weekday';
+      }
+      ({ data: days } = await supabase.from('training_days').select('id, day_number, title').eq('program_id', payload.id).order('day_number'));
+
+      // Monday of the dropped week. getDay() is 0=Sun..6=Sat, so Sunday needs
+      // to go BACK six days, not forward one — a Sunday drop belongs to the
+      // week that is ending, which is the week the coach is looking at.
+      const anchorDate = (() => {
+        const d = new Date(dateStr + 'T00:00:00');
+        if (dayAnchor !== 'weekday') return d;
+        const dow = d.getDay();
+        d.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+        return d;
+      })();
+      const anchorStr = fmtLocalDate(anchorDate);
+
+      // Snapping backwards is the fix working as designed, but it has one
+      // consequence worth saying out loud: drop on a Thursday and the week's
+      // Mon/Tue/Wed sessions are created in the PAST. That is sometimes exactly
+      // what a coach wants (backfilling the week they're partway through) and
+      // sometimes a surprise, so ask rather than assume. Only fires when the
+      // snap actually moves the start behind today — a drop on a future week
+      // never sees this.
+      if (dayAnchor === 'weekday' && anchorStr < fmtLocalDate(new Date())) {
+        const pretty = anchorDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+        const ok = window.confirm(
+          `This program's days are Monday-based, so it will start on ${pretty} — the Monday of the week you dropped on.\n\n` +
+          `That date has already passed, so the earliest sessions will be added to the past. Continue?`
+        );
+        if (!ok) return;
+      }
+
       const rows = (days || []).map((d) => {
-        const dt = new Date(dateStr + 'T00:00:00');
+        const dt = new Date(anchorStr + 'T00:00:00');
         dt.setDate(dt.getDate() + ((d.day_number || 1) - 1));
         return {
           event_type: 'workout',

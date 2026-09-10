@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity, CalendarPlus, X } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
 import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
@@ -64,6 +64,27 @@ export async function deletePendingPayment(purchaseId, productName, onSuccess) {
   onSuccess?.();
 }
 
+// #408: mark a facility-event assignment notice as seen. Writing a row here IS
+// the dismissal — absence of a row is what the bell reads as "new".
+//
+// ignoreDuplicates: true is load-bearing, not a tidiness flag. It emits
+// ON CONFLICT DO NOTHING, which needs only INSERT rights; a plain upsert emits
+// ON CONFLICT DO UPDATE and needs an UPDATE policy that
+// facility_event_notice_reads deliberately does not have (a dismissal is a
+// fact with nothing to amend). Double-dismissing therefore keeps the first
+// dismissed_at, which is the truer timestamp anyway.
+export async function dismissEventAssignment(eventId, userId, onSuccess) {
+  const { error } = await supabase
+    .from('facility_event_notice_reads')
+    .upsert({ event_id: eventId, user_id: userId }, { onConflict: 'event_id,user_id', ignoreDuplicates: true });
+  // Deliberately quiet: this fires on a plain click-through to the calendar,
+  // and an alert() would put a dialog between a coach and the event they were
+  // trying to open. The notice simply reappears next refresh if the write
+  // failed, which is the safe direction to fail in.
+  if (error) { console.error('Could not dismiss event notice:', error); return; }
+  onSuccess?.();
+}
+
 function fmtMoney(cents) {
   return `$${((cents || 0) / 100).toFixed(2)}`;
 }
@@ -78,7 +99,7 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop }) {
+export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -95,6 +116,8 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     // would advertise notifications the panel below deliberately doesn't render.
     + (PAYMENT_DUE_NOTICES_ENABLED ? (mainCounts?.pendingPayments?.length || 0) : 0)
     + (mainCounts?.packageFlags?.length || 0)
+    // #408: facility events this coach was tagged on and hasn't dismissed.
+    + (mainCounts?.eventAssignments?.length || 0)
     // #224: the WHOOP nudge counts as one. It clears itself the moment the
     // athlete connects — useWhoopNudge only ever sets this when the server
     // says `connected === false`, so there is no state to reset by hand.
@@ -208,6 +231,48 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                   {currentPortal !== 'main' && <PortalTag kind="main" />}
                 </div>
               </button>
+            ))}
+
+            {/* #408: "when I tag a coach for creating a facility event it does
+                not notify the coach". Clicking opens the calendar AND dismisses
+                the notice — the click is the acknowledgement, so there's no
+                separate "mark as read" to hunt for. The X dismisses without
+                navigating, for a coach clearing the bell on their way past. */}
+            {(mainCounts?.eventAssignments || []).map(ev => (
+              <div
+                key={`main-event-assign-${ev.id}`}
+                className="w-full flex items-start hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <button
+                  onClick={() => { onDismissEventAssignment?.(ev.id); jump('main', 'schedule'); }}
+                  className="flex-1 text-left px-4 py-3 min-w-0"
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className="mt-0.5"><CalendarPlus size={16} className="text-blue-500" /></div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-900">
+                        You were added to <span className="font-medium">{ev.title || 'a facility event'}</span>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {/* A repeating series shows its rule, not its start date — the
+                            start is often weeks past and reads as stale/wrong. */}
+                        {ev.is_recurring
+                          ? 'Repeating event'
+                          : (ev.event_date ? fmtDate(ev.event_date) : '')}
+                        {ev.start_time && ` at ${fmtSlotTime(ev.start_time)}`}
+                      </p>
+                    </div>
+                    {currentPortal !== 'main' && <PortalTag kind="main" />}
+                  </div>
+                </button>
+                <button
+                  onClick={() => onDismissEventAssignment?.(ev.id)}
+                  title="Dismiss"
+                  className="px-3 py-3 text-gray-400 hover:text-gray-700 transition shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             ))}
 
             {/* #341: the whole payment block — notice, checkout link and the
