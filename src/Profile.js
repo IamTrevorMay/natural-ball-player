@@ -4828,9 +4828,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         className="w-1/2 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">Bats</option>
-                        <option value="R">R</option>
-                        <option value="L">L</option>
-                        <option value="S">S</option>
+                        <option value="Right">R</option>
+                        <option value="Left">L</option>
+                        <option value="Switch">S</option>
                       </select>
                       <select
                         value={editForm.throws}
@@ -4838,8 +4838,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         className="w-1/2 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">Throws</option>
-                        <option value="R">R</option>
-                        <option value="L">L</option>
+                        <option value="Right">R</option>
+                        <option value="Left">L</option>
                       </select>
                     </div>
                   ) : (
