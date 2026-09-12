@@ -7783,6 +7783,10 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Location</label><input type="text" value={formData.location} onChange={(e) => setFormData({...formData, location: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Description</label><textarea value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} rows="3" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+              <div className="flex items-center space-x-2">
+                <input id="isPublicEdit" type="checkbox" checked={formData.is_public} onChange={(e) => setFormData({ ...formData, is_public: e.target.checked })} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                <label htmlFor="isPublicEdit" className="text-sm font-medium text-gray-700">Open for public booking</label>
+              </div>
               {!formData.is_public && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Color</label>
