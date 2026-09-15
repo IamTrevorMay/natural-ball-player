@@ -1734,7 +1734,7 @@ function EditUserModal({ user, teams, userId, callerRole, onClose, onSuccess }) 
 
           {/* Actions */}
           <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-            {user.id !== userId ? (
+            {user.id !== userId && callerRole === 'admin' ? (
               confirmDelete ? (
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-red-600">Delete this user?</span>
