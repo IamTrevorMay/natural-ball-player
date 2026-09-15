@@ -9,8 +9,9 @@
 #   ./scripts/build_app.sh            # build dist/BullpenSync.app
 #   ./scripts/build_app.sh --zip      # also produce dist/BullpenSync.zip to share
 #
-# Requires: macOS. The TARGET Mac needs Homebrew python@3.11 (brew install
-# python@3.11) — the launcher checks and prompts if it's missing.
+# Requires: macOS + network (build machine only — downloads a standalone
+# CPython into the bundle, cached under dist/cache). The TARGET Mac needs
+# nothing preinstalled: the in-app setup wizard handles system permissions.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,6 +30,33 @@ rsync -a --delete \
   --exclude "*.pyc" --exclude ".gitignore" \
   "$ROOT/app.py" "$ROOT"/*.py "$ROOT/requirements.txt" "$ROOT/static" \
   "$CONTENTS/Resources/bullpen-sync/"
+
+# ── Bundle a standalone Python so the target Mac needs no Homebrew/Xcode. ──
+# Downloads astral-sh/python-build-standalone (install_only, CPython 3.11) once
+# into dist/cache and unpacks it at Contents/Resources/python. Arch defaults to
+# the build machine's; override with BULLPEN_PY_ARCH=x86_64 for Intel targets.
+ARCH="${BULLPEN_PY_ARCH:-$(uname -m)}"
+case "$ARCH" in
+  arm64|aarch64) PBS_ARCH="aarch64-apple-darwin" ;;
+  x86_64)        PBS_ARCH="x86_64-apple-darwin" ;;
+  *) echo "error: unsupported arch $ARCH" >&2; exit 1 ;;
+esac
+CACHE="$DIST/cache"
+TARBALL="$CACHE/cpython-3.11-$PBS_ARCH-install_only.tar.gz"
+mkdir -p "$CACHE"
+if [ ! -f "$TARBALL" ]; then
+  echo "==> Downloading standalone CPython 3.11 ($PBS_ARCH)"
+  API="https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
+  # NB: the "+" in the version is percent-encoded (%2B) in download URLs.
+  URL="$(curl -fsSL "$API" \
+    | grep -o '"browser_download_url": *"[^"]*cpython-3\.11\.[0-9.]*\(%2B\|+\)[0-9]*-'"$PBS_ARCH"'-install_only\.tar\.gz"' \
+    | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')"
+  [ -n "$URL" ] || { echo "error: could not resolve python-build-standalone download URL" >&2; exit 1; }
+  curl -fL --progress-bar -o "$TARBALL" "$URL"
+fi
+echo "==> Unpacking bundled Python"
+mkdir -p "$CONTENTS/Resources/python"
+tar -xzf "$TARBALL" -C "$CONTENTS/Resources/python" --strip-components 1
 
 echo "==> Writing Info.plist"
 cat > "$CONTENTS/Info.plist" <<PLIST
@@ -58,6 +86,7 @@ cat > "$CONTENTS/MacOS/BullpenSync" <<'LAUNCH'
 set -uo pipefail
 
 RES="$(cd "$(dirname "$0")/../Resources/bullpen-sync" && pwd)"
+APP_ROOT="$(cd "$RES/../../.." && pwd)"
 SUPPORT="$HOME/Library/Application Support/BullpenSync"
 VENV="$SUPPORT/venv"
 PY="$VENV/bin/python"
@@ -65,6 +94,10 @@ PORT="${BULLPEN_PORT:-8787}"
 URL="http://127.0.0.1:${PORT}/"
 LOG="$SUPPORT/server.log"
 mkdir -p "$SUPPORT"
+
+# Clear quarantine on the bundle contents so the bundled python (and its dylibs)
+# run cleanly after the user's one right-click -> Open on the app itself.
+/usr/bin/xattr -dr com.apple.quarantine "$APP_ROOT" >/dev/null 2>&1 || true
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"BullpenSync\"" >/dev/null 2>&1 || true; }
 alert()  { /usr/bin/osascript -e "display dialog \"$1\" with title \"BullpenSync\" buttons {\"OK\"} default button 1 with icon caution" >/dev/null 2>&1 || true; }
@@ -75,7 +108,9 @@ if /usr/bin/curl -sf "http://127.0.0.1:${PORT}/api/settings" >/dev/null 2>&1; th
 fi
 
 pick_base() {
-  for c in /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3 \
+  # Bundled standalone Python first; Homebrew/system only as fallback.
+  for c in "$RES/../python/bin/python3.11" \
+           /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3 \
            /usr/local/bin/python3.11 /usr/local/bin/python3 python3; do
     if command -v "$c" >/dev/null 2>&1 && \
        "$c" -c 'import sys;assert sys.version_info[:2]>=(3,10)' >/dev/null 2>&1; then
@@ -85,9 +120,15 @@ pick_base() {
   return 1
 }
 
+# The venv hardcodes the base interpreter's path — rebuild it if it went stale
+# (e.g. the .app was moved after first launch).
+if [ -x "$PY" ] && ! "$PY" -c 1 >/dev/null 2>&1; then
+  rm -rf "$VENV"
+fi
+
 if [ ! -x "$PY" ]; then
   notify "First-time setup — this can take a minute…"
-  BASE="$(pick_base)" || { alert "Python 3.10+ is required. Install it with Homebrew:  brew install python@3.11"; exit 1; }
+  BASE="$(pick_base)" || { alert "No usable Python found in the app bundle. Re-download BullpenSync."; exit 1; }
   "$BASE" -m venv "$VENV" || { alert "Could not create the Python environment. See $LOG"; exit 1; }
   "$PY" -m pip install --quiet --upgrade pip >>"$LOG" 2>&1
   if ! "$PY" -m pip install --quiet -r "$RES/requirements.txt" >>"$LOG" 2>&1; then

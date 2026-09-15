@@ -36,15 +36,37 @@ iPad app (same technique as Triton-Vision). It sends nothing to the B1 or iPad.
 
 ## Requirements
 
-- macOS with **Homebrew python@3.11** (`brew install python@3.11`).
-- A **passwordless `rvictl`** so the tool can mirror the iPad without a prompt:
-  ```
-  sudo visudo
-  <your-user> ALL=(root) NOPASSWD: /Library/Apple/usr/bin/rvictl
-  ```
-- The iPad running the Trackman app, USB-tethered and **trusted** by this Mac.
+Machine setup is automated: on first launch the UI shows a **one-time Mac setup**
+wizard that checks everything below and fixes it with a single click + one Mac
+admin password entry (`setup_check.py`, native macOS dialog — no Terminal).
+
+What the wizard manages:
+- **Packet capture access** — an `access_bpf` group + a boot-time LaunchDaemon
+  that makes `/dev/bpf*` group-readable (Wireshark's ChmodBPF pattern), so the
+  sniffer's unprivileged `tcpdump` can open a capture device. Group membership
+  applies at next login, so the wizard may ask for one log-out/log-in.
+- **Passwordless `rvictl`** — installs `/etc/sudoers.d/nbp-bullpensync`
+  (`%admin ALL=(root) NOPASSWD: /Library/Apple/usr/bin/rvictl`, `visudo`-validated).
+- **`rpmuxd`** — loads Apple's remote-virtual-interface helper daemon (unloaded
+  on some Macs; without it `rvictl` fails with `bootstrap_look_up(): 1102`).
+
+Not needed (anymore): Xcode (iPad detection reads the USB registry via `ioreg`;
+`rvictl` ships with macOS since Catalina) and Homebrew (the .app bundles its own
+Python; `run.sh` from a repo checkout still wants python ≥3.10 on PATH).
+
+Still manual:
+- The iPad running the Trackman app, USB-tethered and **trusted** by this Mac
+  (plug in, tap **Trust** on the iPad — per Mac).
 - The DB migration `supabase/migrations/20260731_trackman_live_source.sql` applied
   (adds the `source` column). Until it's applied, uploads will fail on the missing column.
+
+### If the mirror wedges
+
+If pitches stop arriving and `rvictl -l` shows the iPad `with interface (null)`,
+the tap is wedged: unplug the iPad, wait 5 s, replug (the app rebuilds the
+mirror itself). Stubborn cases: remove every entry with `sudo rvictl -x <UDID>`
+(repeat until the list is empty), restart the helper with
+`sudo launchctl kickstart -k system/com.apple.rpmuxd`, then replug.
 
 ## Run
 
@@ -67,20 +89,26 @@ terminal, no repo checkout:
 ./scripts/build_app.sh --zip    # also makes dist/BullpenSync.zip to share
 ```
 
-Drop `BullpenSync.app` in `/Applications` (or anywhere). Double-clicking it
-bootstraps a private Python environment under
-`~/Library/Application Support/BullpenSync` on first run (needs Homebrew
-`python@3.11` — it prompts if missing), starts the local server, and opens the
-UI in the browser. A **Quit** button in the UI stops it cleanly.
+The .app bundles its own standalone CPython 3.11 (astral-sh/python-build-standalone,
+downloaded once at build time into `dist/cache`; `BULLPEN_PY_ARCH=x86_64` to
+build for Intel). Drop `BullpenSync.app` in `/Applications` (or anywhere).
+Double-clicking it bootstraps a private venv under
+`~/Library/Application Support/BullpenSync` on first run, starts the local
+server, and opens the UI in the browser. A **Quit** button in the UI stops it
+cleanly.
 
-- **First launch:** because the app is ad-hoc signed (not notarized), macOS
-  Gatekeeper blocks a plain double-click — **right-click → Open → Open** once to
-  clear it. After that it opens normally.
-- The two machine prerequisites (Homebrew `python@3.11` and the passwordless
-  `rvictl` sudoers rule) still apply.
-- To fully remove the Gatekeeper step, notarize with a Developer ID cert (swap
-  the `-` identity in `build_app.sh`) — the same pending step as Triton-Vision's
-  distribution.
+Install on a new Mac, in full:
+1. Copy `BullpenSync.zip` over, unzip, drop the app in `/Applications`.
+2. **Right-click → Open → Open** once (ad-hoc signed, not notarized — Gatekeeper
+   blocks a plain double-click the first time). The launcher then strips
+   quarantine from the bundle so the embedded Python runs cleanly.
+3. In the setup wizard that appears, click **Fix permissions…** and enter the
+   Mac admin password. Log out/in once if the wizard asks.
+4. Plug in the iPad, tap **Trust**, sign in with an NBP staff account.
+
+To fully remove the Gatekeeper step, notarize with a Developer ID cert (swap
+the `-` identity in `build_app.sh`) — the same pending step as Triton-Vision's
+distribution.
 
 ### Demo / dev without hardware
 
@@ -103,6 +131,7 @@ BULLPEN_REPLAY_JSONL=../../../Triton-Vision/tests/fixtures/sessions/canned_3p/tr
 | `session.py` | Live session state: frames → typed rows → CSV |
 | `csv_writer.py` | Crash-safe CSV (atomic rewrite per pitch) |
 | `nbp_client.py` | Supabase auth + insert + upload retry queue |
+| `setup_check.py` | First-run system checks + one-password admin fixer |
 | `config.py` | Supabase public config + local settings |
 | `static/index.html` | The single-page UI |
 

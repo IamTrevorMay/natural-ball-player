@@ -81,8 +81,24 @@
 </header>
 <main>
 
+  <!-- First-run system setup -->
+  <section id="view-setup" class="card hidden" style="max-width:520px;margin:6vh auto">
+    <h2 style="margin-top:0">One-time Mac setup</h2>
+    <p class="muted" style="margin-top:-6px">This Mac needs a few system permissions before it
+      can capture from the Trackman. Click <b>Fix permissions</b> and enter your Mac password
+      once in the dialog that appears.</p>
+    <div id="setup-rows" style="margin:14px 0"></div>
+    <div id="setup-msg" class="banner hidden" style="font-weight:400"></div>
+    <div class="row" style="align-items:center">
+      <div class="fit"><button id="btn-fix" class="btn-primary">Fix permissions…</button></div>
+      <div class="fit"><button id="btn-recheck" class="btn-ghost">Re-check</button></div>
+      <span class="spacer" style="flex:1"></span>
+      <div class="fit"><button id="btn-setup-continue" class="btn-ghost">Continue to sign-in →</button></div>
+    </div>
+  </section>
+
   <!-- Login -->
-  <section id="view-login" class="card" style="max-width:380px;margin:8vh auto">
+  <section id="view-login" class="card hidden" style="max-width:380px;margin:8vh auto">
     <h2 style="margin-top:0">Sign in</h2>
     <p class="muted" style="margin-top:-6px">Use your NBP admin/coach account.</p>
     <label>Email</label>
@@ -365,9 +381,67 @@ async function refreshStatus() {
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
-// Boot: if already authed (e.g. reload), skip login.
+// ── first-run system setup ──
+const SETUP_LABELS = {
+  capture:        ["Packet capture access", "Lets the app read Trackman traffic (/dev/bpf)."],
+  rvictl_present: ["Apple device-mirror tool (rvictl)", "Ships with macOS. Missing = very old macOS."],
+  rvictl_sudo:    ["Passwordless mirror rule", "Lets the app manage the iPad mirror without prompts."],
+  rpmuxd:         ["Apple mirror daemon (rpmuxd)", "Background helper the mirror tool depends on."],
+  ipad:           ["iPad connected over USB", "Plug the iPad into this Mac and tap Trust on it."],
+};
+function renderSetup(su) {
+  const box = $("#setup-rows"); box.innerHTML = "";
+  Object.entries(SETUP_LABELS).forEach(([key, [label, hint]]) => {
+    const ok = su.checks[key];
+    const d = document.createElement("div");
+    d.style.cssText = "display:flex;gap:10px;align-items:baseline;padding:7px 4px;border-bottom:1px solid var(--line)";
+    d.innerHTML = `<span style="width:18px">${ok ? "✅" : "❌"}</span>
+      <span><b>${esc(label)}</b><br><span class="muted" style="font-size:12px">${esc(hint)}</span></span>`;
+    box.appendChild(d);
+  });
+  $("#btn-fix").classList.toggle("hidden", su.all_ok);
+}
+function setupMsg(text, cls) {
+  const el = $("#setup-msg");
+  if (!text) { el.classList.add("hidden"); return; }
+  el.className = "banner " + cls; el.textContent = text; el.classList.remove("hidden");
+}
+function showSetup(su) {
+  renderSetup(su);
+  $("#view-setup").classList.remove("hidden");
+  $("#view-login").classList.add("hidden");
+}
+function showLogin() {
+  $("#view-setup").classList.add("hidden");
+  $("#view-login").classList.remove("hidden");
+}
+$("#btn-setup-continue").onclick = showLogin;
+$("#btn-recheck").onclick = async () => {
+  const su = await api("/api/setup");
+  renderSetup(su); setupMsg("");
+  if (su.all_ok) setupMsg("All set." + (su.checks.ipad ? "" : " Plug in the iPad when ready."), "good");
+};
+$("#btn-fix").onclick = async () => {
+  const b = $("#btn-fix"); b.disabled = true; setupMsg("Waiting for the password dialog…", "good");
+  try {
+    const r = await api("/api/setup/fix", {method:"POST"});
+    renderSetup(r);
+    if (!r.fixed) setupMsg(r.message, "bad");
+    else if (!r.checks.capture)
+      setupMsg("Setup applied — one last step: log out of your Mac and back in (or reboot), then relaunch BullpenSync.", "good");
+    else setupMsg("Setup applied. You're ready — continue to sign-in.", "good");
+  } catch(e) { setupMsg(e.message, "bad"); }
+  b.disabled = false;
+};
+
+// Boot: run system checks first; then skip login if already authed (e.g. reload).
 (async () => {
-  try { const s = await api("/api/status"); if (s.authed) enterApp(s.user, s.queued); } catch(e){}
+  try {
+    const s = await api("/api/status");
+    if (s.authed) { enterApp(s.user, s.queued); return; }
+    const su = await api("/api/setup");
+    if (su.all_ok) showLogin(); else showSetup(su);
+  } catch(e) { showLogin(); }
 })();
 </script>
 </body>

@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
+import setup_check
 from ipad_monitor import IpadMonitor
 from nbp_client import NbpClient, NbpError
 from session import LiveSession
@@ -163,6 +164,20 @@ async def status() -> dict:
             "rows": sess.rows_display(),
         },
     }
+
+
+# ── First-run system setup (no auth: local-only server, and the fixer itself
+# demands the Mac admin password in a native dialog) ──
+@app.get("/api/setup")
+async def setup_status() -> dict:
+    return await asyncio.to_thread(setup_check.run_checks)
+
+
+@app.post("/api/setup/fix")
+async def setup_fix() -> dict:
+    result = await asyncio.to_thread(setup_check.run_fixer)
+    checks = await asyncio.to_thread(setup_check.run_checks)
+    return {**checks, **result}
 
 
 # ── Roster ──

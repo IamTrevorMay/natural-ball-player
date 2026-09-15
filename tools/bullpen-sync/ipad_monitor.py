@@ -1,9 +1,12 @@
 """iPad USB lifecycle + rvictl automation — callback-based (no Qt).
 
-Ported from Triton-Vision's triton/integrations/ipad_monitor.py. Polls
-`xcrun xctrace list devices`; when a trusted iPad appears it runs
-`rvictl -s <UDID>` so the mirror interface `rvi0` exists for the sniffer, and
-tears it down (`rvictl -x`) on disconnect.
+Ported from Triton-Vision's triton/integrations/ipad_monitor.py. Polls the USB
+tree via `ioreg` (ships with macOS — no Xcode needed); when an iPad appears it
+runs `rvictl -s <UDID>` so the mirror interface `rvi0` exists for the sniffer,
+and tears it down (`rvictl -x`) on disconnect. The UDID is the USB serial
+number (24-char serials get their dash re-inserted after the 8th char).
+`xcrun xctrace list devices` remains as a fallback detection path on Macs that
+happen to have Xcode.
 
 rvictl needs root. Either add a sudoers NOPASSWD rule:
 
@@ -94,10 +97,45 @@ def _safe_run(cmd: list[str], timeout: float = 10.0) -> str:
     return b"".join(chunks).decode("utf-8", errors="replace")
 
 
+def _udid_from_serial(serial: str) -> str:
+    """USB serial -> UDID. Modern devices report a 24-char serial that is the
+    25-char UDID with its dash stripped (8 + 16); older 40-hex UDIDs pass
+    through unchanged."""
+    s = serial.strip()
+    if len(s) == 24 and "-" not in s:
+        return s[:8] + "-" + s[8:]
+    return s
+
+
+def _list_usb_ipads() -> list[tuple[str, str]]:
+    """Connected iPads from the IOUSB registry — works on stock macOS."""
+    import plistlib
+    try:
+        out = _safe_run(["ioreg", "-p", "IOUSB", "-a", "-l", "-w0"], timeout=10)
+        if not out:
+            return []
+        root = plistlib.loads(out.encode("utf-8"))
+    except Exception:
+        return []
+    found: list[tuple[str, str]] = []
+
+    def walk(node: dict) -> None:
+        name = node.get("USB Product Name") or ""
+        serial = node.get("USB Serial Number") or ""
+        if "ipad" in name.lower() and serial:
+            found.append((name, _udid_from_serial(serial)))
+        for child in node.get("IORegistryEntryChildren", []):
+            if isinstance(child, dict):
+                walk(child)
+
+    walk(root)
+    return found
+
+
 def _list_known_ipads() -> list[tuple[str, str, bool]]:
     try:
         out = _safe_run(["xcrun", "xctrace", "list", "devices"], timeout=10)
-        if not out:
+        if not out or "Xcode license" in out:
             return []
     except Exception:
         return []
@@ -121,26 +159,12 @@ def _list_known_ipads() -> list[tuple[str, str, bool]]:
     return found
 
 
-def _devicectl_paired_names() -> set[str]:
-    try:
-        out = _safe_run(["xcrun", "devicectl", "list", "devices"], timeout=8)
-        if not out:
-            return set()
-    except Exception:
-        return set()
-    paired = set()
-    for line in out.splitlines():
-        if "available (paired)" in line.lower():
-            name = line.split("  ")[0].strip()
-            if name:
-                paired.add(name)
-    return paired
-
-
 def _list_online_ipads() -> list[tuple[str, str]]:
-    known = _list_known_ipads()
-    paired = _devicectl_paired_names()
-    return [(n, u) for (n, u, online) in known if online or n in paired]
+    usb = _list_usb_ipads()
+    if usb:
+        return usb
+    # Fallback for odd USB topologies where ioreg parsing misses the device.
+    return [(n, u) for (n, u, online) in _list_known_ipads() if online]
 
 
 def _rvi_interface_exists() -> bool:
