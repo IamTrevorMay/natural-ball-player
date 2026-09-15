@@ -152,23 +152,30 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
   };
 
   const fetchUsers = async () => {
-    const { data, error } = await supabase
-      .from('users')
-      .select(`
-        *,
-        player_profiles!player_profiles_user_id_fkey(*),
-        team_members(
-          team_id,
-          teams(name)
-        )
-      `)
-      .order('full_name');
+    const PAGE = 1000;
+    const all = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from('users')
+        .select(`
+          *,
+          player_profiles!player_profiles_user_id_fkey(*),
+          team_members(
+            team_id,
+            teams(name)
+          )
+        `)
+        .order('full_name')
+        .range(from, from + PAGE - 1);
 
-    if (error) {
-      console.error('Error fetching users:', error);
-    } else {
-      setUsers(data);
+      if (error) {
+        console.error('Error fetching users:', error);
+        return;
+      }
+      all.push(...(data || []));
+      if (!data || data.length < PAGE) break;
     }
+    setUsers(all);
   };
 
   if (loading) {
