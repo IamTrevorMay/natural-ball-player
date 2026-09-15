@@ -50,9 +50,17 @@ What the wizard manages:
 - **`rpmuxd`** — loads Apple's remote-virtual-interface helper daemon (unloaded
   on some Macs; without it `rvictl` fails with `bootstrap_look_up(): 1102`).
 
-Not needed (anymore): Xcode (iPad detection reads the USB registry via `ioreg`;
-`rvictl` ships with macOS since Catalina) and Homebrew (the .app bundles its own
-Python; `run.sh` from a repo checkout still wants python ≥3.10 on PATH).
+Not needed (anymore): Xcode (iPad detection reads the USB registry via `ioreg`)
+and Homebrew (the .app bundles its own Python; `run.sh` from a repo checkout
+still wants python ≥3.10 on PATH).
+
+One Apple package IS needed and the wizard can't install it: `rvictl` + `rpmuxd`
+come from **MobileDeviceDevelopment.pkg**, which Xcode installs — a Mac that
+never had Xcode lacks them (the wizard shows the mirror-tool row as failing).
+No need to install Xcode on the target: copy the 176 KB pkg from any Mac that
+has it (`/Applications/Xcode.app/Contents/Resources/Packages/MobileDeviceDevelopment.pkg`)
+to the target, double-click to install, then **Re-check** in the wizard. The
+binaries are universal with min macOS 11.
 
 Still manual:
 - The iPad running the Trackman app, USB-tethered and **trusted** by this Mac
