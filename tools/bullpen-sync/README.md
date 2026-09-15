@@ -100,11 +100,16 @@ cleanly.
 Install on a new Mac, in full:
 1. Copy `BullpenSync.zip` over, unzip, drop the app in `/Applications`.
 2. Clear Gatekeeper once (ad-hoc signed, not notarized, so the first launch is
-   blocked): double-click the app, click **Done** on the "could not verify"
-   dialog, then **System Settings → Privacy & Security** → scroll to the bottom
-   → **Open Anyway** → authenticate → **Open Anyway** again. (Modern macOS
-   removed the old right-click → Open bypass.) The launcher then strips
-   quarantine from the bundle so the embedded Python runs cleanly.
+   blocked). The path depends on the macOS version:
+   - **macOS 14 or earlier:** right-click the app → **Open** → **Open**.
+   - **macOS 15 (Sequoia) and later:** double-click, click **Done** on the
+     "could not verify" dialog, then **System Settings → Privacy & Security** →
+     scroll to the bottom → **Open Anyway** → authenticate → **Open Anyway**.
+
+   The launcher then strips quarantine from the bundle so the embedded Python
+   runs cleanly. Build the bundle for the target's chip: default is the build
+   machine's arch; use `BULLPEN_PY_ARCH=x86_64 ./scripts/build_app.sh --zip`
+   for an Intel Mac.
 3. In the setup wizard that appears, click **Fix permissions…** and enter the
    Mac admin password. Log out/in once if the wizard asks.
 4. Plug in the iPad, tap **Trust**, sign in with an NBP staff account.
