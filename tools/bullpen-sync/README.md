@@ -99,17 +99,24 @@ cleanly.
 
 Install on a new Mac, in full:
 1. Copy `BullpenSync.zip` over, unzip, drop the app in `/Applications`.
-2. Clear Gatekeeper once (ad-hoc signed, not notarized, so the first launch is
-   blocked). The path depends on the macOS version:
+2. Clear Gatekeeper once (not notarized, so the first launch is blocked). The
+   path depends on the macOS version:
    - **macOS 14 or earlier:** right-click the app → **Open** → **Open**.
    - **macOS 15 (Sequoia) and later:** double-click, click **Done** on the
      "could not verify" dialog, then **System Settings → Privacy & Security** →
      scroll to the bottom → **Open Anyway** → authenticate → **Open Anyway**.
 
-   The launcher then strips quarantine from the bundle so the embedded Python
-   runs cleanly. Build the bundle for the target's chip: default is the build
-   machine's arch; use `BULLPEN_PY_ARCH=x86_64 ./scripts/build_app.sh --zip`
-   for an Intel Mac.
+   **If macOS instead says the app is "damaged"**: that's the quarantine flag
+   on a signed-but-not-notarized bundle (there is no Open escape on that
+   dialog). Fix in Terminal: `xattr -cr /Applications/BullpenSync.app` — or
+   avoid quarantine entirely by carrying the unzipped app over on a USB drive
+   instead of downloading it. x86_64 builds ship unsigned to dodge this trap;
+   arm64 builds must be ad-hoc signed (Apple Silicon won't run unsigned arm64
+   code), so this note applies mainly to them.
+
+   Build the bundle for the target's chip: default is the build machine's
+   arch; use `BULLPEN_PY_ARCH=x86_64 ./scripts/build_app.sh --zip` for an
+   Intel Mac.
 3. In the setup wizard that appears, click **Fix permissions…** and enter the
    Mac admin password. Log out/in once if the wizard asks.
 4. Plug in the iPad, tap **Trust**, sign in with an NBP staff account.

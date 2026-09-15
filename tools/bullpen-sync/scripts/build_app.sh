@@ -151,11 +151,21 @@ exec "$PY" app.py >>"$LOG" 2>&1
 LAUNCH
 chmod +x "$CONTENTS/MacOS/BullpenSync"
 
-echo "==> Ad-hoc code-signing"
-# Ad-hoc signature so the bundle has a stable identity. It is NOT notarized, so
-# first launch still needs Privacy & Security -> Open Anyway (see README). Swap
-# the '-' identity for a Developer ID to notarize later.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "   (codesign skipped)"
+# Signing: an AD-HOC signed app that arrives with a quarantine flag is rejected
+# as "damaged" on the target Mac — with NO right-click -> Open escape. So:
+#  - x86_64 (Intel targets): leave the bundle UNSIGNED. Quarantined unsigned
+#    apps get the normal "unidentified developer" dialog, which right-click ->
+#    Open (macOS <= 14) / Privacy & Security -> Open Anyway (15+) bypasses.
+#  - arm64: Apple Silicon refuses to exec unsigned arm64 code, so ad-hoc sign
+#    and document the escape hatch: xattr -cr the app, or copy it over USB so
+#    quarantine never attaches.
+# A Developer ID + notarization replaces all of this eventually.
+if [ "$PBS_ARCH" = "aarch64-apple-darwin" ]; then
+  echo "==> Ad-hoc code-signing (arm64)"
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "   (codesign skipped)"
+else
+  echo "==> Leaving bundle unsigned (x86_64 — avoids the quarantine 'damaged' trap)"
+fi
 
 echo "==> Built: $APP"
 
