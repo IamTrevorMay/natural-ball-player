@@ -96,7 +96,8 @@ LOG="$SUPPORT/server.log"
 mkdir -p "$SUPPORT"
 
 # Clear quarantine on the bundle contents so the bundled python (and its dylibs)
-# run cleanly after the user's one right-click -> Open on the app itself.
+# run cleanly after the user clears Gatekeeper once (Privacy & Security ->
+# Open Anyway; modern macOS removed the right-click -> Open bypass).
 /usr/bin/xattr -dr com.apple.quarantine "$APP_ROOT" >/dev/null 2>&1 || true
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"BullpenSync\"" >/dev/null 2>&1 || true; }
@@ -152,7 +153,7 @@ chmod +x "$CONTENTS/MacOS/BullpenSync"
 
 echo "==> Ad-hoc code-signing"
 # Ad-hoc signature so the bundle has a stable identity. It is NOT notarized, so
-# first launch still needs right-click -> Open (documented in the README). Swap
+# first launch still needs Privacy & Security -> Open Anyway (see README). Swap
 # the '-' identity for a Developer ID to notarize later.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "   (codesign skipped)"
 
@@ -165,4 +166,4 @@ if [ "${1:-}" = "--zip" ]; then
   echo "==> Shareable: $ZIP"
 fi
 
-echo "Done. Double-click $APP (first time: right-click -> Open to clear Gatekeeper)."
+echo "Done. First launch on a Mac: double-click $APP, then System Settings -> Privacy & Security -> Open Anyway."

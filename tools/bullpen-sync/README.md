@@ -99,8 +99,11 @@ cleanly.
 
 Install on a new Mac, in full:
 1. Copy `BullpenSync.zip` over, unzip, drop the app in `/Applications`.
-2. **Right-click → Open → Open** once (ad-hoc signed, not notarized — Gatekeeper
-   blocks a plain double-click the first time). The launcher then strips
+2. Clear Gatekeeper once (ad-hoc signed, not notarized, so the first launch is
+   blocked): double-click the app, click **Done** on the "could not verify"
+   dialog, then **System Settings → Privacy & Security** → scroll to the bottom
+   → **Open Anyway** → authenticate → **Open Anyway** again. (Modern macOS
+   removed the old right-click → Open bypass.) The launcher then strips
    quarantine from the bundle so the embedded Python runs cleanly.
 3. In the setup wizard that appears, click **Fix permissions…** and enter the
    Mac admin password. Log out/in once if the wizard asks.
