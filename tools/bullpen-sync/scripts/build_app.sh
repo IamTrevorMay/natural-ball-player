@@ -6,12 +6,15 @@
 # so the app itself stays read-only / signable), installs deps, starts the local
 # server, and opens the UI in the browser. Subsequent launches just reopen it.
 #
-#   ./scripts/build_app.sh            # build dist/BullpenSync.app
-#   ./scripts/build_app.sh --zip      # also produce dist/BullpenSync.zip to share
+#   ./scripts/build_app.sh                    # build dist/BullpenSync.app
+#   ./scripts/build_app.sh --zip              # also produce dist/BullpenSync.zip
+#   ./scripts/build_app.sh --notarize --zip   # sign + notarize + staple + zip
 #
-# Requires: macOS + network (build machine only — downloads a standalone
-# CPython into the bundle, cached under dist/cache). The TARGET Mac needs
-# nothing preinstalled: the in-app setup wizard handles system permissions.
+# One UNIVERSAL bundle: both Python arches embedded (launcher picks by uname -m)
+# plus Apple's MobileDeviceDevelopment.pkg for the wizard to install.
+# Requires: macOS + network (build machine only — downloads standalone CPython
+# into the bundle, cached under dist/cache; pkg copied from local Xcode). The
+# TARGET Mac needs nothing preinstalled: the setup wizard handles the rest.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,32 +34,42 @@ rsync -a --delete \
   "$ROOT/app.py" "$ROOT"/*.py "$ROOT/requirements.txt" "$ROOT/static" \
   "$CONTENTS/Resources/bullpen-sync/"
 
-# ── Bundle a standalone Python so the target Mac needs no Homebrew/Xcode. ──
+# ── Bundle standalone Pythons (BOTH arches) so one zip covers every Mac. ──
 # Downloads astral-sh/python-build-standalone (install_only, CPython 3.11) once
-# into dist/cache and unpacks it at Contents/Resources/python. Arch defaults to
-# the build machine's; override with BULLPEN_PY_ARCH=x86_64 for Intel targets.
-ARCH="${BULLPEN_PY_ARCH:-$(uname -m)}"
-case "$ARCH" in
-  arm64|aarch64) PBS_ARCH="aarch64-apple-darwin" ;;
-  x86_64)        PBS_ARCH="x86_64-apple-darwin" ;;
-  *) echo "error: unsupported arch $ARCH" >&2; exit 1 ;;
-esac
+# per arch into dist/cache; the launcher picks python-arm64/ or python-x86_64/
+# by `uname -m` at runtime.
 CACHE="$DIST/cache"
-TARBALL="$CACHE/cpython-3.11-$PBS_ARCH-install_only.tar.gz"
 mkdir -p "$CACHE"
-if [ ! -f "$TARBALL" ]; then
-  echo "==> Downloading standalone CPython 3.11 ($PBS_ARCH)"
-  API="https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
-  # NB: the "+" in the version is percent-encoded (%2B) in download URLs.
-  URL="$(curl -fsSL "$API" \
-    | grep -o '"browser_download_url": *"[^"]*cpython-3\.11\.[0-9.]*\(%2B\|+\)[0-9]*-'"$PBS_ARCH"'-install_only\.tar\.gz"' \
-    | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')"
-  [ -n "$URL" ] || { echo "error: could not resolve python-build-standalone download URL" >&2; exit 1; }
-  curl -fL --progress-bar -o "$TARBALL" "$URL"
+for PBS_ARCH in aarch64-apple-darwin x86_64-apple-darwin; do
+  TARBALL="$CACHE/cpython-3.11-$PBS_ARCH-install_only.tar.gz"
+  if [ ! -f "$TARBALL" ]; then
+    echo "==> Downloading standalone CPython 3.11 ($PBS_ARCH)"
+    API="https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
+    # NB: the "+" in the version is percent-encoded (%2B) in download URLs.
+    URL="$(curl -fsSL "$API" \
+      | grep -o '"browser_download_url": *"[^"]*cpython-3\.11\.[0-9.]*\(%2B\|+\)[0-9]*-'"$PBS_ARCH"'-install_only\.tar\.gz"' \
+      | head -1 | sed 's/.*"\(https[^"]*\)"/\1/')"
+    [ -n "$URL" ] || { echo "error: could not resolve python-build-standalone download URL" >&2; exit 1; }
+    curl -fL -sS -o "$TARBALL" "$URL"
+  fi
+  case "$PBS_ARCH" in
+    aarch64-*) PYDIR="python-arm64" ;;
+    *)         PYDIR="python-x86_64" ;;
+  esac
+  echo "==> Unpacking bundled Python -> Resources/$PYDIR"
+  mkdir -p "$CONTENTS/Resources/$PYDIR"
+  tar -xzf "$TARBALL" -C "$CONTENTS/Resources/$PYDIR" --strip-components 1
+done
+
+# ── Embed Apple's MobileDeviceDevelopment.pkg (rvictl + rpmuxd + kext) so the
+# setup wizard's Fix button can install it on Macs that never had Xcode. ──
+MDD_PKG="/Applications/Xcode.app/Contents/Resources/Packages/MobileDeviceDevelopment.pkg"
+if [ -f "$MDD_PKG" ]; then
+  echo "==> Embedding MobileDeviceDevelopment.pkg"
+  cp "$MDD_PKG" "$CONTENTS/Resources/bullpen-sync/MobileDeviceDevelopment.pkg"
+else
+  echo "   WARNING: $MDD_PKG not found (no Xcode on build Mac?) — wizard can't auto-install rvictl" >&2
 fi
-echo "==> Unpacking bundled Python"
-mkdir -p "$CONTENTS/Resources/python"
-tar -xzf "$TARBALL" -C "$CONTENTS/Resources/python" --strip-components 1
 
 echo "==> Writing Info.plist"
 cat > "$CONTENTS/Info.plist" <<PLIST
@@ -109,8 +122,13 @@ if /usr/bin/curl -sf "http://127.0.0.1:${PORT}/api/settings" >/dev/null 2>&1; th
 fi
 
 pick_base() {
-  # Bundled standalone Python first; Homebrew/system only as fallback.
-  for c in "$RES/../python/bin/python3.11" \
+  # Bundled standalone Python for this machine's arch first; Homebrew/system
+  # only as fallback.
+  case "$(uname -m)" in
+    arm64) PYDIR="python-arm64" ;;
+    *)     PYDIR="python-x86_64" ;;
+  esac
+  for c in "$RES/../$PYDIR/bin/python3.11" \
            /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3 \
            /usr/local/bin/python3.11 /usr/local/bin/python3 python3; do
     if command -v "$c" >/dev/null 2>&1 && \
@@ -151,29 +169,68 @@ exec "$PY" app.py >>"$LOG" 2>&1
 LAUNCH
 chmod +x "$CONTENTS/MacOS/BullpenSync"
 
-# Signing: an AD-HOC signed app that arrives with a quarantine flag is rejected
-# as "damaged" on the target Mac — with NO right-click -> Open escape. So:
-#  - x86_64 (Intel targets): leave the bundle UNSIGNED. Quarantined unsigned
-#    apps get the normal "unidentified developer" dialog, which right-click ->
-#    Open (macOS <= 14) / Privacy & Security -> Open Anyway (15+) bypasses.
-#  - arm64: Apple Silicon refuses to exec unsigned arm64 code, so ad-hoc sign
-#    and document the escape hatch: xattr -cr the app, or copy it over USB so
-#    quarantine never attaches.
-# A Developer ID + notarization replaces all of this eventually.
-if [ "$PBS_ARCH" = "aarch64-apple-darwin" ]; then
-  echo "==> Ad-hoc code-signing (arm64)"
-  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "   (codesign skipped)"
+# ── Signing & notarization ──
+# With a Developer ID identity in the Keychain (auto-detected; override with
+# BULLPEN_SIGN_ID) every Mach-O in the bundle gets hardened-runtime + timestamp
+# signing, and --notarize submits to Apple (keychain profile
+# BULLPEN_NOTARY_PROFILE, default nbp-notary; create it once with
+# `xcrun notarytool store-credentials`) and staples the ticket — after which
+# every Mac opens the app with a plain double-click. Without an identity the
+# bundle is ad-hoc signed; a quarantined ad-hoc app shows as "damaged" on other
+# Macs (escape: xattr -cr, or carry it over on USB so quarantine never attaches).
+SIGN_ID="${BULLPEN_SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
+  | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')}"
+NOTARIZE=0
+for a in "$@"; do [ "$a" = "--notarize" ] && NOTARIZE=1; done
+
+ENTITLEMENTS="$DIST/entitlements.plist"
+cat > "$ENTITLEMENTS" <<'ENT'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The bundled interpreter loads pip-installed (unsigned) C extensions. -->
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
+ENT
+
+if [ -n "$SIGN_ID" ]; then
+  echo "==> Signing with: $SIGN_ID"
+  # Inside-out: every dylib/.so first, then the interpreters, then the bundle.
+  find "$CONTENTS/Resources" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 \
+    | xargs -0 codesign --force --timestamp --options runtime --sign "$SIGN_ID"
+  find "$CONTENTS/Resources"/python-*/bin -type f -perm +111 -print0 \
+    | xargs -0 codesign --force --timestamp --options runtime \
+        --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID"
+  codesign --force --timestamp --options runtime \
+    --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
 else
-  echo "==> Leaving bundle unsigned (x86_64 — avoids the quarantine 'damaged' trap)"
+  echo "==> No Developer ID found — ad-hoc signing (see README for Gatekeeper caveats)"
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+fi
+
+if [ "$NOTARIZE" = 1 ]; then
+  [ -n "$SIGN_ID" ] || { echo "error: --notarize needs a Developer ID identity" >&2; exit 1; }
+  PROFILE="${BULLPEN_NOTARY_PROFILE:-nbp-notary}"
+  NZIP="$DIST/notarize-upload.zip"
+  echo "==> Notarizing (profile: $PROFILE) — usually a few minutes"
+  ( cd "$DIST" && /usr/bin/ditto -c -k --sequesterRsrc --keepParent "BullpenSync.app" "$NZIP" )
+  xcrun notarytool submit "$NZIP" --keychain-profile "$PROFILE" --wait
+  rm -f "$NZIP"
+  echo "==> Stapling ticket"
+  xcrun stapler staple "$APP"
 fi
 
 echo "==> Built: $APP"
 
-if [ "${1:-}" = "--zip" ]; then
-  ZIP="$DIST/BullpenSync.zip"
-  echo "==> Zipping to $ZIP"
-  ( cd "$DIST" && /usr/bin/ditto -c -k --keepParent "BullpenSync.app" "BullpenSync.zip" )
-  echo "==> Shareable: $ZIP"
-fi
+for a in "$@"; do
+  if [ "$a" = "--zip" ]; then
+    ZIP="$DIST/BullpenSync.zip"
+    echo "==> Zipping to $ZIP"
+    ( cd "$DIST" && /usr/bin/ditto -c -k --sequesterRsrc --keepParent "BullpenSync.app" "BullpenSync.zip" )
+    echo "==> Shareable: $ZIP"
+  fi
+done
 
-echo "Done. First launch on a Mac: double-click $APP, then System Settings -> Privacy & Security -> Open Anyway."
+echo "Done."

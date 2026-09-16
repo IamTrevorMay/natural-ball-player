@@ -54,13 +54,13 @@ Not needed (anymore): Xcode (iPad detection reads the USB registry via `ioreg`)
 and Homebrew (the .app bundles its own Python; `run.sh` from a repo checkout
 still wants python ≥3.10 on PATH).
 
-One Apple package IS needed and the wizard can't install it: `rvictl` + `rpmuxd`
-come from **MobileDeviceDevelopment.pkg**, which Xcode installs — a Mac that
-never had Xcode lacks them (the wizard shows the mirror-tool row as failing).
-No need to install Xcode on the target: copy the 176 KB pkg from any Mac that
-has it (`/Applications/Xcode.app/Contents/Resources/Packages/MobileDeviceDevelopment.pkg`)
-to the target, double-click to install, then **Re-check** in the wizard. The
-binaries are universal with min macOS 11.
+`rvictl` + `rpmuxd` are NOT part of stock macOS — they come from Apple's
+**MobileDeviceDevelopment.pkg** (installed by Xcode; universal binaries, min
+macOS 11). The .app build embeds that pkg and the wizard's Fix button installs
+it when missing. Repo checkouts don't carry it — on a no-Xcode Mac, copy the
+176 KB pkg from any Xcode Mac
+(`/Applications/Xcode.app/Contents/Resources/Packages/MobileDeviceDevelopment.pkg`),
+double-click to install, then **Re-check**.
 
 Still manual:
 - The iPad running the Trackman app, USB-tethered and **trusted** by this Mac
@@ -93,9 +93,17 @@ For non-technical admins, package the tool as a standalone `BullpenSync.app` —
 terminal, no repo checkout:
 
 ```
-./scripts/build_app.sh          # builds dist/BullpenSync.app
-./scripts/build_app.sh --zip    # also makes dist/BullpenSync.zip to share
+./scripts/build_app.sh                    # builds dist/BullpenSync.app
+./scripts/build_app.sh --zip              # also makes dist/BullpenSync.zip to share
+./scripts/build_app.sh --notarize --zip   # + Apple notarization (the real release)
 ```
+
+The bundle is **universal**: both Python architectures embedded (the launcher
+picks by `uname -m`), plus Apple's `MobileDeviceDevelopment.pkg` so the wizard
+can install `rvictl` itself. Signing uses the first "Developer ID Application"
+identity in the Keychain (override: `BULLPEN_SIGN_ID`); `--notarize` needs a
+one-time `xcrun notarytool store-credentials nbp-notary --apple-id <id> --team-id <team>`
+(profile name override: `BULLPEN_NOTARY_PROFILE`).
 
 The .app bundles its own standalone CPython 3.11 (astral-sh/python-build-standalone,
 downloaded once at build time into `dist/cache`; `BULLPEN_PY_ARCH=x86_64` to
@@ -107,24 +115,17 @@ cleanly.
 
 Install on a new Mac, in full:
 1. Copy `BullpenSync.zip` over, unzip, drop the app in `/Applications`.
-2. Clear Gatekeeper once (not notarized, so the first launch is blocked). The
-   path depends on the macOS version:
-   - **macOS 14 or earlier:** right-click the app → **Open** → **Open**.
-   - **macOS 15 (Sequoia) and later:** double-click, click **Done** on the
-     "could not verify" dialog, then **System Settings → Privacy & Security** →
-     scroll to the bottom → **Open Anyway** → authenticate → **Open Anyway**.
+2. **Notarized build** (`--notarize`): double-click, confirm the standard
+   "downloaded from the internet" prompt. Done — no other Gatekeeper steps on
+   any macOS version.
 
-   **If macOS instead says the app is "damaged"**: that's the quarantine flag
-   on a signed-but-not-notarized bundle (there is no Open escape on that
-   dialog). Fix in Terminal: `xattr -cr /Applications/BullpenSync.app` — or
-   avoid quarantine entirely by carrying the unzipped app over on a USB drive
-   instead of downloading it. x86_64 builds ship unsigned to dodge this trap;
-   arm64 builds must be ad-hoc signed (Apple Silicon won't run unsigned arm64
-   code), so this note applies mainly to them.
-
-   Build the bundle for the target's chip: default is the build machine's
-   arch; use `BULLPEN_PY_ARCH=x86_64 ./scripts/build_app.sh --zip` for an
-   Intel Mac.
+   **Un-notarized build**: Gatekeeper blocks the first launch, and the escape
+   depends on the macOS version — macOS 14 or earlier: right-click → **Open** →
+   **Open**; macOS 15+: double-click, **Done**, then **System Settings →
+   Privacy & Security** → **Open Anyway**. If macOS instead calls the app
+   "damaged" (quarantined + signed-but-not-notarized — no Open escape on that
+   dialog): `xattr -cr /Applications/BullpenSync.app` in Terminal, or carry the
+   unzipped app over on a USB drive so quarantine never attaches.
 3. In the setup wizard that appears, click **Fix permissions…** and enter the
    Mac admin password. Log out/in once if the wizard asks.
 4. Plug in the iPad, tap **Trust**, sign in with an NBP staff account.

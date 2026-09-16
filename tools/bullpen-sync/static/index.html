@@ -384,7 +384,7 @@ function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;"
 // ── first-run system setup ──
 const SETUP_LABELS = {
   capture:        ["Packet capture access", "Lets the app read Trackman traffic (/dev/bpf)."],
-  rvictl_present: ["Apple device-mirror tool (rvictl)", "Missing? Install Apple's MobileDeviceDevelopment.pkg — copy it from any Mac with Xcode (Xcode.app/Contents/Resources/Packages/), then Re-check."],
+  rvictl_present: ["Apple device-mirror tool (rvictl)", "Fix permissions installs it from the copy bundled with the app (repo checkouts: install Apple's MobileDeviceDevelopment.pkg from any Xcode Mac, then Re-check)."],
   rvictl_sudo:    ["Passwordless mirror rule", "Lets the app manage the iPad mirror without prompts. Fix permissions sets this up (needs the mirror tool installed first)."],
   rpmuxd:         ["Apple mirror daemon (rpmuxd)", "Background helper from the same Apple package as the mirror tool; Fix permissions loads it."],
   ipad:           ["iPad connected over USB", "Plug the iPad into this Mac and tap Trust on it."],

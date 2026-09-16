@@ -31,6 +31,9 @@ import config
 
 RVICTL_PATH = "/Library/Apple/usr/bin/rvictl"
 RPMUXD_PLIST = "/Library/Apple/System/Library/LaunchDaemons/com.apple.rpmuxd.plist"
+# Apple's pkg carrying rvictl + rpmuxd + the mirror kext; embedded next to this
+# file by build_app.sh (absent in a plain repo checkout — Xcode Macs have them).
+MDD_PKG = Path(__file__).parent / "MobileDeviceDevelopment.pkg"
 SUDOERS_FILE = "/etc/sudoers.d/nbp-bullpensync"
 SUPPORT_DIR = "/Library/Application Support/BullpenSync"
 CHMODBPF_SH = f"{SUPPORT_DIR}/chmodbpf.sh"
@@ -88,6 +91,11 @@ def _fixer_script(operator: str) -> str:
 set -uo pipefail
 
 OPERATOR={shlex.quote(operator)}
+
+# ── 0. rvictl/rpmuxd from the embedded Apple pkg, if they're missing ──
+if [ ! -x {shlex.quote(RVICTL_PATH)} ] && [ -f {shlex.quote(str(MDD_PKG))} ]; then
+  installer -pkg {shlex.quote(str(MDD_PKG))} -target / || true
+fi
 
 # ── 1. access_bpf group + membership (Wireshark-style BPF access) ──
 if ! dscl . -read /Groups/access_bpf >/dev/null 2>&1; then
