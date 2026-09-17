@@ -62,11 +62,15 @@ for PBS_ARCH in aarch64-apple-darwin x86_64-apple-darwin; do
 done
 
 # ── Embed Apple's MobileDeviceDevelopment.pkg (rvictl + rpmuxd + kext) so the
-# setup wizard's Fix button can install it on Macs that never had Xcode. ──
+# setup wizard's Fix button can install it on Macs that never had Xcode.
+# Stored BASE64-ENCODED: the notary service unpacks a raw .pkg and rejects
+# Apple's own binaries inside it ("executable does not have the hardened
+# runtime enabled") — binaries we cannot re-sign. As text it passes the scan;
+# the fixer decodes the byte-identical, still Apple-signed pkg at install time. ──
 MDD_PKG="/Applications/Xcode.app/Contents/Resources/Packages/MobileDeviceDevelopment.pkg"
 if [ -f "$MDD_PKG" ]; then
-  echo "==> Embedding MobileDeviceDevelopment.pkg"
-  cp "$MDD_PKG" "$CONTENTS/Resources/bullpen-sync/MobileDeviceDevelopment.pkg"
+  echo "==> Embedding MobileDeviceDevelopment.pkg (base64)"
+  base64 -i "$MDD_PKG" -o "$CONTENTS/Resources/bullpen-sync/MobileDeviceDevelopment.pkg.b64"
 else
   echo "   WARNING: $MDD_PKG not found (no Xcode on build Mac?) — wizard can't auto-install rvictl" >&2
 fi

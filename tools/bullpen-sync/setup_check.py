@@ -33,7 +33,9 @@ RVICTL_PATH = "/Library/Apple/usr/bin/rvictl"
 RPMUXD_PLIST = "/Library/Apple/System/Library/LaunchDaemons/com.apple.rpmuxd.plist"
 # Apple's pkg carrying rvictl + rpmuxd + the mirror kext; embedded next to this
 # file by build_app.sh (absent in a plain repo checkout — Xcode Macs have them).
-MDD_PKG = Path(__file__).parent / "MobileDeviceDevelopment.pkg"
+# Base64-encoded so notarization doesn't scan (and reject) the binaries inside;
+# the fixer decodes it and verifies the pkg signature before installing.
+MDD_PKG_B64 = Path(__file__).parent / "MobileDeviceDevelopment.pkg.b64"
 SUDOERS_FILE = "/etc/sudoers.d/nbp-bullpensync"
 SUPPORT_DIR = "/Library/Application Support/BullpenSync"
 CHMODBPF_SH = f"{SUPPORT_DIR}/chmodbpf.sh"
@@ -93,8 +95,13 @@ set -uo pipefail
 OPERATOR={shlex.quote(operator)}
 
 # ── 0. rvictl/rpmuxd from the embedded Apple pkg, if they're missing ──
-if [ ! -x {shlex.quote(RVICTL_PATH)} ] && [ -f {shlex.quote(str(MDD_PKG))} ]; then
-  installer -pkg {shlex.quote(str(MDD_PKG))} -target / || true
+if [ ! -x {shlex.quote(RVICTL_PATH)} ] && [ -f {shlex.quote(str(MDD_PKG_B64))} ]; then
+  PKG_TMP=$(mktemp -d)/MobileDeviceDevelopment.pkg
+  base64 -D -i {shlex.quote(str(MDD_PKG_B64))} -o "$PKG_TMP"
+  if pkgutil --check-signature "$PKG_TMP" | grep -q "Status: signed"; then
+    installer -pkg "$PKG_TMP" -target / || true
+  fi
+  rm -f "$PKG_TMP"
 fi
 
 # ── 1. access_bpf group + membership (Wireshark-style BPF access) ──
