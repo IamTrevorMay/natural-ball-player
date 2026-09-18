@@ -6989,7 +6989,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
 
   const handleSave = async () => {
     if (!title.trim()) return alert('Title is required');
-    if (isPublicMode && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
+    if (isPublicMode && !bookingType?.startsWith('NBP+') && !(parseFloat(publicPrice) > 0)) return alert('Enter a price for public booking');
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -7720,7 +7720,7 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
   };
 
   const handleSave = () => {
-    if (formData.is_public && !(parseFloat(formData.public_price) > 0)) return alert('Enter a price for public booking');
+    if (formData.is_public && !formData.booking_type?.startsWith('NBP+') && !(parseFloat(formData.public_price) > 0)) return alert('Enter a price for public booking');
     if (isRecurringOccurrence) { setSavePrompt(true); return; }
     applySave('all');
   };
