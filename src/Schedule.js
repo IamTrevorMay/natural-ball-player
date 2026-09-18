@@ -7020,7 +7020,7 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
         color: isPublicMode ? bookingTypeColor(bookingType) : color,
         is_public: isPublicMode,
         booking_type: isPublicMode ? bookingType : null,
-        public_price_cents: isPublicMode ? Math.round(parseFloat(publicPrice) * 100) : null,
+        public_price_cents: isPublicMode ? (parseFloat(publicPrice) >= 0 ? Math.round(parseFloat(publicPrice) * 100) : null) : null,
         public_capacity: isPublicMode ? (parseInt(publicCapacity) || 1) : 1,
       });
       if (error) throw error;
