@@ -9,6 +9,10 @@
     {
       "source": "/api/whoop/callback",
       "destination": "https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/whoop-callback"
+    },
+    {
+      "source": "/api/calendar/:token.ics",
+      "destination": "https://cjilkqzifyhssbsiqgfu.supabase.co/functions/v1/calendar-feed?token=:token"
     }
   ],
   "headers": [

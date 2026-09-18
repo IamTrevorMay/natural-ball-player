@@ -48,6 +48,12 @@ verify_jwt = false
 [functions.ingest-newsletter]
 verify_jwt = false
 
+# #415: iCalendar subscription feed. Fetched by Google/Apple/Outlook calendar
+# servers with no session. Auth is the per-user uuid token in the URL
+# (calendar_feed_tokens). GET only, read only.
+[functions.calendar-feed]
+verify_jwt = false
+
 # Everything else (whoop, create-user, delete-user, update-user-email,
 # send-email, send-campaign, reset-user-password, square-checkout,
 # square-catalog-sync, square-apply-discount, square-subscriptions-backfill,

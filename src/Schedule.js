@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { fetchUserDirectory, readDirectory } from './userDirectory';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog, LayoutGrid } from 'lucide-react';
-import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots, upsertFacilityException, deleteFacilityOccurrence, deleteFacilitySeries, deleteFacilityFuture, countFacilitySeriesImpact, countSignupsForEvents, facilitySeriesDeleteWarning, DELETE_CANCELLED } from './scheduleUtils';
+import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots, upsertFacilityException, deleteFacilityOccurrence, deleteFacilitySeries, deleteFacilityFuture, countFacilitySeriesImpact, countSignupsForEvents, facilitySeriesDeleteWarning, DELETE_CANCELLED, placeProgramDays } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
 import LaneMoveDecisionModal from './LaneMoveDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
+import CalendarSyncModal from './CalendarSyncModal';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
@@ -339,6 +340,7 @@ async function fetchTeamFacilityEvents(teamIds, rangeStart, rangeEnd, startStr, 
 export default function Schedule({ userId, userRole }) {
   const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'facility');
   const [myScheduleEvents, setMyScheduleEvents] = useState([]);
+  const [showCalendarSync, setShowCalendarSync] = useState(false); // #415
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState(userRole === 'player' ? 'month' : 'lanes');
   // QA 2026-08-15: `userRole` arrives as null on the first render (App.js reads
@@ -1966,6 +1968,8 @@ export default function Schedule({ userId, userRole }) {
         </div>
       </div>
 
+      {showCalendarSync && <CalendarSyncModal userId={userId} onClose={() => setShowCalendarSync(false)} />}
+
       {/* My Schedule View (Player) */}
       {view === 'my-schedule' && (
         <div className="flex space-x-4">
@@ -1987,6 +1991,16 @@ export default function Schedule({ userId, userRole }) {
                   <Plus size={16} />
                   <span>Add Game</span>
                 </button>
+                {userRole === 'player' && (
+                  <button
+                    onClick={() => setShowCalendarSync(true)}
+                    className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded-lg font-medium hover:bg-gray-50 transition flex items-center space-x-1 text-sm"
+                    title="Subscribe from Google, Apple or Outlook calendar"
+                  >
+                    <CalendarIcon size={16} />
+                    <span>Sync to calendar</span>
+                  </button>
+                )}
               </div>
               <div className="flex items-center space-x-2">
                 <button onClick={() => setViewMode('week')} className={`px-3 py-1 rounded text-sm font-medium transition ${viewMode === 'week' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Week</button>
@@ -4206,7 +4220,7 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
   const fetchTrainingPrograms = async () => {
     const { data } = await supabase
       .from('training_programs')
-      .select('id, name, description')
+      .select('id, name, description, day_anchor') // day_anchor: #393
       .order('created_at'); // build order, not alphabetical (#158)
     setTrainingPrograms(data || []);
   };
@@ -4390,25 +4404,25 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
 
           if (error) throw error;
 
-          // Generate calendar events if end date and weekdays are set
-          if (programEndDate && programWeekdays.some(Boolean)) {
+          // Generate calendar events if an end date is set. #393: a generated
+          // ('weekday') program lays itself out from the Monday on/after the
+          // start date by its own day numbers; a hand-built ('sequential')
+          // program still needs ticked weekdays. See placeProgramDays.
+          const program = trainingPrograms.find(p => p.id === selectedProgramId);
+          const isWeekdayProgram = program?.day_anchor === 'weekday';
+          if (programEndDate && (isWeekdayProgram || programWeekdays.some(Boolean))) {
             const { data: days } = await supabase
               .from('training_days')
               .select('id, day_number, title')
               .eq('program_id', selectedProgramId)
               .order('day_number');
-            const sortedDays = days || [];
-            if (sortedDays.length > 0) {
-              const program = trainingPrograms.find(p => p.id === selectedProgramId);
-              const start = new Date(dateStr + 'T00:00:00');
-              const end = new Date(programEndDate + 'T00:00:00');
-              const matchingDates = [];
-              for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                if (programWeekdays[d.getDay()]) matchingDates.push(fmtLocalDate(d));
-              }
+            const placed = placeProgramDays({
+              dayAnchor: program?.day_anchor, days,
+              startStr: dateStr, endStr: programEndDate, weekdays: programWeekdays,
+            });
+            if (placed.length > 0) {
               const rows = [];
-              matchingDates.forEach((ds, idx) => {
-                const day = sortedDays[idx % sortedDays.length];
+              placed.forEach(({ date: ds, day }) => {
                 playerIds.forEach(pid => {
                   rows.push({
                     player_id: pid,
@@ -5205,6 +5219,11 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
                 />
               </div>
 
+              {trainingPrograms.find(p => p.id === selectedProgramId)?.day_anchor === 'weekday' ? (
+                <div className="border border-blue-200 rounded-lg p-3 bg-blue-50 text-xs text-blue-800">
+                  This program was generated with its own training days (day 1 = Monday). It will start on the Monday on or after the start date, keep its rest-day spacing, and repeat until the end date. <span className="font-medium">Weekday picks don't apply.</span>
+                </div>
+              ) : (
               <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
                 <p className="text-sm font-medium text-gray-700 mb-2">Repeat on:</p>
                 <div className="flex flex-wrap gap-1.5">
@@ -5221,6 +5240,7 @@ export function AddEventPanel({ date, view, teamId, playerIds = [], onClose, onS
                 </div>
                 <p className="text-xs text-gray-500 mt-2">Cycles through the program's days; loops back to Day 1 when it runs out.</p>
               </div>
+              )}
             </div>
           )}
 

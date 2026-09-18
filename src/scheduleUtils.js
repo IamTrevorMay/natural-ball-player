@@ -119,6 +119,65 @@ export function expandRecurringEvents(masters, exceptions, rangeStart, rangeEnd)
 //   2. Render moved child rows (collectMovedSlots) as real sessions on their
 //      own slot_date, subject to the reader's own date-range filtering.
 //   3. Never render a tombstone (is_exception=true) child row at all.
+// #393: turn a program's training_days into { date, day } pairs over
+// [startStr, endStr]. This is the ONE place the "assign with an end date"
+// paths (Schedule.js AddEventPanel, CoachTools AssignTrainingProgramModal)
+// decide which calendar date each program day lands on.
+//
+//   'weekday'    — the generators (scProgramEngine / throwingEngine /
+//                  hittingEngine / AutoProgram) emit day_number =
+//                  (week-1)*7 + weekday + 1 where day 1 IS MONDAY. The
+//                  program is laid out from the Monday on or after the start
+//                  date by its own day numbers — rest-day spacing intact —
+//                  and the whole block repeats until the end date. The
+//                  coach's weekday ticks are ignored: the program already
+//                  chose its days (#385).
+//   'sequential' — Coach Tools hand-built programs: day_number is a plain
+//                  running order. Walk the ticked weekdays and cycle through
+//                  the days round-robin, exactly as before #393.
+//
+// Weekday convention hazard (from the #393 thread): `weekdays` here is
+// indexed by Date.getDay() (0 = Sunday) — the same array the two modals'
+// Sun..Sat buttons write. The generators' Monday=0 convention never reaches
+// this function; it is already baked into day_number.
+export function placeProgramDays({ dayAnchor, days, startStr, endStr, weekdays }) {
+  const sorted = [...(days || [])].sort((a, b) => (a.day_number || 0) - (b.day_number || 0));
+  if (sorted.length === 0 || !startStr || !endStr) return [];
+  const start = new Date(startStr + 'T00:00:00');
+  const end = new Date(endStr + 'T00:00:00');
+  if (isNaN(start) || isNaN(end) || end < start) return [];
+  const out = [];
+
+  if (dayAnchor === 'weekday') {
+    const anchor = new Date(start);
+    const dow = anchor.getDay();
+    if (dow !== 1) anchor.setDate(anchor.getDate() + ((8 - dow) % 7)); // forward to Monday
+    const maxDay = Math.max(...sorted.map(d => d.day_number || 1));
+    const cycleDays = Math.max(7, Math.ceil(maxDay / 7) * 7);
+    for (let cycle = 0; cycle < 200; cycle++) {
+      let placedAny = false;
+      for (const day of sorted) {
+        const dt = new Date(anchor);
+        dt.setDate(dt.getDate() + cycle * cycleDays + ((day.day_number || 1) - 1));
+        if (dt > end) continue;
+        placedAny = true;
+        out.push({ date: fmtLocalDate(dt), day });
+      }
+      if (!placedAny) break;
+    }
+    return out;
+  }
+
+  if (!weekdays || !weekdays.some(Boolean)) return [];
+  let idx = 0;
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    if (!weekdays[d.getDay()]) continue;
+    out.push({ date: fmtLocalDate(d), day: sorted[idx % sorted.length] });
+    idx++;
+  }
+  return out;
+}
+
 export function buildSlotExceptionMap(slots) {
   const map = {};
   (slots || []).forEach(slot => {

@@ -19,6 +19,8 @@ import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { FACILITY_FINE_ENABLED, FACILITY_FINE_LABEL } from './facilityFineDocument';
+import { MECHANICS_AREAS, mechanicsArea, mechanicsAreaLabel } from './mechanicsDeficiencies';
+import RecruitingBoard from './RecruitingBoard';
 
 const EQUIPMENT_FIELDS = [
   { key: 'shirt', label: 'Shirt' },
@@ -212,11 +214,21 @@ const NOTE_CATEGORIES = [
   { value: 'general', label: 'General', color: 'bg-gray-100 text-gray-700' },
   { value: 'practice', label: 'Practice', color: 'bg-blue-100 text-blue-700' },
   { value: 'game', label: 'Game', color: 'bg-green-100 text-green-700' },
-  { value: 'skill_session', label: 'Skill Session', color: 'bg-purple-100 text-purple-700' },
   { value: 'disciplinary', label: 'Disciplinary', color: 'bg-red-100 text-red-700' },
-  { value: 'hitting', label: 'Hitting', color: 'bg-amber-100 text-amber-800' },
-  { value: 'pitching', label: 'Pitching', color: 'bg-cyan-100 text-cyan-800' },
+  // #418: Mechanics replaces Skill Session (folded into Practice — Cordell:
+  // "it's already the same as practice") and the separate Hitting / Pitching
+  // categories. The area (base running, hitting, pitching/throwing, catching,
+  // fielding) and the deficiency checklist live on the note itself — see
+  // src/mechanicsDeficiencies.js.
+  { value: 'mechanics', label: 'Mechanics', color: 'bg-amber-100 text-amber-800' },
 ];
+// Rows written before 20260918_player_notes_mechanics.sql moved them, should
+// any survive: read them as the category they became.
+const LEGACY_NOTE_CATEGORIES = { skill_session: 'practice', hitting: 'mechanics', pitching: 'mechanics' };
+const noteCategoryInfo = (cat) => NOTE_CATEGORIES.find(c => c.value === cat)
+  || NOTE_CATEGORIES.find(c => c.value === LEGACY_NOTE_CATEGORIES[cat])
+  || NOTE_CATEGORIES[0];
+const noteArea = (n) => n?.area || (n?.category === 'hitting' ? 'hitting' : n?.category === 'pitching' ? 'pitching_throwing' : '');
 
 // #370: the sections that live inside the merged "Records" tab, in the order
 // they appear in the sub-nav. `staffOnly` reproduces exactly the role gate the
@@ -275,7 +287,14 @@ const PITCH_LOCATION_OPTIONS = [
 const HITTING_RESULT_OPTIONS = ['Take - Ball', 'Take - Strike', 'Swing & Miss', 'Foul', 'Weak Contact', 'Hard Contact', 'In Play - Out', 'In Play - Hit', 'HR'];
 const PITCHING_RESULT_OPTIONS = ['Ball', 'Called Strike', 'Swing & Miss', 'Foul', 'Weak Contact', 'Hard Contact', 'In Play - Out', 'In Play - Hit', 'HR'];
 
-const isPitchCategory = (cat) => cat === 'hitting' || cat === 'pitching';
+// #418: the pitch-by-pitch log belongs to the Hitting and Pitching / Throwing
+// Mechanics areas. Returns 'hitting' | 'pitching' | null.
+const notePitchLog = (note) => {
+  if (!note) return null;
+  if (note.category === 'mechanics') return mechanicsArea(note.area)?.pitchLog || null;
+  if (note.category === 'hitting' || note.category === 'pitching') return note.category; // legacy rows
+  return null;
+};
 
 function TeamsList({ teams, onNavigateToTeam }) {
   const [open, setOpen] = useState(false);
@@ -429,9 +448,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   const [savingGoal, setSavingGoal] = useState(false);
   const [playerNotes, setPlayerNotes] = useState([]);
   const [editingNoteId, setEditingNoteId] = useState(null);
-  const [noteDraft, setNoteDraft] = useState({ category: 'general', content: '' });
+  const [noteDraft, setNoteDraft] = useState({ category: 'general', content: '', context: '', pitches: [], area: '', deficiencies: [] });
   const [savingNote, setSavingNote] = useState(false);
   const [noteFilter, setNoteFilter] = useState('all');
+  const [noteAreaFilter, setNoteAreaFilter] = useState(''); // #418: Mechanics area sub-filter
   const [attendanceStats, setAttendanceStats] = useState(null);
   // #306: null = not loaded yet (or cancel_reason doesn't exist until its
   // migration runs) — kept distinct from 0 so the stat can stay hidden
@@ -1122,13 +1142,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   const startNewNote = () => {
     setEditingNoteId('new');
-    setNoteDraft({ category: 'general', content: '', context: '', pitches: [] });
+    setNoteDraft({ category: 'general', content: '', context: '', pitches: [], area: '', deficiencies: [] });
   };
 
   const startEditNote = (note) => {
     setEditingNoteId(note.id);
     setNoteDraft({
-      category: note.category,
+      category: LEGACY_NOTE_CATEGORIES[note.category] || note.category,
+      area: noteArea(note),
+      deficiencies: Array.isArray(note.deficiencies) ? note.deficiencies : [],
       content: note.content || '',
       context: note.context || '',
       pitches: Array.isArray(note.pitches) ? note.pitches : [],
@@ -1137,7 +1159,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
   const cancelEditNote = () => {
     setEditingNoteId(null);
-    setNoteDraft({ category: 'general', content: '', context: '', pitches: [] });
+    setNoteDraft({ category: 'general', content: '', context: '', pitches: [], area: '', deficiencies: [] });
   };
 
   const updateDraftPitch = (idx, field, value) => {
@@ -1161,11 +1183,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     }));
   };
 
+  const noteMatchesFilter = (n) => {
+    if (noteFilter === 'all') return true;
+    if (noteCategoryInfo(n.category).value !== noteFilter) return false;
+    if (noteFilter === 'mechanics' && noteAreaFilter) return noteArea(n) === noteAreaFilter;
+    return true;
+  };
+
   const saveNote = async () => {
-    const isPitch = isPitchCategory(noteDraft.category);
+    const isMechanics = noteDraft.category === 'mechanics';
+    if (isMechanics && !noteDraft.area) { alert('Pick a Mechanics area first.'); return; }
+    const isPitch = !!notePitchLog(noteDraft);
+    const deficiencies = isMechanics
+      ? [...new Set((noteDraft.deficiencies || []).map(d => String(d).trim()).filter(Boolean))]
+      : [];
     const hasContent = noteDraft.content.trim().length > 0;
     const hasPitches = isPitch && (noteDraft.pitches || []).some(p => p.pitch_type || p.location || p.result || p.notes);
-    if (!hasContent && !hasPitches) return;
+    if (!hasContent && !hasPitches && deficiencies.length === 0) return;
     setSavingNote(true);
     try {
       const payload = {
@@ -1175,6 +1209,8 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         pitches: isPitch
           ? (noteDraft.pitches || []).filter(p => p.pitch_type || p.location || p.result || p.notes)
           : null,
+        area: isMechanics ? noteDraft.area : null,
+        deficiencies,
       };
       if (editingNoteId === 'new') {
         const { error } = await supabase
@@ -2966,7 +3002,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                   {[{ value: 'all', label: 'All' }, ...NOTE_CATEGORIES].map(cat => (
                     <button
                       key={cat.value}
-                      onClick={() => setNoteFilter(cat.value)}
+                      onClick={() => { setNoteFilter(cat.value); if (cat.value !== 'mechanics') setNoteAreaFilter(''); }}
                       className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
                         noteFilter === cat.value
                           ? 'bg-blue-600 text-white'
@@ -2976,6 +3012,17 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       {cat.label}
                     </button>
                   ))}
+                  {noteFilter === 'mechanics' && (
+                    <select
+                      value={noteAreaFilter}
+                      onChange={(e) => setNoteAreaFilter(e.target.value)}
+                      className="px-2.5 py-1 rounded-full text-xs font-medium border border-amber-300 bg-amber-50 text-amber-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      title="Mechanics area"
+                    >
+                      <option value="">All areas</option>
+                      {MECHANICS_AREAS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                    </select>
+                  )}
                 </div>
                 <button
                   onClick={startNewNote}
@@ -3006,14 +3053,16 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
               <div className="space-y-3">
                 {playerNotes
-                  .filter(n => noteFilter === 'all' || n.category === noteFilter)
+                  .filter(noteMatchesFilter)
                   .length === 0 && editingNoteId !== 'new' && (
                   <p className="text-sm text-gray-500 italic text-center py-6">No notes yet.</p>
                 )}
                 {playerNotes
-                  .filter(n => noteFilter === 'all' || n.category === noteFilter)
+                  .filter(noteMatchesFilter)
                   .map(note => {
-                    const catInfo = NOTE_CATEGORIES.find(c => c.value === note.category) || NOTE_CATEGORIES[0];
+                    const catInfo = noteCategoryInfo(note.category);
+                    const areaLabel = noteArea(note) ? mechanicsAreaLabel(noteArea(note)) : '';
+                    const flagged = Array.isArray(note.deficiencies) ? note.deficiencies : [];
                     const canModify = note.created_by === loggedInUserId || userRole === 'admin';
                     return (
                       <div key={note.id} className="border border-gray-200 rounded-lg p-4">
@@ -3038,6 +3087,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center space-x-2 flex-wrap">
                                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${catInfo.color}`}>{catInfo.label}</span>
+                                {areaLabel && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">{areaLabel}</span>}
                                 {note.context && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 capitalize">{note.context}</span>}
                                 <span className="text-xs text-gray-500">{note.author?.full_name || 'Unknown'}</span>
                                 <span className="text-xs text-gray-400">{new Date(note.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
@@ -3053,6 +3103,13 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                                 </div>
                               )}
                             </div>
+                            {flagged.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {flagged.map((d, i) => (
+                                  <span key={i} className="px-2 py-0.5 rounded bg-red-50 text-red-700 text-xs border border-red-100">{d}</span>
+                                ))}
+                              </div>
+                            )}
                             {note.content && <p className="text-sm text-gray-800 whitespace-pre-wrap">{note.content}</p>}
                             {Array.isArray(note.pitches) && note.pitches.length > 0 && (
                               <div className="mt-2 overflow-x-auto">
@@ -3395,6 +3452,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
           {activeProfileTab === 'recruitment' && (
             <div>
+              {/* #416: facility-wide recruiting board, staff only. Sits above the
+                  school directory and its level chips, as Cordell asked. */}
+              {(userRole === 'admin' || userRole === 'coach') && (
+                <RecruitingBoard onNavigateToProfile={onNavigateToProfile} highlightUserId={userId} />
+              )}
+
               {/* ── School Directory ── */}
               <div className="mb-8">
                 <div className="flex items-center justify-between mb-3">
@@ -5460,10 +5523,28 @@ function AssessmentFormModal({ template, playerId, onClose, onSubmitted }) {
 }
 
 function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
-  const isPitch = isPitchCategory(draft.category);
-  const isPitchingCat = draft.category === 'pitching';
+  const isMechanics = draft.category === 'mechanics';
+  const area = isMechanics ? mechanicsArea(draft.area) : null;
+  const pitchLog = notePitchLog(draft);
+  const isPitch = !!pitchLog;
+  const isPitchingCat = pitchLog === 'pitching';
   const resultOptions = isPitchingCat ? PITCHING_RESULT_OPTIONS : HITTING_RESULT_OPTIONS;
   const pitches = draft.pitches || [];
+  // #418: deficiencies = the area's checklist (src/mechanicsDeficiencies.js)
+  // plus anything the coach types in. Both are stored as plain strings.
+  const deficiencies = draft.deficiencies || [];
+  const [customDeficiency, setCustomDeficiency] = useState('');
+  const toggleDeficiency = (d) => setDraft({
+    ...draft,
+    deficiencies: deficiencies.includes(d) ? deficiencies.filter(x => x !== d) : [...deficiencies, d],
+  });
+  const addCustomDeficiency = () => {
+    const d = customDeficiency.trim();
+    if (!d) return;
+    if (!deficiencies.includes(d)) setDraft({ ...draft, deficiencies: [...deficiencies, d] });
+    setCustomDeficiency('');
+  };
+  const customFlagged = area ? deficiencies.filter(d => !area.deficiencies.includes(d)) : deficiencies;
 
   return (
     <div className="space-y-3">
@@ -5472,7 +5553,11 @@ function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
           <label className="text-sm font-medium text-gray-700">Category:</label>
           <select
             value={draft.category}
-            onChange={(e) => setDraft({ ...draft, category: e.target.value })}
+            onChange={(e) => {
+              const category = e.target.value;
+              const keep = category === 'mechanics';
+              setDraft({ ...draft, category, area: keep ? draft.area : '', deficiencies: keep ? deficiencies : [] });
+            }}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {NOTE_CATEGORIES.map(cat => (
@@ -5480,6 +5565,21 @@ function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
             ))}
           </select>
         </div>
+        {isMechanics && (
+          <div className="flex items-center space-x-2">
+            <label className="text-sm font-medium text-gray-700">Area:</label>
+            <select
+              value={draft.area || ''}
+              onChange={(e) => setDraft({ ...draft, area: e.target.value, deficiencies: [], pitches: [] })}
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select…</option>
+              {MECHANICS_AREAS.map(a => (
+                <option key={a.value} value={a.value}>{a.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {isPitch && (
           <div className="flex items-center space-x-2">
             <label className="text-sm font-medium text-gray-700">Context:</label>
@@ -5506,6 +5606,52 @@ function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
         rows={3}
         className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
       />
+
+      {isMechanics && area && (
+        <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold text-gray-700">Deficiencies — {area.label}</span>
+            <span className="text-xs text-gray-500">{deficiencies.length} flagged</span>
+          </div>
+          {area.deficiencies.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {area.deficiencies.map(d => (
+                <button
+                  type="button"
+                  key={d}
+                  onClick={() => toggleDeficiency(d)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${deficiencies.includes(d) ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500 italic mb-2">The {area.label} deficiency list hasn't been loaded yet — type them in below for now.</p>
+          )}
+          {customFlagged.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {customFlagged.map(d => (
+                <span key={d} className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-600 text-white flex items-center gap-1">
+                  {d}
+                  <button type="button" onClick={() => toggleDeficiency(d)} className="hover:text-red-200" title="Remove"><X size={12} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={customDeficiency}
+              onChange={(e) => setCustomDeficiency(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomDeficiency(); } }}
+              placeholder="Add a deficiency…"
+              className="flex-1 px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            />
+            <button type="button" onClick={addCustomDeficiency} className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition">Add</button>
+          </div>
+        </div>
+      )}
 
       {isPitch && (
         <div>

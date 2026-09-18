@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { GRAD_YEAR_OPTIONS, classLabelForGradYear } from './gradYear';
 import { Users, Search, Edit2, X, Save, AlertTriangle, Mail } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
 import { useStatusOptions, StatusBadgeSelect } from './StatusSelect';
@@ -83,7 +84,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, date_of_birth, parent1_email, parent2_email, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, date_of_birth, parent1_email, parent2_email, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, grad_year, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name))')
       .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
@@ -272,6 +273,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
       position: editForm.position || null,
       jersey_number: editForm.jersey_number || null,
       grade: editForm.grade || null,
+      grad_year: editForm.grad_year ? parseInt(editForm.grad_year, 10) : null, // #416
       bats: editForm.bats || null,
       throws: editForm.throws || null,
     }).eq('id', profileId);
@@ -625,6 +627,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                               position: profile.position || '',
                               jersey_number: profile.jersey_number || '',
                               grade: profile.grade || '',
+                              grad_year: profile.grad_year || '',
                               bats: profile.bats || '',
                               throws: profile.throws || '',
                             });
@@ -671,6 +674,14 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
                 <input type="text" value={editForm.grade} onChange={(e) => setEditForm({...editForm, grade: e.target.value})} placeholder="e.g., Senior, 2026" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                {/* #416: the recruiting board groups by class year derived from this. */}
+                <label className="block text-sm font-medium text-gray-700 mb-1">HS Graduation Year</label>
+                <select value={editForm.grad_year || ''} onChange={(e) => setEditForm({...editForm, grad_year: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                  <option value="">— not set —</option>
+                  {GRAD_YEAR_OPTIONS.map(y => <option key={y} value={y}>{y}{classLabelForGradYear(y) ? ` · ${classLabelForGradYear(y)}` : ''}</option>)}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
-import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
+import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots, placeProgramDays } from './scheduleUtils';
 import { LANES } from './Schedule';
 import { useModalTracking, trackAction } from './usage';
 import { useExerciseVideos } from './exerciseVideos';
@@ -2108,32 +2108,25 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
     }
   };
 
-  const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // #393: a generated program (day_anchor 'weekday') lays itself out from the
+  // Monday on/after the start date by its own day numbers — the coach's
+  // weekday ticks don't apply. Hand-built programs keep the round-robin.
+  const isWeekdayProgram = program?.day_anchor === 'weekday';
 
   const generateWorkoutEvents = async ({ teamId, playerIds }) => {
     if (!scheduleOnCalendar || !startDate || !endDate) return { count: 0 };
-    if (!weekdays.some(Boolean)) return { count: 0 };
+    if (!isWeekdayProgram && !weekdays.some(Boolean)) return { count: 0 };
 
     const { data: days } = await supabase
       .from('training_days')
       .select('id, day_number, title')
       .eq('program_id', program.id)
       .order('day_number');
-    const sortedDays = days || [];
-    if (sortedDays.length === 0) return { count: 0 };
-
-    const start = new Date(startDate + 'T00:00:00');
-    const end = new Date(endDate + 'T00:00:00');
-    if (isNaN(start) || isNaN(end) || end < start) return { count: 0 };
-
-    const matchingDates = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      if (weekdays[d.getDay()]) matchingDates.push(fmt(d));
-    }
+    const placed = placeProgramDays({ dayAnchor: program?.day_anchor, days, startStr: startDate, endStr: endDate, weekdays });
+    if (placed.length === 0) return { count: 0 };
 
     const rows = [];
-    matchingDates.forEach((dateStr, idx) => {
-      const day = sortedDays[idx % sortedDays.length];
+    placed.forEach(({ date: dateStr, day }) => {
       const baseRow = {
         event_type: 'workout',
         event_date: dateStr,
@@ -2175,7 +2168,7 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
         setError('End date must be on or after start date.');
         setLoading(false); return;
       }
-      if (!weekdays.some(Boolean)) {
+      if (!isWeekdayProgram && !weekdays.some(Boolean)) {
         setError('Please pick at least one weekday, or turn off "Add to calendar".');
         setLoading(false); return;
       }
@@ -2348,7 +2341,12 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
               />
               <span className="text-sm font-medium text-gray-900">Add to calendar over date range</span>
             </label>
-            {scheduleOnCalendar && (
+            {scheduleOnCalendar && isWeekdayProgram && (
+              <p className="mt-3 text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-lg p-2">
+                This program was generated with its own training days (day 1 = Monday). It will start on the Monday on or after the start date, keep its rest-day spacing, and repeat until the end date. <span className="font-medium">Weekday picks don't apply.</span>
+              </p>
+            )}
+            {scheduleOnCalendar && !isWeekdayProgram && (
               <div className="mt-3">
                 <p className="text-xs text-gray-500 mb-1.5">Repeat on:</p>
                 <div className="flex flex-wrap gap-1.5">
