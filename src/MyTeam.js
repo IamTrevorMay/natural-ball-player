@@ -1497,9 +1497,15 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
   const normalizePosition = (pos) => {
     if (!pos) return null;
     const upper = pos.toUpperCase().trim();
-    if (['RHP', 'LHP', 'SP', 'RP', 'CL'].includes(upper)) return 'P';
-    if (upper === 'IF') return 'SS';
-    if (upper === 'OF') return 'CF';
+    if (['P', 'RHP', 'LHP', 'SP', 'RP', 'CL', 'PITCHER', 'PITCHERS'].includes(upper)) return 'P';
+    if (['C', 'CATCHER', 'CATCHERS'].includes(upper)) return 'C';
+    if (['1B', '1ST BASE', 'FIRST BASE', 'FIRST BASEMAN', '1STBASE', 'FIRSTBASE'].includes(upper)) return '1B';
+    if (['2B', '2ND BASE', 'SECOND BASE', 'SECOND BASEMAN', '2NDBASE', 'SECONDBASE'].includes(upper)) return '2B';
+    if (['SS', 'SHORTSTOP', 'SHORT STOP', 'IF', 'INFIELD', 'INFIELDER'].includes(upper)) return 'SS';
+    if (['3B', '3RD BASE', 'THIRD BASE', 'THIRD BASEMAN', '3RDBASE', 'THIRDBASE'].includes(upper)) return '3B';
+    if (['LF', 'LEFT FIELD', 'LEFTFIELD', 'LEFT FIELDER', 'LEFTFIELDER'].includes(upper)) return 'LF';
+    if (['CF', 'CENTER FIELD', 'CENTERFIELD', 'CENTER FIELDER', 'CENTERFIELDER', 'OF', 'OUTFIELD', 'OUTFIELDER'].includes(upper)) return 'CF';
+    if (['RF', 'RIGHT FIELD', 'RIGHTFIELD', 'RIGHT FIELDER', 'RIGHTFIELDER'].includes(upper)) return 'RF';
     return upper;
   };
 
