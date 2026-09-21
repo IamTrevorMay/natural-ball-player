@@ -26,7 +26,7 @@ import Leads from './Leads';
 import UsageDashboard from './UsageDashboard';
 import AthleteOutreach from './AthleteOutreach';
 import NotificationBell, { deletePendingPayment, dismissEventAssignment } from './NotificationBell';
-import { useMainPortalCounts, useWorkPortalCounts } from './useNotifications';
+import { useMainPortalCounts, useWorkPortalCounts, dismissPtVisitNotice, markAllPtVisitNoticesSeen } from './useNotifications';
 
 const PAGE_META = {
   'work-home':                  { title: 'Home',                   description: 'Announcements, pinned notes, and quick links for staff.' },
@@ -159,6 +159,13 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
   // #316: shared with App.js — see deletePendingPayment in NotificationBell.js
   const handleDeletePayment = (purchaseId, productName) => deletePendingPayment(purchaseId, productName, mainCounts.refresh);
 
+  // #402: PT notices render in this shell too (they carry the main-portal
+  // tag), but there is no onOpenAthletePt here — the cross-portal jump carries
+  // a view name and nothing else (onSwitchPortalAndView), so there is no way
+  // to name an athlete from this side and the bell falls back to the main
+  // portal's Manage Athletes list. Dismissal works identically in both shells:
+  // it is one localStorage marker keyed on the signed-in user.
+
   const renderContent = () => {
     switch (currentView) {
       case 'work-home':
@@ -262,6 +269,8 @@ export default function WorkPortalShell({ userId, userRole, userName, userAvatar
             userRole={userRole}
             onDeletePayment={handleDeletePayment}
             onDismissEventAssignment={(eventId) => dismissEventAssignment(eventId, userId, mainCounts.refresh)}
+            onDismissPtNotice={(visitId) => dismissPtVisitNotice(visitId, userId, mainCounts.refresh)}
+            onDismissAllPtNotices={() => markAllPtVisitNoticesSeen(userId, mainCounts.refresh)}
           />
         </div>
 

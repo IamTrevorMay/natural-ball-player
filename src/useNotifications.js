@@ -120,6 +120,172 @@ export function useWhoopNudge(userId, userRole) {
   return needsWhoop;
 }
 
+// ---------------------------------------------------------------------------
+// #402 — tell a coach (and the admins) when a PT entry lands on one of their
+// athletes. Cordell: "Coaches / admins currently don't see or know when a
+// player has input anything into the physical therapy section."
+//
+// WHAT THIS ACTUALLY NOTIFIES ON, WHICH IS NOT QUITE WHAT THE ISSUE SAYS.
+// Measured against the live database 2026-09-21: `pt_visits` INSERT/UPDATE/
+// DELETE are staff-only ("staff insert pt visits" etc., all
+// `get_user_role() = ANY ('admin','coach')`), and a player's only policy is
+// `view own pt visits` (SELECT, `player_id = auth.uid()`). An athlete
+// therefore CANNOT write a PT row today — every one of the 2 rows in the
+// table was created by an admin. So this notifies on "a PT entry was logged
+// for this athlete", by whoever logged it, which is the real event behind the
+// request. If athlete-entered PT is ever added, this picks it up unchanged.
+//
+// SCOPE. PT visits only. The issue's second sentence ("any update on a
+// players profile") would notify on every profile field in the app; that is a
+// separate piece of work and is deliberately not built here.
+//
+// WHY THE READ MARKER IS IN localStorage AND NOT A TABLE. The count itself is
+// derived — it is just `pt_visits` rows newer than a marker, the same shape as
+// unread messages. The only thing that needs storing is the marker. There is
+// no general-purpose per-user "last seen" table in this database (checked:
+// the only *_reads tables are `message_reads`, `work_message_reads` and
+// `facility_event_notice_reads`, all bound to their own feature's FK), so a
+// server-side marker means new DDL — a table, three policies and a GRANT —
+// that cannot be applied from here and would leave the feature dead on
+// arrival until someone ran it. `nbp_book_welcome_seen` (PublicBookingPage)
+// and the ExerciseVideoGaps exclusion list are the existing precedent for a
+// per-browser "seen" marker in this app. The cost is real and is stated in the
+// report: the marker is per browser, so a coach who uses a laptop and a phone
+// dismisses the same notice twice.
+//
+// IT FAILS CLOSED IN EVERY DIRECTION THAT MATTERS. This table holds minors'
+// health data. Every path that cannot positively establish both "this row is
+// new to me" and "this athlete is mine" renders NOTHING: storage unreadable,
+// roster lookup errored, visit query errored — all set an empty list and log.
+// The first run on a browser records the marker and shows nothing at all,
+// rather than dumping the backlog. And the query never asks for `pain_level`,
+// `body_area`, `content` or `exercises` — the clinical columns are not
+// fetched, so they cannot leak into the bell even by a later rendering
+// mistake. Athlete name and date are the whole payload.
+export const PT_NOTICE_LOOKBACK_DAYS = 30;
+const PT_NOTICE_LIMIT = 50;
+const PT_NOTICE_STORAGE_PREFIX = 'nbp.ptVisitNotices.v1.';
+
+function ptNoticeStorageKey(userId) {
+  return `${PT_NOTICE_STORAGE_PREFIX}${userId}`;
+}
+
+// { since: ISO string | null, dismissed: string[], available: boolean }.
+// `available: false` means storage is unusable (private mode, blocked site
+// data). We cannot record a dismissal in that state, so the caller shows
+// nothing rather than nagging a coach with a notice they can never clear.
+export function readPtNoticeMarker(userId) {
+  if (!userId) return { since: null, dismissed: [], available: false };
+  try {
+    const raw = window.localStorage.getItem(ptNoticeStorageKey(userId));
+    if (!raw) return { since: null, dismissed: [], available: true };
+    const parsed = JSON.parse(raw);
+    return {
+      since: typeof parsed?.since === 'string' ? parsed.since : null,
+      dismissed: Array.isArray(parsed?.dismissed) ? parsed.dismissed.filter(v => typeof v === 'string') : [],
+      available: true,
+    };
+  } catch {
+    return { since: null, dismissed: [], available: false };
+  }
+}
+
+export function writePtNoticeMarker(userId, marker) {
+  if (!userId) return false;
+  try {
+    window.localStorage.setItem(ptNoticeStorageKey(userId), JSON.stringify({
+      since: marker?.since || null,
+      dismissed: Array.isArray(marker?.dismissed) ? marker.dismissed : [],
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Dismissing one notice. Quiet on failure for the same reason
+// dismissEventAssignment is: this fires on a plain click-through to the
+// athlete's profile, and an alert() would put a dialog between a coach and the
+// thing they were trying to open. The notice simply comes back next refresh.
+export function dismissPtVisitNotice(visitId, userId, onSuccess) {
+  if (!visitId || !userId) return;
+  const marker = readPtNoticeMarker(userId);
+  if (!marker.available) {
+    console.error('PT notices: browser storage unavailable, cannot record dismissal');
+    return;
+  }
+  if (marker.dismissed.includes(visitId)) { onSuccess?.(); return; }
+  const ok = writePtNoticeMarker(userId, {
+    // A dismissal before the marker has ever been written would otherwise
+    // leave `since` null and re-trigger the first-run path, wiping it.
+    since: marker.since || new Date().toISOString(),
+    dismissed: [...marker.dismissed, visitId],
+  });
+  if (!ok) { console.error('PT notices: could not record dismissal'); return; }
+  onSuccess?.();
+}
+
+// "Mark all as read": move the high-water mark to now and drop the per-id
+// list, which is then redundant — everything it held is now behind `since`.
+export function markAllPtVisitNoticesSeen(userId, onSuccess) {
+  if (!userId) return;
+  const ok = writePtNoticeMarker(userId, { since: new Date().toISOString(), dismissed: [] });
+  if (!ok) { console.error('PT notices: could not mark notices seen'); return; }
+  onSuccess?.();
+}
+
+// Which athletes count as this coach's. Reuses the resolution the app already
+// uses everywhere else (Profile.js `fetchCoachAthletes`): explicit
+// `player_profiles.trainer_id` assignment, plus every player on a team the
+// coach belongs to. Returns a Set, or null if any read failed — null means
+// "we don't know", and the caller shows nothing rather than guessing.
+//
+// The Set is a membership test against `pt_visits.player_id`, so there is
+// deliberately no `users.role = 'player'` filter on the team members: a coach
+// id in the set can only match a row if someone logged a PT visit against a
+// coach, and the extra query to exclude that costs more than it is worth.
+//
+// NOTE the direction of the filtering. The roster is NOT sent to PostgREST as
+// an `.in()` list — measured on the live database, the largest coach roster
+// derives to 642 athletes, which is a ~24KB URL. The visits are fetched first
+// (a small, bounded query) and intersected here in the browser instead.
+async function fetchCoachAthleteIds(coachId) {
+  const { data: assigned, error: assignedError } = await supabase
+    .from('player_profiles')
+    .select('user_id')
+    .eq('trainer_id', coachId);
+  if (assignedError) {
+    console.error('PT notices: could not read assigned athletes (notices stay hidden):', assignedError.message);
+    return null;
+  }
+
+  const { data: myTeams, error: myTeamsError } = await supabase
+    .from('team_members')
+    .select('team_id')
+    .eq('user_id', coachId);
+  if (myTeamsError) {
+    console.error('PT notices: could not read coach teams (notices stay hidden):', myTeamsError.message);
+    return null;
+  }
+
+  const ids = new Set((assigned || []).map(r => r.user_id).filter(Boolean));
+  const teamIds = [...new Set((myTeams || []).map(r => r.team_id).filter(Boolean))];
+  if (teamIds.length > 0) {
+    const { data: members, error: membersError } = await supabase
+      .from('team_members')
+      .select('user_id')
+      .in('team_id', teamIds);
+    if (membersError) {
+      console.error('PT notices: could not read team rosters (notices stay hidden):', membersError.message);
+      return null;
+    }
+    (members || []).forEach(m => {
+      if (m.user_id && m.user_id !== coachId) ids.add(m.user_id);
+    });
+  }
+  return ids;
+}
+
 async function fetchWorkDmThreadIdsForUser(userId) {
   const [asUserA, asUserB] = await Promise.all([
     supabase.from('work_dm_threads').select('id').eq('user_a_id', userId),
@@ -151,12 +317,102 @@ function isFacilityEventLive(ev, todayStr) {
   return true;
 }
 
+// #402 — the unseen PT visits this coach/admin should know about. Returns a
+// (possibly empty) array; it never throws and never returns a partial guess.
+// Every failure path returns [] and logs, because the alternative — showing a
+// coach a notice about an athlete who may not be theirs — is the one outcome
+// that is worse than silence.
+//
+// A coach is not told about a PT entry they wrote themselves, the same way
+// unread messages skip your own (`neq('sender_id', userId)` above).
+async function fetchPtVisitNotices(userId, userRole) {
+  if (!userId || (userRole !== 'coach' && userRole !== 'admin')) return [];
+
+  const marker = readPtNoticeMarker(userId);
+  if (!marker.available) {
+    console.error('PT notices: browser storage unavailable, notices stay hidden');
+    return [];
+  }
+  if (!marker.since) {
+    // First run on this browser. Record "from now on" and show nothing —
+    // otherwise every historical PT entry arrives at once, which is exactly
+    // the un-backfilled flood #408 had to guard against.
+    writePtNoticeMarker(userId, { since: new Date().toISOString(), dismissed: [] });
+    return [];
+  }
+
+  // Clamp the window. A marker from months ago (a coach back off a long
+  // break) must not produce a wall of notices; 30 days is as far back as
+  // anything here is still worth acting on.
+  const sinceMs = Date.parse(marker.since);
+  const floorMs = Math.max(
+    Number.isNaN(sinceMs) ? 0 : sinceMs,
+    Date.now() - PT_NOTICE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  // Clinical columns are deliberately absent from this select — see the
+  // block comment above. created_at (timestamptz) is what "new" is measured
+  // on; visit_date is a `date` and is only ever formatted for display.
+  const { data: visits, error: visitsError } = await supabase
+    .from('pt_visits')
+    .select('id, player_id, visit_date, created_at, created_by')
+    .gt('created_at', new Date(floorMs).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(PT_NOTICE_LIMIT);
+  if (visitsError) {
+    console.error('PT notices: could not read pt_visits (notices stay hidden):', visitsError.message);
+    return [];
+  }
+
+  const rows = visits || [];
+
+  // Keep the dismissed list from growing forever: anything no longer in the
+  // window can never come back, so it no longer needs remembering.
+  const visibleIds = new Set(rows.map(v => v.id));
+  const keptDismissed = marker.dismissed.filter(id => visibleIds.has(id));
+  if (keptDismissed.length !== marker.dismissed.length) {
+    writePtNoticeMarker(userId, { since: marker.since, dismissed: keptDismissed });
+  }
+
+  const dismissed = new Set(keptDismissed);
+  const candidates = rows.filter(v => v.created_by !== userId && !dismissed.has(v.id));
+  if (candidates.length === 0) return [];
+
+  // Admins are facility-wide — Cordell asked for "their coaches and the
+  // admins", and an admin is not scoped to a roster anywhere else in this
+  // app. A coach is scoped to their own athletes.
+  let mine = candidates;
+  if (userRole !== 'admin') {
+    const athleteIds = await fetchCoachAthleteIds(userId);
+    if (!athleteIds) return [];
+    mine = candidates.filter(v => athleteIds.has(v.player_id));
+  }
+  if (mine.length === 0) return [];
+
+  // Simple select, not an embed: a join whose embedded table is RLS-blocked
+  // comes back as `users: null` with a 200, which looks like a nameless
+  // athlete rather than a failure. `mine` is capped by PT_NOTICE_LIMIT, so
+  // this `.in()` list is small.
+  const playerIds = [...new Set(mine.map(v => v.player_id).filter(Boolean))];
+  const { data: people, error: peopleError } = await supabase
+    .from('users')
+    .select('id, full_name')
+    .in('id', playerIds);
+  if (peopleError) {
+    console.error('PT notices: could not read athlete names (notices stay hidden):', peopleError.message);
+    return [];
+  }
+  const nameById = new Map((people || []).map(p => [p.id, p.full_name]));
+  return mine.map(v => ({ ...v, playerName: nameById.get(v.player_id) || null }));
+}
+
 export function useMainPortalCounts(userId, userRole) {
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [pendingSlots, setPendingSlots] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [packageFlags, setPackageFlags] = useState([]);
   const [eventAssignments, setEventAssignments] = useState([]);
+  const [ptVisitNotices, setPtVisitNotices] = useState([]);
 
   const refresh = useCallback(async () => {
     if (!userId) return;
@@ -277,10 +533,22 @@ export function useMainPortalCounts(userId, userRole) {
         console.error('Event assignments error (migration pending?):', e);
         setEventAssignments([]);
       }
+
+      // #402: PT entries logged against this staff member's athletes that
+      // they have not seen yet. fetchPtVisitNotices never throws and returns
+      // [] on every failure; the try/catch is belt-and-braces so a surprise
+      // here cannot take the rest of the bell down with it.
+      try {
+        setPtVisitNotices(await fetchPtVisitNotices(userId, userRole));
+      } catch (e) {
+        console.error('PT notices error (notices stay hidden):', e);
+        setPtVisitNotices([]);
+      }
     } else {
       setPendingSlots([]);
       setPackageFlags([]);
       setEventAssignments([]);
+      setPtVisitNotices([]);
     }
   }, [userId, userRole]);
 
@@ -299,10 +567,22 @@ export function useMainPortalCounts(userId, userRole) {
     // matters as much as INSERT here: the reported case is being added to an
     // event that already exists, which is an UPDATE to coach_ids.
     const ch6 = supabase.channel(`main-notif-facility-events-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'facility_events' }, refresh).subscribe();
-    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); supabase.removeChannel(ch6); };
+    // #402. BE AWARE: this is a no-op today and is here for the day it isn't.
+    // Checked against the live database 2026-09-21 — `supabase_realtime`
+    // publishes only messages, message_reads, slot_reservations,
+    // staff_announcements, staff_hour_entries, staff_schedule_events,
+    // staff_schedule_assignments, staff_time_off_requests, work_messages,
+    // work_message_reads and work_dm_threads. `pt_visits` is not in it (nor
+    // are facility_events, booking_package_flags or store_purchases, so ch4,
+    // ch5 and ch6 above are already dead in the same way). Until someone runs
+    // `ALTER PUBLICATION supabase_realtime ADD TABLE pt_visits;`, a PT notice
+    // lands on the next refresh — a page load, a portal swap, or any message
+    // or reservation event — not the instant it is written.
+    const ch7 = supabase.channel(`main-notif-pt-visits-${userId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'pt_visits' }, refresh).subscribe();
+    return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); supabase.removeChannel(ch6); supabase.removeChannel(ch7); };
   }, [refresh, userId]);
 
-  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, refresh };
+  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, ptVisitNotices, refresh };
 }
 
 // Counts and details for the Work Portal: unread work messages + (admin) pending hours + pending time off.

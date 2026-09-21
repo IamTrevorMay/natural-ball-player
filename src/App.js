@@ -26,7 +26,7 @@ import PublicPortal from './PublicPortal';
 import NotificationBell, { deletePendingPayment, dismissEventAssignment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
-import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge } from './useNotifications';
+import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge, dismissPtVisitNotice, markAllPtVisitNoticesSeen } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, Dumbbell } from 'lucide-react';
 import './App.css';
 
@@ -1105,6 +1105,24 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   // facility_event_notice_reads would reject anything else anyway.
   const handleDismissEventAssignment = (eventId) => dismissEventAssignment(eventId, userId, mainCounts.refresh);
 
+  // #402: open the athlete's profile with the Physical Therapy tab already
+  // selected ('pt' is a Health sub-tab key, Profile.js:582). Routed through
+  // openProfileFrom so it goes past canViewProfileOf and records a Back
+  // target like every other link into a profile — a player never reaches this
+  // (the notice only exists for coach/admin), and the gate is what makes that
+  // structural rather than a promise.
+  const handleOpenAthletePt = (playerId) => {
+    if (!playerId) return;
+    setProfileInitialTab('pt');
+    openProfileFrom(currentView)(playerId);
+  };
+
+  // #402: the read marker is this browser's, keyed on the real signed-in
+  // userId — not effectiveRole's "viewing as" identity, same reasoning as
+  // handleDismissEventAssignment above.
+  const handleDismissPtNotice = (visitId) => dismissPtVisitNotice(visitId, userId, mainCounts.refresh);
+  const handleDismissAllPtNotices = () => markAllPtVisitNoticesSeen(userId, mainCounts.refresh);
+
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
       <WorkPortalShell
@@ -1165,6 +1183,9 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             needsWhoop={needsWhoop}
             onOpenWhoop={handleOpenWhoop}
             onDismissEventAssignment={handleDismissEventAssignment}
+            onOpenAthletePt={handleOpenAthletePt}
+            onDismissPtNotice={handleDismissPtNotice}
+            onDismissAllPtNotices={handleDismissAllPtNotices}
           />
         </div>
 
@@ -1179,7 +1200,12 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
               )
             )}
             {currentView === 'profile' && <Profile userId={userId} userRole={effectiveRole} loggedInUserId={userId} initialTab={profileInitialTab} onInitialTabHandled={() => setProfileInitialTab(null)} onNavigateToProfile={openProfileFrom('profile')} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
-            {currentView === 'profile-view' && viewProfileUserId && canViewProfileOf(viewProfileUserId) && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} onBack={backFromProfile} onNavigateToProfile={effectiveRole === 'player' ? null : (profileUserId) => { setViewProfileUserId(profileUserId); window.scrollTo(0, 0); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
+            {/* #402 added initialTab here. It was already threaded into the own-profile
+                render above; profile-view had no way to deep-link a tab, which is what
+                the PT notice needs (it opens someone else's Physical Therapy tab).
+                Profile clears it through onInitialTabHandled, so the next ordinary
+                visit still lands on General. */}
+            {currentView === 'profile-view' && viewProfileUserId && canViewProfileOf(viewProfileUserId) && <Profile userId={viewProfileUserId} userRole={effectiveRole} loggedInUserId={userId} initialTab={profileInitialTab} onInitialTabHandled={() => setProfileInitialTab(null)} onBack={backFromProfile} onNavigateToProfile={effectiveRole === 'player' ? null : (profileUserId) => { setViewProfileUserId(profileUserId); window.scrollTo(0, 0); }} onNavigateToTeam={(teamId) => { setNavigateTeamId(teamId); setCurrentView('team'); }} />}
             {/* Athletes get the roster read-only: no profile links off teammate/coach cards. */}
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={effectiveRole === 'player' ? null : openProfileFrom('team')} />}
             {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('training-groups')} />}

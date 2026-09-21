@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity, CalendarPlus, X } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity, CalendarPlus, HeartPulse, X } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
 import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
@@ -99,7 +99,7 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment }) {
+export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment, onOpenAthletePt, onDismissPtNotice, onDismissAllPtNotices }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -118,6 +118,8 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     + (mainCounts?.packageFlags?.length || 0)
     // #408: facility events this coach was tagged on and hasn't dismissed.
     + (mainCounts?.eventAssignments?.length || 0)
+    // #402: PT entries logged on this coach/admin's athletes, not yet seen.
+    + (mainCounts?.ptVisitNotices?.length || 0)
     // #224: the WHOOP nudge counts as one. It clears itself the moment the
     // athlete connects — useWhoopNudge only ever sets this when the server
     // says `connected === false`, so there is no state to reset by hand.
@@ -274,6 +276,65 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                 </button>
               </div>
             ))}
+
+            {/* #402: a PT entry was logged for one of this coach's athletes
+                (facility-wide for an admin). The copy is deliberately only a
+                name and a date. `pt_visits` holds minors' health data —
+                pain_level, body_area, content, exercises — and none of it is
+                fetched, let alone rendered; a coach who needs the detail opens
+                the athlete's Physical Therapy tab, where the existing RLS and
+                the existing screen decide what they see. Clicking dismisses
+                and navigates, as with #408; the X dismisses in place. */}
+            {(mainCounts?.ptVisitNotices || []).map(visit => (
+              <div
+                key={`main-pt-visit-${visit.id}`}
+                className="w-full flex items-start hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <button
+                  onClick={() => {
+                    onDismissPtNotice?.(visit.id);
+                    setOpen(false);
+                    if (onOpenAthletePt) onOpenAthletePt(visit.player_id);
+                    else jump('main', 'manage-athletes');
+                  }}
+                  className="flex-1 text-left px-4 py-3 min-w-0"
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className="mt-0.5"><HeartPulse size={16} className="text-rose-500" /></div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-900">
+                        New physical therapy entry for <span className="font-medium">{visit.playerName || 'an athlete'}</span>
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {/* visit_date is a Postgres `date`. fmtDate pins it to
+                            local midnight — never toISOString().slice(0,10),
+                            which prints a day early in the US. */}
+                        {visit.visit_date ? `Visit ${fmtDate(visit.visit_date)}` : 'Open the athlete’s Physical Therapy tab'}
+                      </p>
+                    </div>
+                    {currentPortal !== 'main' && <PortalTag kind="main" />}
+                  </div>
+                </button>
+                <button
+                  onClick={() => onDismissPtNotice?.(visit.id)}
+                  title="Dismiss"
+                  className="px-3 py-3 text-gray-400 hover:text-gray-700 transition shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+
+            {/* An admin sees these facility-wide, so a busy PT week can arrive
+                as a stack. One click clears the lot rather than an X each. */}
+            {(mainCounts?.ptVisitNotices?.length || 0) > 1 && onDismissAllPtNotices && (
+              <button
+                onClick={() => onDismissAllPtNotices()}
+                className="w-full text-right px-4 py-2 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                Dismiss {mainCounts.ptVisitNotices.length} physical therapy notices
+              </button>
+            )}
 
             {/* #341: the whole payment block — notice, checkout link and the
                 admin delete button that hangs off it — is behind
