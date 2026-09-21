@@ -8544,8 +8544,9 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
               <div className="p-2 space-y-2">
                 {daySlots.map((slot, si) => {
                   const slotRes = reservations.filter(r => r.slot_id === slot.id && r.slot_date === dateStr && r.status !== 'cancelled');
+                  const activeSlotRes = slotRes.filter(r => r.status === 'pending' || r.status === 'confirmed');
                   const pubRes = publicBookings.filter(b => b.source_id === slot.id && b.occurrence_date === dateStr);
-                  const isBooked = (slotRes.length + pubRes.length) >= (slot.max_players || 1);
+                  const isBooked = (activeSlotRes.length + pubRes.length) >= (slot.max_players || 1);
                   const userRes = slotRes.find(r => r.player_id === userId);
                   const endTime = getEndTime(slot.start_time, slot.duration_minutes);
                   const isSel = selecting && selectedIds && selectedIds.has(String(slot.id));
@@ -9198,14 +9199,16 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
         if (warning) { setCapWarning(warning); setLoading(false); return; }
       }
       const maxPlayers = slot.max_players || 1;
-      const { count: resCount, error: resErr } = await supabase
-        .from('slot_reservations')
-        .select('id', { count: 'exact', head: true })
-        .eq('slot_id', slot.id)
-        .eq('slot_date', slot.slot_date)
-        .neq('status', 'cancelled');
+      const [{ count: resCount, error: resErr }, { count: pubCount, error: pubErr }] = await Promise.all([
+        supabase.from('slot_reservations').select('id', { count: 'exact', head: true })
+          .eq('slot_id', slot.id).eq('slot_date', slot.slot_date).in('status', ['pending', 'confirmed']),
+        supabase.from('public_bookings').select('id', { count: 'exact', head: true })
+          .eq('source_type', 'training_slot').eq('source_id', slot.id).eq('occurrence_date', slot.slot_date)
+          .in('status', ['pending_payment', 'confirmed']),
+      ]);
       if (resErr) throw resErr;
-      if (resCount >= maxPlayers) { alert('This session is now fully booked.'); setLoading(false); return; }
+      if (pubErr) throw pubErr;
+      if ((resCount + pubCount) >= maxPlayers) { alert('This session is now fully booked.'); setLoading(false); return; }
       const status = slot.auto_confirm ? 'confirmed' : 'pending';
       const { error } = await supabase.from('slot_reservations').insert({
         slot_id: slot.id, player_id: user.id, slot_date: slot.slot_date, status,
