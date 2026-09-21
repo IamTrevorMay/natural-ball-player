@@ -489,7 +489,7 @@ function LoginPage({ onLogin }) {
         <div className="text-center mb-8">
           <img src="/naturals-diamond.png" alt="The Naturals" className="w-24 h-24 mx-auto mb-4 object-contain" />
           <h1 className="text-3xl font-bold text-gray-900">Natural Ball Player</h1>
-          <p className="text-gray-600 mt-2">Training Portal</p>
+          <p className="text-gray-600 mt-2">Magnus Training Platform</p>
         </div>
 
         {showSignup ? (
@@ -2006,7 +2006,7 @@ function AdminDashboard({ userId, userRole, setCurrentView }) {
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold text-gray-900">Dashboard</h2>
-        <p className="text-gray-600 mt-1">Welcome to Natural Ball Player</p>
+        <p className="text-gray-600 mt-1">Welcome to Magnus Training Platform</p>
       </div>
 
       {/* Quick Actions */}
