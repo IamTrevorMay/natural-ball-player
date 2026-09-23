@@ -232,14 +232,16 @@ const noteArea = (n) => n?.area || (n?.category === 'hitting' ? 'hitting' : n?.c
 
 // #370: the sections that live inside the merged "Records" tab, in the order
 // they appear in the sub-nav. `staffOnly` reproduces exactly the role gate the
-// old top-level Notes tab had (roles: ['admin', 'coach']) — players could never
-// see Notes, not even on their own profile, and that has not changed.
+// old top-level Notes tab had (roles: ['admin', 'coach']).
+// #422: Notes gained `playerSelf` — an athlete now sees their OWN notes (read
+// only, and the database withholds Disciplinary rows via the
+// player_notes_select_own policy). Other players' notes stay staff-only.
 // Assessment moved here from the Health tab (#376).
 const RECORDS_SUB_TABS = [
   { key: 'documents', label: 'Documents' },
   { key: 'codes', label: 'Codes' },
   { key: 'goals', label: 'Goals' },
-  { key: 'notes', label: 'Notes', staffOnly: true },
+  { key: 'notes', label: 'Notes', staffOnly: true, playerSelf: true },
   { key: 'assessment', label: 'Assessment' },
   // #376 (second round): moved down from the top-level tab bar. The gates are
   // carried across verbatim.
@@ -386,8 +388,12 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
   // Mental Training pop-up (Major League Mindset).
   const [showMentalTraining, setShowMentalTraining] = useState(false);
 
-  // Only staff may see Notes — the same test the old top-level Notes tab used.
+  // Staff gate — the same test the old top-level Notes tab used. Still the
+  // switch for every staffOnly sub-tab and for WRITING notes.
   const canSeeNotes = userRole === 'admin' || userRole === 'coach';
+  // #422: an athlete may READ their own notes (the DB hides Disciplinary).
+  const canReadOwnNotes = userRole === 'player' && loggedInUserId === userId;
+  const canViewNotes = canSeeNotes || canReadOwnNotes;
   // Fail-closed health sub-tab: filter by role/age; mental is modal-only so never a content key.
   const visibleHealthSubTabs = HEALTH_SUB_TABS.filter(sub => {
     if (sub.staffOnly && !canSeeNotes) return false;
@@ -400,9 +406,9 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     : (visibleHealthSubTabs[0]?.key ?? 'armcare');
   // #376: `playerSelf` is the second half of Practice Stats' old two-part gate —
   // a player may see it, but only on their own profile, exactly as the top-level
-  // tab filter did with `return loggedInUserId === userId`. Notes, Attendance
-  // and anything else marked staffOnly without playerSelf is unreachable for a
-  // player, on their own profile or anyone else's, as before.
+  // tab filter did with `return loggedInUserId === userId`. Notes joined it in
+  // #422. Attendance and anything else marked staffOnly without playerSelf is
+  // unreachable for a player, on their own profile or anyone else's, as before.
   const visibleRecordsSubTabs = RECORDS_SUB_TABS.filter(sub => {
     if (!sub.staffOnly) return true;
     if (canSeeNotes) return true;
@@ -589,19 +595,20 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
     }
   }, [initialTab]);
 
-  // Player notes are staff-only: RECORDS_SUB_TABS hides the Notes section from
-  // players (it is `staffOnly`), so a player's own profile has no business
-  // asking the server for the rows either, even though the database would
-  // refuse them. This gate is the same test the Notes sub-tab uses.
+  // Player notes: staff read everyone's, an athlete reads their own (#422 —
+  // the player_notes_select_own policy withholds Disciplinary rows). Anyone
+  // else has no business asking the server for the rows, even though the
+  // database would refuse them. This gate is the same test the Notes sub-tab
+  // uses.
   // It lives in its own effect, keyed on userRole as well as userId, because
   // userRole arrives from App as null on the first render and only settles once
   // the role lookup comes back. Folding it into the effect above (which re-runs
   // on userId alone) would skip the fetch for admins and coaches and leave the
   // Notes tab permanently empty.
   useEffect(() => {
-    if (userRole === 'admin' || userRole === 'coach') fetchPlayerNotes();
+    if (canViewNotes) fetchPlayerNotes();
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, [userId, userRole]);
+  }, [userId, userRole, loggedInUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1134,7 +1141,23 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
         .eq('player_id', userId)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      setPlayerNotes(data || []);
+      let notes = data || [];
+      // #422: the users SELECT policy is self-or-staff, so for an athlete the
+      // `author` embed comes back null on every note. Fill the coach names in
+      // through the staff-only SECURITY DEFINER RPC instead of showing "Unknown".
+      const missing = [...new Set(notes.filter(n => !n.author?.full_name && n.created_by).map(n => n.created_by))];
+      if (missing.length > 0) {
+        const { data: names, error: nameErr } = await supabase.rpc('staff_display_names', { ids: missing });
+        if (nameErr) {
+          console.error('Error resolving note authors:', nameErr);
+        } else {
+          const byId = Object.fromEntries((names || []).map(r => [r.id, r.full_name]));
+          notes = notes.map(n => (!n.author?.full_name && byId[n.created_by])
+            ? { ...n, author: { full_name: byId[n.created_by] } }
+            : n);
+        }
+      }
+      setPlayerNotes(notes);
     } catch (error) {
       console.error('Error fetching player notes:', error);
     }
@@ -2999,7 +3022,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex flex-wrap gap-2">
-                  {[{ value: 'all', label: 'All' }, ...NOTE_CATEGORIES].map(cat => (
+                  {[{ value: 'all', label: 'All' }, ...NOTE_CATEGORIES]
+                    // #422: athletes never receive Disciplinary rows, so don't offer the chip.
+                    .filter(cat => canSeeNotes || cat.value !== 'disciplinary')
+                    .map(cat => (
                     <button
                       key={cat.value}
                       onClick={() => { setNoteFilter(cat.value); if (cat.value !== 'mechanics') setNoteAreaFilter(''); }}
@@ -3024,13 +3050,15 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     </select>
                   )}
                 </div>
-                <button
-                  onClick={startNewNote}
-                  className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
-                >
-                  <Plus size={14} />
-                  <span>Add Note</span>
-                </button>
+                {canSeeNotes && (
+                  <button
+                    onClick={startNewNote}
+                    className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm"
+                  >
+                    <Plus size={14} />
+                    <span>Add Note</span>
+                  </button>
+                )}
               </div>
 
               {editingNoteId === 'new' && (
@@ -3063,7 +3091,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                     const catInfo = noteCategoryInfo(note.category);
                     const areaLabel = noteArea(note) ? mechanicsAreaLabel(noteArea(note)) : '';
                     const flagged = Array.isArray(note.deficiencies) ? note.deficiencies : [];
-                    const canModify = note.created_by === loggedInUserId || userRole === 'admin';
+                    const canModify = canSeeNotes && (note.created_by === loggedInUserId || userRole === 'admin');
                     return (
                       <div key={note.id} className="border border-gray-200 rounded-lg p-4">
                         {editingNoteId === note.id ? (
