@@ -8,6 +8,7 @@ import EmailComposeModal from './EmailComposeModal';
 import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
 import TrackmanTab from './TrackmanTab';
+import ExternalStatsTab from './ExternalStatsTab';
 import { fmtLocalDate } from './scheduleUtils';
 import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
@@ -48,6 +49,10 @@ const PROFILE_TABS = [
   { key: 'trackman', label: 'Trackman' },
   { key: 'whoop', label: 'Whoop', roles: ['admin', 'coach'] },
   { key: 'hittrax', label: 'Hittrax' },
+  // #421: athlete-uploaded external stats (GameChanger / Perfect Game /
+  // MaxPreps / PBR / other). No role gate: the athlete manages their own,
+  // staff manage anyone's, and RLS on external_stats enforces both.
+  { key: 'stats', label: 'Stats' },
   // #369: Arm Care, Physical Therapy and Assessment used to be three separate
   // tabs. They are now one "Health" tab with a sub-nav inside it. None of the
   // three had a role gate at tab level and none has one now; the gates that
@@ -82,7 +87,7 @@ const PROFILE_TABS = [
 // blank page, and removing the content without removing them would have shown
 // "Coming Soon" over nothing. Both go, together.
 const PROFILE_TABS_WITH_CONTENT = [
-  'general', 'athletes', 'schedule', 'trackman', 'whoop', 'health',
+  'general', 'athletes', 'schedule', 'trackman', 'whoop', 'stats', 'health',
   'recruitment', 'records', 'communication',
 ];
 
@@ -2645,6 +2650,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
 
           {activeProfileTab === 'trackman' && (
             <TrackmanTab userId={userId} />
+          )}
+
+          {activeProfileTab === 'stats' && (
+            <ExternalStatsTab userId={userId} loggedInUserId={loggedInUserId} userRole={userRole} />
           )}
 
           {activeProfileTab === 'records' && activeRecordsSubTab === 'attendance' && (

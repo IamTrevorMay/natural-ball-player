@@ -8,6 +8,7 @@ import { useModalTracking, trackAction } from './usage';
 import { useExerciseVideos } from './exerciseVideos';
 import ExerciseNameInput from './ExerciseNameInput';
 import { metricsByGroup } from './assessmentMetrics';
+import { EXTERNAL_STAT_SOURCES, EXTERNAL_STATS_BUCKET, sourceInfo, sourceName } from './externalStatsSources';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -66,7 +67,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
         </div>
         <div className="p-6">
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
-          {activeTab === 'stats' && <div className="text-gray-600">Coming in next update...</div>}
+          {activeTab === 'stats' && <PlayerStatsTab players={players} onNavigateToProfile={onNavigateToProfile} />}
           {activeTab === 'benchmarks' && <AssessmentsTab players={players} userId={userId} />}
           {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
           {activeTab === 'tasks' && <MyTasksTab userId={userId} />}
@@ -4062,6 +4063,190 @@ function MyTasksTab({ userId }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// #421: Player Stats — staff roster of athlete-uploaded external stats
+// (GameChanger / Perfect Game / MaxPreps / PBR / other). Athletes add
+// entries on their own profile's Stats tab (ExternalStatsTab); this view
+// lists every athlete's uploads, newest first, with search and a source
+// filter, and jumps to the athlete's profile to manage them.
+// =====================================================================
+function PlayerStatsTab({ players, onNavigateToProfile }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [source, setSource] = useState('all');
+  const [showMissing, setShowMissing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('external_stats')
+        .select('*, player:player_id(id, full_name, email)')
+        .order('created_at', { ascending: false });
+      if (cancelled) return;
+      if (error) console.error('Error loading external stats:', error);
+      setRows(data || []);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const openFile = async (row) => {
+    const { data, error } = await supabase.storage.from(EXTERNAL_STATS_BUCKET).createSignedUrl(row.file_url, 600);
+    if (error || !data) { alert('Could not open that file.'); return; }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const q = search.trim().toLowerCase();
+  const filtered = rows.filter(r => {
+    if (source !== 'all' && r.source !== source) return false;
+    if (!q) return true;
+    const hay = [r.player?.full_name, r.player?.email, r.title, r.season, r.notes, sourceName(r)].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+
+  // Group by athlete, keeping the newest-first order of first appearance.
+  const groups = [];
+  const byPlayer = new Map();
+  for (const r of filtered) {
+    const pid = r.player_id;
+    if (!byPlayer.has(pid)) {
+      const g = { player: r.player || { id: pid, full_name: 'Unknown athlete' }, items: [] };
+      byPlayer.set(pid, g);
+      groups.push(g);
+    }
+    byPlayer.get(pid).items.push(r);
+  }
+
+  const withStats = new Set(rows.map(r => r.player_id));
+  const missing = (players || []).filter(p => !withStats.has(p.id) && (!q || (p.full_name || '').toLowerCase().includes(q) || (p.email || '').toLowerCase().includes(q)));
+
+  const fmt = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900">External Stats</h3>
+        <p className="text-sm text-gray-600 mt-0.5">
+          Profile links and stat exports athletes have shared from GameChanger, Perfect Game, MaxPreps, PBR and elsewhere.
+          Athletes add these on their own profile under <span className="font-medium">Stats</span>; you can add or edit on any athlete's profile too.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search athlete, title, season..."
+            className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {[{ value: 'all', label: 'All sources' }, ...EXTERNAL_STAT_SOURCES].map(s => (
+            <button
+              key={s.value}
+              onClick={() => setSource(s.value)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${source === s.value ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+        <span><span className="font-semibold text-gray-900">{withStats.size}</span> athlete{withStats.size === 1 ? '' : 's'} with stats</span>
+        <span><span className="font-semibold text-gray-900">{rows.length}</span> upload{rows.length === 1 ? '' : 's'}</span>
+        <button onClick={() => setShowMissing(v => !v)} className="text-blue-600 hover:underline">
+          {showMissing ? 'Hide' : 'Show'} {missing.length} athlete{missing.length === 1 ? '' : 's'} without stats
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : groups.length === 0 ? (
+        <div className="text-center py-10 border border-dashed border-gray-300 rounded-lg">
+          <FileText size={28} className="mx-auto text-gray-300 mb-2" />
+          <p className="text-sm text-gray-500">{rows.length === 0 ? 'No athlete has uploaded external stats yet.' : 'Nothing matches that search.'}</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {groups.map(g => (
+            <div key={g.player.id} className="border border-gray-200 rounded-lg overflow-hidden">
+              <button
+                onClick={() => onNavigateToProfile && onNavigateToProfile(g.player.id)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition text-left"
+              >
+                <div className="flex items-center space-x-2 min-w-0">
+                  <User size={16} className="text-gray-400 flex-shrink-0" />
+                  <span className="font-medium text-gray-900 truncate">{g.player.full_name}</span>
+                  <span className="text-xs text-gray-500">{g.items.length} upload{g.items.length === 1 ? '' : 's'}</span>
+                </div>
+                <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />
+              </button>
+              <div className="divide-y divide-gray-100">
+                {g.items.map(r => {
+                  const info = sourceInfo(r.source);
+                  return (
+                    <div key={r.id} className="px-4 py-3 flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center flex-wrap gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${info.color}`}>{sourceName(r)}</span>
+                          {r.season && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">{r.season}</span>}
+                          <span className="text-xs text-gray-400">{fmt(r.created_at)}</span>
+                        </div>
+                        {r.title && <p className="text-sm text-gray-900 mt-1">{r.title}</p>}
+                        {r.notes && <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{r.notes}</p>}
+                      </div>
+                      <div className="flex flex-wrap gap-2 flex-shrink-0">
+                        {r.profile_url && (
+                          <a href={r.profile_url} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                            <ExternalLink size={13} /><span>Open profile</span>
+                          </a>
+                        )}
+                        {r.file_url && (
+                          <button onClick={() => openFile(r)} title={r.file_name || 'Download'}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                            <FileText size={13} /><span className="truncate max-w-[180px]">{r.file_name || 'File'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showMissing && (
+        <div className="border border-gray-200 rounded-lg p-4">
+          <h4 className="text-sm font-semibold text-gray-900 mb-2">Athletes without external stats</h4>
+          {missing.length === 0 ? (
+            <p className="text-sm text-gray-500">Everyone has shared something.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {missing.map(p => (
+                <button key={p.id} onClick={() => onNavigateToProfile && onNavigateToProfile(p.id)}
+                  className="px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 text-xs hover:bg-gray-200 transition">
+                  {p.full_name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

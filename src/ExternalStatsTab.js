@@ -1,0 +1,292 @@
+// #421: the "Stats" profile tab. An athlete attaches their external stats —
+// a GameChanger / Perfect Game / MaxPreps / PBR (or other) profile link
+// and/or an exported file — so NBP staff can work from real game numbers
+// during the year. Athletes manage their own entries; admin and coach can
+// manage anyone's (RLS on external_stats + the external-stats bucket). The
+// staff-wide roster of these uploads is Coach Tools → Player Stats.
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from './supabaseClient';
+import { Plus, ExternalLink, FileText, Download, Trash2, Edit2, Upload } from 'lucide-react';
+import { formatUserError } from './errorMessage';
+import {
+  EXTERNAL_STAT_SOURCES, EXTERNAL_STATS_BUCKET, sourceInfo, sourceName, safeFileName, normalizeUrl,
+} from './externalStatsSources';
+
+const emptyDraft = () => ({ source: 'gamechanger', source_label: '', title: '', season: '', profile_url: '', notes: '', file: null });
+
+const when = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+export default function ExternalStatsTab({ userId, loggedInUserId, userRole }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState(emptyDraft());
+  const [saving, setSaving] = useState(false);
+
+  const isStaff = userRole === 'admin' || userRole === 'coach';
+  const isOwn = loggedInUserId === userId;
+  const canManage = isStaff || isOwn;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('external_stats')
+      .select('*')
+      .eq('player_id', userId)
+      .order('created_at', { ascending: false });
+    if (error) console.error('Error loading external stats:', error);
+    setRows(data || []);
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const startAdd = () => { setEditingId(null); setDraft(emptyDraft()); setAdding(true); };
+  const startEdit = (row) => {
+    setAdding(false);
+    setEditingId(row.id);
+    setDraft({
+      source: row.source, source_label: row.source_label || '', title: row.title || '', season: row.season || '',
+      profile_url: row.profile_url || '', notes: row.notes || '', file: null,
+    });
+  };
+  const cancel = () => { setAdding(false); setEditingId(null); setDraft(emptyDraft()); };
+
+  const save = async () => {
+    const url = normalizeUrl(draft.profile_url);
+    if (url === null) { alert('That link does not look like a web address. Please paste the full URL.'); return; }
+    const editing = editingId ? rows.find((r) => r.id === editingId) : null;
+    const keepsFile = editing?.file_url && !draft.file;
+    if (!url && !draft.file && !keepsFile) { alert('Add a link to your profile or attach a file (or both).'); return; }
+    if (draft.source === 'other' && !draft.source_label.trim()) { alert('Tell us where these stats are from.'); return; }
+
+    setSaving(true);
+    let file_url = editing?.file_url || null;
+    let file_name = editing?.file_name || null;
+    if (draft.file) {
+      const safeName = safeFileName(draft.file.name);
+      const path = `${userId}/${Date.now()}-${safeName}`;
+      const { error: upErr } = await supabase.storage.from(EXTERNAL_STATS_BUCKET).upload(path, draft.file, { upsert: false });
+      if (upErr) { setSaving(false); alert('Upload failed: ' + formatUserError(upErr)); return; }
+      // Replacing an existing file: drop the old object once the new one is in.
+      if (editing?.file_url) await supabase.storage.from(EXTERNAL_STATS_BUCKET).remove([editing.file_url]);
+      file_url = path;
+      file_name = safeName;
+    }
+
+    const payload = {
+      source: draft.source,
+      source_label: draft.source === 'other' ? draft.source_label.trim() : null,
+      title: draft.title.trim() || null,
+      season: draft.season.trim() || null,
+      profile_url: url || null,
+      notes: draft.notes.trim() || null,
+      file_url,
+      file_name,
+    };
+    const { error } = editing
+      ? await supabase.from('external_stats').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editing.id)
+      : await supabase.from('external_stats').insert({ ...payload, player_id: userId, uploaded_by: loggedInUserId });
+    setSaving(false);
+    if (error) { alert('Save failed: ' + formatUserError(error)); return; }
+    cancel();
+    load();
+  };
+
+  const remove = async (row) => {
+    if (!window.confirm('Delete this stats entry' + (row.file_url ? ' and its file' : '') + '?')) return;
+    if (row.file_url) await supabase.storage.from(EXTERNAL_STATS_BUCKET).remove([row.file_url]);
+    const { error } = await supabase.from('external_stats').delete().eq('id', row.id);
+    if (error) { alert('Delete failed: ' + formatUserError(error)); return; }
+    load();
+  };
+
+  const openFile = async (row) => {
+    const { data, error } = await supabase.storage.from(EXTERNAL_STATS_BUCKET).createSignedUrl(row.file_url, 600);
+    if (error || !data) { alert('Could not open that file.'); return; }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const form = (
+    <div className="border border-blue-300 rounded-lg p-4 bg-blue-50 space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Source</label>
+          <select
+            value={draft.source}
+            onChange={(e) => setDraft({ ...draft, source: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {EXTERNAL_STAT_SOURCES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+        {draft.source === 'other' && (
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Where from?</label>
+            <input
+              type="text"
+              value={draft.source_label}
+              onChange={(e) => setDraft({ ...draft, source_label: e.target.value })}
+              placeholder="e.g. Prep Baseball, team site"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Title <span className="text-gray-400">(optional)</span></label>
+          <input
+            type="text"
+            value={draft.title}
+            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            placeholder="e.g. Varsity hitting stats"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Season <span className="text-gray-400">(optional)</span></label>
+          <input
+            type="text"
+            value={draft.season}
+            onChange={(e) => setDraft({ ...draft, season: e.target.value })}
+            placeholder="e.g. Spring 2026"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Profile / stats link</label>
+          <input
+            type="url"
+            value={draft.profile_url}
+            onChange={(e) => setDraft({ ...draft, profile_url: e.target.value })}
+            placeholder="https://..."
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Stats file <span className="text-gray-400">(PDF, CSV, spreadsheet or screenshot, up to 25 MB)</span>
+          </label>
+          <input
+            type="file"
+            accept=".pdf,.csv,.xls,.xlsx,.txt,image/png,image/jpeg,image/webp,image/heic"
+            onChange={(e) => setDraft({ ...draft, file: e.target.files?.[0] || null })}
+            className="block w-full text-sm text-gray-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-white file:text-blue-700 file:font-medium file:border file:border-gray-300"
+          />
+          {editingId && rows.find((r) => r.id === editingId)?.file_name && !draft.file && (
+            <p className="text-xs text-gray-500 mt-1">Keeping current file: {rows.find((r) => r.id === editingId).file_name}. Choose a new one to replace it.</p>
+          )}
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Notes <span className="text-gray-400">(optional)</span></label>
+          <textarea
+            value={draft.notes}
+            onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+            rows={2}
+            placeholder="Anything the coaches should know about these numbers"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+      <div className="flex justify-end space-x-2">
+        <button onClick={cancel} className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm">Cancel</button>
+        <button onClick={save} disabled={saving} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+          {saving ? 'Saving...' : editingId ? 'Save changes' : 'Add stats'}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">External Stats</h3>
+          <p className="text-sm text-gray-600 mt-0.5">
+            {isOwn
+              ? 'Link your GameChanger, Perfect Game, MaxPreps or PBR profile, or upload a stats export, so your coaches can train off your real game numbers.'
+              : 'Profile links and stat exports this athlete has shared from GameChanger, Perfect Game, MaxPreps, PBR and elsewhere.'}
+          </p>
+        </div>
+        {canManage && !adding && !editingId && (
+          <button
+            onClick={startAdd}
+            className="bg-blue-600 text-white px-3 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center space-x-1 text-sm min-h-[40px] touch-manipulation"
+          >
+            <Upload size={16} />
+            <span>Upload stats</span>
+          </button>
+        )}
+      </div>
+
+      {adding && form}
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : rows.length === 0 && !adding ? (
+        <div className="text-center py-10 border border-dashed border-gray-300 rounded-lg">
+          <FileText size={28} className="mx-auto text-gray-300 mb-2" />
+          <p className="text-sm text-gray-500">No external stats yet.</p>
+          {isOwn && (
+            <button onClick={startAdd} className="mt-3 inline-flex items-center space-x-1 text-sm text-blue-600 hover:underline">
+              <Plus size={14} /><span>Add your first one</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {rows.map((row) => {
+            const info = sourceInfo(row.source);
+            return (
+              <div key={row.id} className="border border-gray-200 rounded-lg p-4">
+                {editingId === row.id ? form : (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center flex-wrap gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${info.color}`}>{sourceName(row)}</span>
+                          {row.season && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">{row.season}</span>}
+                          <span className="text-xs text-gray-400">Added {when(row.created_at)}</span>
+                        </div>
+                        {row.title && <p className="text-sm font-medium text-gray-900 mt-1.5">{row.title}</p>}
+                        {row.notes && <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{row.notes}</p>}
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {row.profile_url && (
+                            <a
+                              href={row.profile_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 min-h-[32px]"
+                            >
+                              <ExternalLink size={13} /><span>Open profile</span>
+                            </a>
+                          )}
+                          {row.file_url && (
+                            <button
+                              onClick={() => openFile(row)}
+                              className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 min-h-[32px]"
+                              title={row.file_name || 'Download'}
+                            >
+                              <Download size={13} /><span className="truncate max-w-[200px]">{row.file_name || 'Download file'}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {canManage && (
+                        <div className="flex items-center space-x-1 flex-shrink-0">
+                          <button onClick={() => startEdit(row)} className="p-1.5 text-gray-400 hover:text-blue-600 transition" title="Edit"><Edit2 size={15} /></button>
+                          <button onClick={() => remove(row)} className="p-1.5 text-gray-400 hover:text-red-600 transition" title="Delete"><Trash2 size={15} /></button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
