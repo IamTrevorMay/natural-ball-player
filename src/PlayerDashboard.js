@@ -4,8 +4,10 @@ import { fetchUserDirectory } from './userDirectory';
 import {
   Calendar, Bell, BarChart3, Clock, MessageSquare, CheckCircle, AlertTriangle,
   // #417 — the Explore carousel
-  Compass, ChevronLeft, ChevronRight, Target, HeartPulse, Dumbbell, ClipboardCheck, StickyNote,
+  Compass, ChevronLeft, ChevronRight, Target, HeartPulse, Dumbbell, ClipboardCheck, StickyNote, Upload,
 } from 'lucide-react';
+// #421: external stats sources (GameChanger / Perfect Game / MaxPreps / PBR).
+import { sourceInfo, sourceName } from './externalStatsSources';
 // #418: Mechanics area labels are shared with the Notes editor — never re-spelled.
 import { mechanicsAreaLabel } from './mechanicsDeficiencies';
 import WhoopCommunityCodeCard from './WhoopCommunityCode';
@@ -134,12 +136,11 @@ const readRoutines = (userId) => readRows('arm_care_routines', supabase
   .eq('user_id', userId)
   .order('updated_at', { ascending: false }));
 
-// Coach notes about this athlete. NOTE FOR REVIEWERS: `player_notes` SELECT is
-// staff-only on the live DB, and Profile.js hides the Notes sub-tab from
-// players for the same reason. An athlete therefore gets 200 / zero rows here,
-// and this slide drops itself. It only ever appears for a staff account using
-// the "view as player" toggle. Giving athletes their own notes needs an RLS
-// policy change, which is out of scope for a read-only UI fix.
+// Coach notes about this athlete. #422 (Cordell, confirmed again on #417):
+// athletes read their OWN notes via the player_notes_select_own policy, which
+// withholds category = 'disciplinary' server-side — so a disciplinary note can
+// never reach this card whatever the query asks for. Profile.js shows the
+// matching Notes sub-tab (Records → Notes) on the athlete's own profile.
 const readNotes = (userId) => readRows('player_notes', supabase
   .from('player_notes')
   .select('id, category, area, deficiencies, content, created_at')
@@ -213,6 +214,16 @@ const readProgram = async (userId) => {
   return { assignment: chosen, program: byId.get(chosen.program_id) || null };
 };
 
+// #421: external stats the athlete has shared (GameChanger / Perfect Game /
+// MaxPreps / PBR / other) — a profile link and/or an uploaded export. RLS lets
+// the athlete read their own rows.
+const readExternalStats = (userId) => readRows('external_stats', supabase
+  .from('external_stats')
+  .select('id, source, source_label, title, season, profile_url, file_name, created_at')
+  .eq('player_id', userId)
+  .order('created_at', { ascending: false })
+  .limit(4));
+
 // Assessments taken on this athlete. Template names are a second simple select
 // for the same no-embed reason; if that lookup fails the slide still renders
 // with a generic label rather than dropping.
@@ -276,20 +287,21 @@ function ExploreCarousel({ userId, setCurrentView, onOpenProfileTab }) {
     let cancelled = false;
     setSources(null);
     (async () => {
-      const [goals, routines, program, assessments, notes] = await Promise.all([
+      const [goals, routines, program, assessments, notes, externalStats] = await Promise.all([
         readGoals(userId),
         readRoutines(userId),
         readProgram(userId),
         readAssessments(userId),
         readNotes(userId),
+        readExternalStats(userId),
       ]);
       if (cancelled) return;
-      setSources({ goals, routines, program, assessments, notes });
+      setSources({ goals, routines, program, assessments, notes, externalStats });
     })().catch((err) => {
       // Nothing above throws today, but a network failure inside the Promise.all
       // must not take the whole dashboard down with it.
       console.error('Explore carousel: load failed:', err);
-      if (!cancelled) setSources({ goals: null, routines: null, program: null, assessments: null, notes: null });
+      if (!cancelled) setSources({ goals: null, routines: null, program: null, assessments: null, notes: null, externalStats: null });
     });
     return () => { cancelled = true; };
   }, [userId]);
@@ -305,7 +317,7 @@ function ExploreCarousel({ userId, setCurrentView, onOpenProfileTab }) {
   const slides = useMemo(() => {
     if (!sources) return [];
     const out = [];
-    const { goals, routines, program, assessments, notes } = sources;
+    const { goals, routines, program, assessments, notes, externalStats } = sources;
 
     // 1. Goals — user_goals, player-authored.
     if (goals) {
@@ -429,10 +441,9 @@ function ExploreCarousel({ userId, setCurrentView, onOpenProfileTab }) {
       });
     }
 
-    // 5. Coach notes — player_notes. Empty is NOT an empty state here: an
-    // athlete is RLS-blocked from this table, so "no rows" means the slide has
-    // nothing honest to say and drops itself rather than telling them to go
-    // look at a tab they cannot open.
+    // 5. Coach notes — player_notes (own, non-disciplinary — see readNotes).
+    // Empty still drops the slide rather than showing an empty state: the
+    // athlete can't write notes themselves, so "none yet" has no call to action.
     if (notes && notes.length > 0) {
       out.push({
         key: 'notes',
@@ -467,6 +478,36 @@ function ExploreCarousel({ userId, setCurrentView, onOpenProfileTab }) {
                 </li>
               );
             })}
+          </ul>
+        ),
+      });
+    }
+
+    // 6. External stats — external_stats (#421). This one is as much a prompt
+    // as a preview: Cordell wants every athlete's GameChanger / PG / MaxPreps /
+    // PBR numbers on file, so the empty state asks for them.
+    if (externalStats) {
+      out.push({
+        key: 'external_stats',
+        icon: <Upload size={18} className="text-orange-600" />,
+        accent: 'bg-orange-50',
+        title: 'Your game stats',
+        subtitle: 'GameChanger, Perfect Game, MaxPreps, PBR and more',
+        cta: { label: externalStats.length > 0 ? 'Manage your stats' : 'Upload your stats', onClick: () => openProfileTab('stats') },
+        body: externalStats.length === 0 ? (
+          <ExploreEmpty>Share a link to your GameChanger, Perfect Game, MaxPreps or PBR profile, or upload a stats export, so your coaches can train off your real game numbers.</ExploreEmpty>
+        ) : (
+          <ul className="space-y-2">
+            {externalStats.slice(0, 3).map((r) => (
+              <li key={r.id} className="flex items-center justify-between space-x-3">
+                <div className="flex items-center space-x-2 min-w-0">
+                  <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${sourceInfo(r.source).color}`}>{sourceName(r)}</span>
+                  <p className="text-sm text-gray-900 min-w-0 truncate">{r.title || r.season || r.file_name || 'Profile link'}</p>
+                </div>
+                <span className="flex-shrink-0 text-xs text-gray-500">{fmtStampLabel(r.created_at)}</span>
+              </li>
+            ))}
+            {externalStats.length > 3 && <li className="text-xs text-gray-400">+{externalStats.length - 3} more</li>}
           </ul>
         ),
       });
@@ -969,7 +1010,8 @@ export default function PlayerDashboard({ userId, waiverSigned, setCurrentView, 
 
       {/* #417 (Cordell): a rotating "discover" card so the athlete keeps seeing
           the other places in the app that hold their own data — goals, arm
-          care, their program, assessments, coach notes. Sits directly under
+          care, their program, assessments, coach notes (#422), external game
+          stats (#421). Sits directly under
           the player card, high enough to be seen without scrolling. */}
       <ExploreCarousel userId={userId} setCurrentView={setCurrentView} onOpenProfileTab={onOpenProfileTab} />
 
