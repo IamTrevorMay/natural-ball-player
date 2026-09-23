@@ -1173,7 +1173,12 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && (
               effectiveRole === 'player' ? (
-                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} onOpenPracticeStats={() => { setProfileInitialTab('practice_stats'); setCurrentView('profile'); }} />
+                /* #417: onOpenProfileTab is the same deep-link mechanism #278's
+                   onOpenPracticeStats already uses (set profileInitialTab, switch
+                   view) — generalised so the Explore carousel can open Goals,
+                   Arm Care, Assessments and Notes. Profile.js maps sub-tab keys
+                   to their parent tab. */
+                <PlayerDashboard userId={userId} waiverSigned={waiverSigned} setCurrentView={setCurrentView} onOpenPracticeStats={() => { setProfileInitialTab('practice_stats'); setCurrentView('profile'); }} onOpenProfileTab={(tab) => { setProfileInitialTab(tab); setCurrentView('profile'); }} />
               ) : (
                 <AdminDashboard userId={userId} userRole={effectiveRole} setCurrentView={setCurrentView} />
               )
