@@ -869,6 +869,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   // Lets the player dashboard's post-practice stats reminder (#278) open
   // Profile directly on the Practice Stats tab instead of the default one.
   const [profileInitialTab, setProfileInitialTab] = useState(null);
+  // #407: conversation to open when Schedule's "Message coach" jumps to Messages.
+  const [messagesInitialConversationId, setMessagesInitialConversationId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // --- Profile "Back" behaviour -------------------------------------------
@@ -1188,10 +1190,10 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             {/* Athletes get the roster read-only: no profile links off teammate/coach cards. */}
             {currentView === 'team' && <MyTeam userId={userId} userRole={effectiveRole} initialTeamId={navigateTeamId} onNavigateToProfile={effectiveRole === 'player' ? null : openProfileFrom('team')} />}
             {currentView === 'training-groups' && (effectiveRole === 'admin' || effectiveRole === 'coach') && <TrainingGroups userId={userId} userRole={effectiveRole} onNavigateToProfile={openProfileFrom('training-groups')} />}
-            {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} />}
+            {currentView === 'schedule' && <Schedule userId={userId} userRole={effectiveRole} onMessageCoach={(conversationId) => { setMessagesInitialConversationId(conversationId); setCurrentView('messages'); }} />}
             {currentView === 'knowledge' && <KnowledgeBase userId={userId} userRole={effectiveRole} />}
             {currentView === 'fields' && <Fields userId={userId} userRole={effectiveRole} />}
-            {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} />}
+            {currentView === 'messages' && <Messages userId={userId} userRole={effectiveRole} initialConversationId={messagesInitialConversationId} onInitialConversationHandled={() => setMessagesInitialConversationId(null)} />}
             {/* #281: admin only — this screen fronts a 937-address mailing list. Whether
                 coaches should get it too is an open question for Cordell, flagged in the PR. */}
             {currentView === 'email-campaigns' && (userRole === 'admin' || userRole === 'coach') && <EmailCampaigns userId={userId} userRole={userRole} section={emailCampaignSection} onSectionChange={setEmailCampaignSection} />}

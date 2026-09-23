@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { fetchUserDirectory, readDirectory } from './userDirectory';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog, LayoutGrid } from 'lucide-react';
+import { Calendar as CalendarIcon, MessageSquare, ChevronLeft, ChevronRight, Plus, X, Users, User, UserCheck, Dumbbell, Utensils, Trash2, Edit2, Building, MapPin, AlignLeft, Repeat, Clock, Check, ClipboardList, Apple, Search, ExternalLink, CheckSquare, Copy, DollarSign, AlertTriangle, UserCog, LayoutGrid } from 'lucide-react';
 import { fmtLocalDate, expandRecurringEvents, monthWeekRange, buildSlotExceptionMap, getSlotDateException, collectMovedSlots, upsertFacilityException, deleteFacilityOccurrence, deleteFacilitySeries, deleteFacilityFuture, countFacilitySeriesImpact, countSignupsForEvents, facilitySeriesDeleteWarning, DELETE_CANCELLED, placeProgramDays } from './scheduleUtils';
 import CalendarContextMenu from './CalendarContextMenu';
 import RecurrenceDecisionModal from './RecurrenceDecisionModal';
@@ -9,6 +9,7 @@ import LaneMoveDecisionModal from './LaneMoveDecisionModal';
 import CopyToPickerModal from './CopyToPickerModal';
 import ProgramLibrarySidebar, { compareTemplates } from './ProgramLibrarySidebar';
 import CalendarSyncModal from './CalendarSyncModal';
+import MessageCoachModal from './MessageCoachModal'; // #407
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
@@ -337,8 +338,11 @@ async function fetchTeamFacilityEvents(teamIds, rangeStart, rangeEnd, startStr, 
   return [...rows.values()];
 }
 
-export default function Schedule({ userId, userRole }) {
+export default function Schedule({ userId, userRole, onMessageCoach }) {
   const [view, setView] = useState(userRole === 'player' ? 'my-schedule' : 'facility');
+  // #407: { coachId, coachName, date, startTime, title } for the session the
+  // athlete wants to message their coach about; null when the modal is closed.
+  const [messageCoachTarget, setMessageCoachTarget] = useState(null);
   const [myScheduleEvents, setMyScheduleEvents] = useState([]);
   const [showCalendarSync, setShowCalendarSync] = useState(false); // #415
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -2235,6 +2239,7 @@ export default function Schedule({ userId, userRole }) {
                     onConfirm={handleConfirmReservation}
                     onDecline={handleDeclineReservation}
                     onMarkAttendance={handleMarkAttendance}
+                    onMessageCoach={(target) => setMessageCoachTarget(target)}
                   />
                 ) : viewMode === 'lanes' ? (
                   <LaneView
@@ -2602,6 +2607,7 @@ export default function Schedule({ userId, userRole }) {
             event={selectedEvent}
             userRole={userRole}
             userId={userId}
+            onMessageCoach={(target) => setMessageCoachTarget(target)}
             onClose={() => {
               setShowEventDetail(false);
               setSelectedEvent(null);
@@ -2805,10 +2811,28 @@ export default function Schedule({ userId, userRole }) {
                 onConfirm={handleConfirmReservation}
                 onDecline={handleDeclineReservation}
                 onMarkAttendance={handleMarkAttendance}
+                onMessageCoach={(target) => setMessageCoachTarget(target)}
               />
             </div>
           </div>
         </div>
+      )}
+      {/* #407: compose-and-jump "Message coach" for a booked session. onSent
+          closes everything here and hands the conversation id up to App, which
+          switches to Messages with that thread open. */}
+      {messageCoachTarget && (
+        <MessageCoachModal
+          {...messageCoachTarget}
+          userId={userId}
+          onClose={() => setMessageCoachTarget(null)}
+          onSent={(conversationId) => {
+            setMessageCoachTarget(null);
+            setShowEventDetail(false);
+            setSelectedEvent(null);
+            if (onMessageCoach) onMessageCoach(conversationId);
+            else alert('Message sent. Find the reply under Communication → Messages.');
+          }}
+        />
       )}
       {/* #309: read-only detail popup for a Work Portal shift clicked in the
           same band. Deliberately NOT WorkSchedule.js's EventDetailModal —
@@ -5997,7 +6021,7 @@ function WorkoutDetailModal({ event, onClose, onDelete, userRole }) {
 // EVENT DETAIL/EDIT/DELETE MODAL - COMPLETE VERSION
 // ============================================
 
-function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId }) {
+function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId, onMessageCoach }) {
   useModalTracking('EventDetailModal');
   console.log('🔵 EventDetailModal rendered with event:', event);
 
@@ -6412,6 +6436,16 @@ function EventDetailModal({ event, onClose, onDelete, onUpdate, userRole, userId
                   Cancellations close 12 hours before the session. Please contact your coach if you can't make it.
                 </div>
               )
+            )}
+            {/* #407: the athlete can reach the coach about this session directly —
+                the only route before was the sidebar's Messages, with no context. */}
+            {isPlayer && onMessageCoach && event.coach_id && (
+              <button
+                onClick={() => onMessageCoach({ coachId: event.coach_id, coachName: event.coach_name || event.coach?.full_name || '', date: event.event_date, startTime: event.start_time, title: event.notes })}
+                className="w-full border border-teal-600 text-teal-700 py-2.5 rounded-lg font-medium hover:bg-teal-50 transition inline-flex items-center justify-center space-x-2 touch-manipulation"
+              >
+                <MessageSquare size={16} /><span>Message coach about this session</span>
+              </button>
             )}
 
             <div className="space-y-2 pt-2 border-t border-gray-100">
@@ -8478,7 +8512,7 @@ const ATTENDANCE_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled', cls: 'bg-gray-500' },
 ];
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings = [], coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop }) {
+function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings = [], coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop, onMessageCoach }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -8616,6 +8650,16 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                         )
                       )}
                       {userRes && <div className={`mt-1 text-xs font-medium ${userRes.status === 'confirmed' ? 'text-green-600' : userRes.status === 'pending' ? 'text-yellow-600' : 'text-red-600'}`}>{userRes.status === 'confirmed' ? 'Confirmed' : userRes.status === 'pending' ? 'Pending' : 'Declined'}</div>}
+                      {/* #407: a booked athlete can message the coach about this session
+                          (sick, running late, need to reschedule) right from the card. */}
+                      {userRole === 'player' && userRes && (userRes.status === 'pending' || userRes.status === 'confirmed') && onMessageCoach && (
+                        <button
+                          onClick={() => onMessageCoach({ coachId: slot.coach_id || coach.id, coachName: coach.full_name, date: dateStr, startTime: slot.start_time, title: slot.notes })}
+                          className="mt-1.5 w-full border border-teal-600 text-teal-700 py-1 rounded text-xs font-medium hover:bg-teal-50 transition touch-manipulation"
+                        >
+                          Message coach
+                        </button>
+                      )}
                       {!isOwnSlots && isBooked && !userRes && <div className="mt-1 text-xs text-gray-400">Fully booked</div>}
                     </div>
                   );

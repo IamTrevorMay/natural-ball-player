@@ -53,7 +53,7 @@ async function removeParticipantRow(conversationId, memberId) {
   return null;
 }
 
-export default function Messages({ userId, userRole }) {
+export default function Messages({ userId, userRole, initialConversationId, onInitialConversationHandled }) {
   const [conversations, setConversations] = useState([]);
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [selectedChat, setSelectedChat] = useState(null);
@@ -109,6 +109,16 @@ export default function Messages({ userId, userRole }) {
       subscription.unsubscribe();
     };
   }, [userId]);
+
+  // #407: arrived here from "Message coach" on a session — open that thread as
+  // soon as the list has loaded (the conversation was created a moment ago, so
+  // it is in the list). Clear the request so a later visit starts normally.
+  useEffect(() => {
+    if (!initialConversationId || loading) return;
+    fetchConversationDetail(initialConversationId, 'message');
+    if (onInitialConversationHandled) onInitialConversationHandled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialConversationId, loading]);
 
   const fetchConversations = async () => {
     // Step 1: Get my conversation IDs
