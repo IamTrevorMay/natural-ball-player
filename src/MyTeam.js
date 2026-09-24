@@ -1513,7 +1513,11 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
     });
   });
 
-  const hovered = POSITIONS.find(p => p.code === hoveredPosition);
+  // Hover previews a position; a click/tap pins it so the panel also works on
+  // iPad and phones, where there is no hover. Click the same spot to unpin.
+  const [pinnedPosition, setPinnedPosition] = useState(null);
+  const activePosition = hoveredPosition || pinnedPosition;
+  const hovered = POSITIONS.find(p => p.code === activePosition);
   const hoveredRoster = hovered ? rosterByPos[hovered.code] : [];
   const hoveredProspects = hovered ? prospectByPos[hovered.code] : [];
 
@@ -1538,13 +1542,15 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
             {POSITIONS.map(pos => {
               const rCount = rosterByPos[pos.code].length;
               const pCount = prospectByPos[pos.code].length;
-              const isHovered = hoveredPosition === pos.code;
+              const isHovered = activePosition === pos.code;
+              const isPinned = pinnedPosition === pos.code;
               const fillColor = rCount > 0 ? '#2563eb' : pCount > 0 ? '#d97706' : '#9ca3af';
               return (
                 <g
                   key={pos.code}
                   onMouseEnter={() => setHoveredPosition(pos.code)}
                   onMouseLeave={() => setHoveredPosition(null)}
+                  onClick={() => setPinnedPosition(prev => (prev === pos.code ? null : pos.code))}
                   style={{ cursor: 'pointer' }}
                 >
                   <circle
@@ -1552,8 +1558,8 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
                     cy={pos.y}
                     r={isHovered ? 22 : 18}
                     fill={fillColor}
-                    stroke="white"
-                    strokeWidth="2"
+                    stroke={isPinned ? '#111827' : 'white'}
+                    strokeWidth={isPinned ? 3 : 2}
                   />
                   <text
                     x={pos.x}
@@ -1592,7 +1598,12 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
         <div className="flex-1 mt-3 md:mt-0 bg-white border border-gray-200 rounded-lg p-3 min-h-[120px]">
           {hovered ? (
             <>
-              <div className="text-sm font-semibold text-gray-900 mb-2">{hovered.code} — {hovered.label}</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-semibold text-gray-900">{hovered.code} — {hovered.label}</div>
+                {pinnedPosition && (
+                  <button type="button" onClick={() => setPinnedPosition(null)} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+                )}
+              </div>
               {/* On Roster section */}
               <div className="mb-3">
                 <div className="text-xs font-medium text-blue-700 mb-1 flex items-center space-x-1">
@@ -1636,7 +1647,7 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
               </div>
             </>
           ) : (
-            <p className="text-sm text-gray-500 italic">Hover any position on the field to see roster & prospects.</p>
+            <p className="text-sm text-gray-500 italic">Hover or tap any position on the field to see roster & prospects.</p>
           )}
         </div>
       </div>
