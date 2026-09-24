@@ -20,7 +20,7 @@ import { BadgePercent, CreditCard, Dumbbell } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { FACILITY_FINE_ENABLED, FACILITY_FINE_LABEL } from './facilityFineDocument';
-import { MECHANICS_AREAS, mechanicsArea, mechanicsAreaLabel } from './mechanicsDeficiencies';
+import { MECHANICS_AREAS, mechanicsArea, mechanicsAreaLabel, mechanicsDeficiencyInfo } from './mechanicsDeficiencies';
 import RecruitingBoard from './RecruitingBoard';
 
 const EQUIPMENT_FIELDS = [
@@ -3141,10 +3141,24 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                               )}
                             </div>
                             {flagged.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mb-2">
-                                {flagged.map((d, i) => (
-                                  <span key={i} className="px-2 py-0.5 rounded bg-red-50 text-red-700 text-xs border border-red-100">{d}</span>
-                                ))}
+                              <div className="mb-2 space-y-1">
+                                {flagged.map((d, i) => {
+                                  // Drills/link come from src/mechanicsDeficiencies.js, not the row.
+                                  const info = mechanicsDeficiencyInfo(noteArea(note), d);
+                                  return (
+                                    <div key={i} className="text-xs leading-5">
+                                      <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-100">{d}</span>
+                                      {info && (
+                                        <span className="text-gray-600 ml-2">
+                                          {info.drills}
+                                          {info.link?.url && (
+                                            <> · <a href={info.link.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{info.link.label}</a></>
+                                          )}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                             {note.content && <p className="text-sm text-gray-800 whitespace-pre-wrap">{note.content}</p>}
@@ -5582,6 +5596,8 @@ function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
     setCustomDeficiency('');
   };
   const customFlagged = area ? deficiencies.filter(d => !area.deficiencies.includes(d)) : deficiencies;
+  // Drills + source link for every flagged deficiency that's in the PDF list.
+  const flaggedInfo = area ? deficiencies.map(d => mechanicsDeficiencyInfo(area.value, d)).filter(Boolean) : [];
 
   return (
     <div className="space-y-3">
@@ -5650,19 +5666,25 @@ function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
             <span className="text-sm font-semibold text-gray-700">Deficiencies — {area.label}</span>
             <span className="text-xs text-gray-500">{deficiencies.length} flagged</span>
           </div>
-          {area.deficiencies.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {area.deficiencies.map(d => (
-                <button
-                  type="button"
-                  key={d}
-                  onClick={() => toggleDeficiency(d)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${deficiencies.includes(d) ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                >
-                  {d}
-                </button>
-              ))}
-            </div>
+          {area.groups.length > 0 ? (
+            area.groups.map(g => (
+              <div key={g.name} className="mb-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-800 mb-1">{g.name}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {g.items.map(item => (
+                    <button
+                      type="button"
+                      key={item.name}
+                      onClick={() => toggleDeficiency(item.name)}
+                      title={`${item.drills} — ${item.link.label}`}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${deficiencies.includes(item.name) ? 'bg-red-600 text-white border-red-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))
           ) : (
             <p className="text-xs text-gray-500 italic mb-2">The {area.label} deficiency list hasn't been loaded yet — type them in below for now.</p>
           )}
@@ -5673,6 +5695,19 @@ function NoteEditor({ draft, setDraft, addPitch, updatePitch, removePitch }) {
                   {d}
                   <button type="button" onClick={() => toggleDeficiency(d)} className="hover:text-red-200" title="Remove"><X size={12} /></button>
                 </span>
+              ))}
+            </div>
+          )}
+          {flaggedInfo.length > 0 && (
+            <div className="border-t border-amber-200 pt-2 mb-2 space-y-1">
+              <div className="text-xs font-semibold text-gray-700">Corrective drills</div>
+              {flaggedInfo.map(info => (
+                <div key={info.name} className="text-xs text-gray-700">
+                  <span className="font-medium text-red-700">{info.name}:</span> {info.drills}
+                  {info.link?.url && (
+                    <> · <a href={info.link.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{info.link.label}</a></>
+                  )}
+                </div>
               ))}
             </div>
           )}
