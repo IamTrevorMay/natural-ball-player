@@ -6,7 +6,8 @@ import InvoiceReconcile from './InvoiceReconcile';
 import CancellationReview from './CancellationReview';
 import BulkTagSessions from './BulkTagSessions';
 import DuplicateProducts from './DuplicateProducts';
-import { latestExtension, termDaysForBundleQty } from './packageExtension';
+import { latestExtension } from './packageExtension';
+import { manualPaidPatch } from './paidTransition';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -553,10 +554,12 @@ function PurchasesTab({ userRole }) {
       `${r.user?.full_name || 'Unknown'} — ${r.product_name_snapshot}\n${money(r)}\n\n` +
       `Only do this if the money has actually arrived in Square or in person. ` +
       `The athlete will immediately be able to use it.\n\n` +
-      `This does not set an expiry date. If this pack should expire, use "Set expiration" on the athlete's packages afterwards.`
+      `This records TODAY as the paid date. If it is a session pack, its expiry clock starts today. ` +
+      `If the money actually landed earlier, tick the row and use the bulk action with the real date instead — the clock is meant to start the day they paid.`
     );
     if (!ok) return;
-    applyUpdate(r, { status: 'paid', paid_at: new Date().toISOString() }, 'mark this as paid');
+    // #306: same write as the webhook and the bulk action (see paidTransition.js).
+    applyUpdate(r, manualPaidPatch({ row: r, paidAt: new Date() }), 'mark this as paid');
   };
 
   const cancelPurchase = (r) => {
@@ -612,24 +615,15 @@ function PurchasesTab({ userRole }) {
     ? r.created_at
     : new Date(`${paidDate}T12:00:00`).toISOString();
 
-  // What bulk Mark-as-paid writes for one row. Mirrors the Square webhook's
-  // paid transition (square-webhook/index.ts) rather than the single-row
-  // button: status + paid_at, PLUS expires_at from the 5/10/20 rule anchored
-  // to paid_at (Cordell: clock starts the day they paid, June included — an
+  // What bulk Mark-as-paid writes for one row: the shared manual paid
+  // transition (paidTransition.js — status, paid_at, expiry clock from the
+  // 5/10/20 rule anchored to paid_at, remaining_qty seeded from bundle_qty;
+  // Cordell: clock starts the day they paid, June included — an
   // already-expired result is expected and is what the Extend button on the
-  // athlete's packages is for), PLUS remaining_qty seeded from bundle_qty
-  // when it was never set. Neither expiry nor remaining is overwritten if
-  // already present. Provenance goes into metadata so a bulk write is never
-  // indistinguishable from a Square-confirmed payment.
+  // athlete's packages is for), plus provenance in metadata so a bulk write
+  // is never indistinguishable from a Square-confirmed payment.
   const bulkPaidPatch = (r, actorId, stamp) => {
-    const paidAt = paidAtFor(r);
-    const patch = { status: 'paid', paid_at: paidAt };
-    const bundleQty = r.store_products?.bundle_qty ?? null;
-    if (r.expires_at == null) {
-      const days = termDaysForBundleQty(bundleQty);
-      if (days) patch.expires_at = new Date(new Date(paidAt).getTime() + days * 86400000).toISOString();
-    }
-    if (r.remaining_qty == null && bundleQty != null) patch.remaining_qty = bundleQty;
+    const patch = manualPaidPatch({ row: r, paidAt: paidAtFor(r) });
     patch.metadata = {
       ...(r.metadata || {}),
       bulk_reconciled_at: stamp,

@@ -25,9 +25,10 @@
 //   status = 'paid', paid_at = <invoice's paid date if Square gave one, else
 //   now>, and the invoice id merged into metadata. Recording which invoice was
 //   used is the whole difference between an auditable reconciliation and 140
-//   unexplained status changes. It deliberately does NOT set expires_at or
-//   remaining_qty — same omissions as the existing Mark-as-Paid, for the same
-//   reasons documented there (an expiry is set separately, on purpose).
+//   unexplained status changes. Since #306 (2026-09-23) it ALSO starts the
+//   pack's expiry clock from that paid date and seeds remaining_qty, through
+//   the same paidTransition.js helper as every other manual paid path —
+//   Cordell: "we will start their package date from the day they paid".
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabaseClient';
@@ -38,6 +39,7 @@ import {
 import {
   TIER_LABELS, formatCents, invoicePaidAt, purchaseAmountCents, rankCandidates,
 } from './invoiceMatch';
+import { manualPaidPatch } from './paidTransition';
 
 // Each invocation returns at most ~200 invoices and a cursor. 25 round trips is
 // 5,000 invoices — far past anything this facility has produced in a 180-day
@@ -428,7 +430,7 @@ export default function InvoiceReconcile({ userRole }) {
     setEmbedBlocked(false);
     const { data, error } = await supabase
       .from('store_purchases')
-      .select('id, user_id, product_kind, product_name_snapshot, amount_cents, discounted_price_cents, status, metadata, created_at, square_order_id, square_subscription_id, user:users!store_purchases_user_id_fkey(full_name, email)')
+      .select('id, user_id, product_kind, product_name_snapshot, amount_cents, discounted_price_cents, status, metadata, created_at, square_order_id, square_subscription_id, expires_at, remaining_qty, store_products(bundle_qty), user:users!store_purchases_user_id_fkey(full_name, email)')
       .eq('status', 'pending')
       .is('square_subscription_id', null)
       .order('created_at', { ascending: true })
@@ -576,7 +578,7 @@ export default function InvoiceReconcile({ userRole }) {
 
     const { data: fresh, error: freshErr } = await supabase
       .from('store_purchases')
-      .select('id, status, metadata')
+      .select('id, status, metadata, expires_at, remaining_qty, store_products(bundle_qty)')
       .eq('id', row.id)
       .limit(1);
 
@@ -596,14 +598,17 @@ export default function InvoiceReconcile({ userRole }) {
       return false;
     }
 
-    const patch = buildPatch(fresh[0].metadata || {});
+    // buildPatch gets the re-read metadata (so nothing written since the
+    // scan is lost) and the re-read row itself, so the paid transition can
+    // see the CURRENT expires_at / remaining_qty rather than the stale list.
+    const patch = buildPatch(fresh[0].metadata || {}, fresh[0]);
 
     const { data, error } = await supabase
       .from('store_purchases')
       .update(patch)
       .eq('id', row.id)
       .eq('status', 'pending')
-      .select('id, user_id, product_kind, product_name_snapshot, amount_cents, discounted_price_cents, status, metadata, created_at, square_order_id, square_subscription_id, user:users!store_purchases_user_id_fkey(full_name, email)');
+      .select('id, user_id, product_kind, product_name_snapshot, amount_cents, discounted_price_cents, status, metadata, created_at, square_order_id, square_subscription_id, expires_at, remaining_qty, store_products(bundle_qty), user:users!store_purchases_user_id_fkey(full_name, email)');
 
     setBusyId(null);
 
@@ -639,12 +644,12 @@ export default function InvoiceReconcile({ userRole }) {
     const knownPaidAt = invoicePaidAt(inv);
     const nowIso = new Date().toISOString();
 
-    const ok = await applyPatch(row, (existing) => ({
-      status: 'paid',
+    const ok = await applyPatch(row, (existing, freshRow) => ({
       // Square gives no payment date on an invoice; when it is unknown we
       // record now and say which of the two it was, rather than inventing a
-      // settlement date that reads like fact later.
-      paid_at: knownPaidAt || nowIso,
+      // settlement date that reads like fact later. The expiry clock and
+      // remaining_qty come with it (#306, paidTransition.js).
+      ...manualPaidPatch({ row: freshRow, paidAt: knownPaidAt || nowIso }),
       metadata: {
         ...existing,
         reconciled_invoice_id: inv?.id ?? null,

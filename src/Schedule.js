@@ -13,7 +13,7 @@ import MessageCoachModal from './MessageCoachModal'; // #407
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
-import { capsForPurchases, isLiftingCoach, weekRangeForDate, capWarningMessage, weeklyFrequencyFromName } from './bookingCaps';
+import { allowancesForPurchases, sessionClass, weekRangeForDate, capWarningMessage, weeklyFrequencyFromName, SESSION_SC } from './bookingCaps';
 import { CreateUserModal } from './AdminSettings';
 import { familyKey, familyLabel, sameFamily } from './productFamily';
 import { applySessionUsage } from './sessionUsage';
@@ -88,7 +88,7 @@ function getWeekRangeLabel(date) {
 //
 // Facility-wide by design: every reservation the player holds that week counts,
 // whichever coach or lane it belongs to.
-async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slotCoach, slotCoachId, excludeReservationId, purchases }) {
+async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slotId, slotSessionType, slotCoach, slotCoachId, excludeReservationId, purchases }) {
   try {
     if (!playerId || !slotDate) return null;
 
@@ -106,19 +106,25 @@ async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slo
         .or(`expires_at.is.null,expires_at.gt.${nowIso}`);
       owned = data || [];
     }
-    const caps = capsForPurchases(owned);
+    // #306: per-package allowances (two pots, S&C and skills) with the #276
+    // name-parse as the fallback. Null = the player holds nothing = silence.
+    const allowances = allowancesForPurchases(owned);
+    if (!allowances) return null;
 
-    // Is the session being booked a lifting session? (Its coach carries the
-    // Strength & Conditioning skill tag.)
+    // Which class is the session being booked? Its own session_type first;
+    // failing that, the coach's S&C skill tag (the pre-#306 rule). The coach
+    // row also supplies the name for the coach-only allowance.
     let coach = slotCoach;
-    if ((!coach || !Array.isArray(coach.skills)) && slotCoachId) {
-      const { data } = await readDirectory('staff_directory', (t) => supabase.from(t).select('id, skills').eq('id', slotCoachId).maybeSingle());
-      coach = data || coach;
+    if ((!coach || !Array.isArray(coach.skills) || !coach.full_name) && slotCoachId) {
+      const { data } = await readDirectory('staff_directory', (t) => supabase.from(t).select('id, full_name, skills').eq('id', slotCoachId).maybeSingle());
+      if (data) coach = { ...(coach || {}), ...data };
     }
-    const bookingIsLifting = isLiftingCoach(coach);
-
-    // Nothing to say if the relevant cap is unknown — bail before querying.
-    if (bookingIsLifting ? caps.liftingCap === null : caps.nonLiftingCap === null) return null;
+    let sessionType = slotSessionType;
+    if (sessionType === undefined && slotId) {
+      const { data } = await supabase.from('training_slots').select('session_type').eq('id', slotId).maybeSingle();
+      sessionType = data?.session_type ?? null;
+    }
+    const bookingClass = sessionClass({ session_type: sessionType }, coach);
 
     // Everything already on the player's schedule that Sun–Sat week. Only
     // live bookings count: 'cancelled' is excluded because the athlete gave the
@@ -127,7 +133,7 @@ async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slo
     const { startStr, endStr } = weekRangeForDate(slotDate);
     const { data: existing, error } = await supabase
       .from('slot_reservations')
-      .select('id, slot_date, status, training_slots(coach_id)')
+      .select('id, slot_date, status, training_slots(coach_id, session_type)')
       .eq('player_id', playerId)
       .gte('slot_date', startStr)
       .lte('slot_date', endStr)
@@ -141,14 +147,13 @@ async function checkWeeklyBookingCap({ playerId, playerName, self, slotDate, slo
       const { data: coachRows } = await readDirectory('staff_directory', (t) => supabase.from(t).select('id, skills').in('id', coachIds));
       (coachRows || []).forEach(c => { skillsByCoach[c.id] = c.skills; });
     }
-    let liftingCount = 0;
-    let nonLiftingCount = 0;
+    const counts = { sc: 0, skills: 0 };
     rows.forEach(r => {
-      if (isLiftingCoach({ skills: skillsByCoach[r.training_slots?.coach_id] })) liftingCount++;
-      else nonLiftingCount++;
+      const cls = sessionClass(r.training_slots, { skills: skillsByCoach[r.training_slots?.coach_id] });
+      if (cls === SESSION_SC) counts.sc++; else counts.skills++;
     });
 
-    return capWarningMessage({ playerName, self, caps, liftingCount, nonLiftingCount, bookingIsLifting });
+    return capWarningMessage({ playerName, self, allowances, counts, bookingClass, bookingCoachName: coach?.full_name });
   } catch (_) {
     return null; // never let the cap check break a booking
   }
@@ -930,6 +935,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
         is_subscription_session: template.is_subscription_session,
         store_product_id: template.store_product_id ?? null,
         store_product_ids: template.store_product_ids,
+        session_type: template.session_type ?? null,
         max_players: template.max_players,
         auto_confirm: template.auto_confirm,
         notes: template.notes ?? null,
@@ -991,6 +997,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
           playerId: res.player_id,
           playerName: res.users?.full_name,
           slotDate: res.slot_date,
+          slotId: res.slot_id,
           slotCoach: selectedCoach,
           // Don't count the request being confirmed as one of the sessions
           // already booked — it is the one being added.
@@ -1105,6 +1112,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
               is_subscription_session: master.is_subscription_session,
               store_product_id: master.store_product_id ?? null,
               store_product_ids: master.store_product_ids,
+              session_type: master.session_type ?? null,
               max_players: master.max_players,
               auto_confirm: master.auto_confirm,
               notes: master.notes ?? null,
@@ -8779,6 +8787,9 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   // Subscription session (#244): tie the slot to a Square subscription/package
   // product so subscribers can join. Products come from store_products.
   const [isSubscriptionSession, setIsSubscriptionSession] = useState(existingSlot?.is_subscription_session || false);
+  // #306: 'sc' | 'skills' | '' (not set → the weekly-allowance check falls
+  // back to the coach's S&C skill tag, as before the column existed).
+  const [sessionType, setSessionType] = useState(existingSlot?.session_type || '');
   // #249: a session can accept MULTIPLE subscription/package plans, stored as a
   // uuid[] (mirrors team_ids). store_product_id stays as primary/legacy = ids[0].
   const [storeProductIds, setStoreProductIds] = useState(
@@ -8869,6 +8880,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
       // #249: accept N plans. Keep store_product_id = ids[0] as primary/legacy.
       store_product_ids: isSubscriptionSession ? storeProductIds : [],
       store_product_id: isSubscriptionSession ? (storeProductIds[0] || null) : null,
+      session_type: sessionType || null,
     };
     setLoading(true);
     try {
@@ -8985,6 +8997,16 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
                 <p className="text-xs text-gray-400 mt-1.5">Outside customers can book this session on the public /book page (up to Max Players spots). Enter <span className="font-medium">0</span> for a free session — guests are confirmed instantly with no payment.</p>
               </div>
             )}
+          </div>
+          {/* #306: which weekly allowance pot this session draws from. */}
+          <div className="border border-gray-200 rounded-lg p-3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Session type</label>
+            <select value={sessionType} onChange={(e) => setSessionType(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+              <option value="">Not set — counted by the coach&apos;s skills</option>
+              <option value="sc">Strength &amp; Conditioning</option>
+              <option value="skills">Skills (hitting, pitching, fielding, catching, base running, throwing)</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1.5">Weekly package allowances count S&amp;C and skills sessions separately (e.g. &ldquo;4 S&amp;C + 1 skills a week&rdquo;).</p>
           </div>
           <div className="border border-gray-200 rounded-lg p-3">
             <label className="flex items-center space-x-2 text-sm font-medium text-gray-700">
@@ -9288,6 +9310,8 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           playerId: user.id,
           self: true,
           slotDate: slot.slot_date,
+          slotId: slot.id,
+          slotSessionType: slot.session_type ?? null,
           slotCoach: coach,
           slotCoachId: slot.coach_id,
           purchases: ownedPurchases,

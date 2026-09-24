@@ -17,6 +17,7 @@
 // fork/nick/sc-coach-skill and reused here so there is exactly one spelling
 // of the tag in the codebase).
 import { SC_SKILL } from './skillOptions';
+import { familyKey } from './productFamily';
 
 // Every lifting package gets the same lifting allowance, per the issue.
 export const LIFTING_WEEKLY_CAP = 4;
@@ -80,24 +81,8 @@ export function weeklyNonLiftingCap(productName) {
 export const purchaseName = (p) =>
   p?.product_name_snapshot || p?.name || p?.store_products?.name || p?.product_name || '';
 
-// Effective caps for everything a player owns. A player holding two packages is
-// not punished for it — we take the MOST GENEROUS cap across their purchases.
-// `nonLiftingCap: null` means no purchase they hold names a frequency, so the
-// caller must not warn about non-lifting sessions at all.
-export function capsForPurchases(purchases) {
-  let nonLiftingCap = null;
-  (purchases || []).forEach((p) => {
-    const cap = weeklyNonLiftingCap(purchaseName(p));
-    if (cap === null) return;
-    nonLiftingCap = nonLiftingCap === null ? cap : Math.max(nonLiftingCap, cap);
-  });
-  return {
-    nonLiftingCap,
-    // The lifting allowance is a flat 4 for every package, so it is only
-    // "unknown" when the player holds no package at all.
-    liftingCap: (purchases || []).length > 0 ? LIFTING_WEEKLY_CAP : null,
-  };
-}
+// (capsForPurchases — the pre-#306 aggregate — now lives below the allowance
+// table as a thin wrapper over allowancesForPurchases.)
 
 // A session is a lifting session when its coach carries the S&C skill tag.
 //
@@ -130,22 +115,149 @@ export function weekRangeForDate(slotDate) {
   return { startStr: fmtDate(start), endStr: fmtDate(end) };
 }
 
+// ---------------------------------------------------------------------------
+// #306 — per-package weekly allowances, from Cordell (2026-08-25).
+//
+// Cordell described the six packages that have no number in their name as
+// allowances that refill every week, not buckets that empty:
+//
+//   NBP College Training                         4 S&C + 1 skills a week
+//   Adam Cimber Submarine Pitching & Lifting     2 a week, S&C or skills
+//   NBP 1-2x A Week Training                     2 S&C + 1 skills a week
+//   NBP Once A Week Training                     1 S&C + 1 skills a week
+//   Submarine Academy                            2 a week, S&C or skills
+//   Trevor May Pitching Academy                  1 a week, with Trevor May only
+//
+// Two separate pots where he gave two numbers — a 5th lift can't be taken
+// in place of the skills session — and unused weeks don't bank.
+//
+// Keyed by product family (productFamily.familyKey: the name with Square's
+// "(MONTHLY price)" suffix stripped, lowercased), so every billing-frequency
+// twin of a package resolves to one row. "NBP 1-2x A Week Program" is the
+// subscription twin of "NBP 1-2x A Week Training" (same words, the version
+// 9 athletes actually hold) and is given the same allowance; that mapping
+// is an inference from the name and is called out on #306 for Cordell.
+//
+// Anything not in this table falls back to the name-parsing rule above
+// (#276): "2x a week" in the name -> 2 skills a week, and every package
+// carries the flat S&C allowance of LIFTING_WEEKLY_CAP.
+//
+//   { sc, skills }            two pots
+//   { any }                   one pot, either kind counts against it
+//   coachOnly: [names]        lowercased full names the allowance is valid
+//                             with; booking anyone else warns
+export const PACKAGE_ALLOWANCES = {
+  'nbp college training':                                     { sc: 4, skills: 1 },
+  'adam cimber submarine pitching & lifting program monthly': { any: 2 },
+  'nbp 1-2x a week training':                                 { sc: 2, skills: 1 },
+  'nbp 1-2x a week program':                                  { sc: 2, skills: 1 },
+  'nbp once a week training':                                 { sc: 1, skills: 1 },
+  'submarine academy':                                        { any: 2 },
+  'trevor may pitching academy':                              { any: 1, coachOnly: ['trevor may'] },
+};
+
+// Session classes. A slot says which it is via training_slots.session_type
+// (set by the coach in CreateSlotPanel); when it doesn't, the coach's S&C
+// skill tag decides, as it did before #306's column existed.
+export const SESSION_SC = 'sc';
+export const SESSION_SKILLS = 'skills';
+
+export function sessionClass(slot, coach) {
+  if (slot?.session_type === SESSION_SC) return SESSION_SC;
+  if (slot?.session_type === SESSION_SKILLS) return SESSION_SKILLS;
+  return isLiftingCoach(coach) ? SESSION_SC : SESSION_SKILLS;
+}
+
+// The allowance one product name grants, or null when neither the table nor
+// the name says anything.
+export function allowanceForName(productName) {
+  const key = familyKey(productName);
+  if (key && PACKAGE_ALLOWANCES[key]) return PACKAGE_ALLOWANCES[key];
+  const skills = weeklyNonLiftingCap(productName);
+  if (skills === null) return null;
+  return { sc: LIFTING_WEEKLY_CAP, skills };
+}
+
+// Effective allowance for everything a player owns — the MOST GENEROUS value
+// per pot across their purchases, so holding two packages never punishes
+// anyone. Returns null only when the player holds nothing at all.
+//
+// Parity with the pre-#306 rule: a player who holds SOME package whose name
+// states no frequency still gets the flat S&C allowance (the old code gave
+// liftingCap = 4 to anyone with a purchase) and no skills cap (silence).
+//
+// coachOnly is set only when EVERY allowance-bearing package the player
+// holds is coach-restricted — one general package alongside the Trevor May
+// academy means they may book anyone.
+export function allowancesForPurchases(purchases) {
+  const list = purchases || [];
+  if (list.length === 0) return null;
+  const out = {};
+  let bearing = 0;
+  let restricted = 0;
+  let coachOnly = [];
+  list.forEach((p) => {
+    const a = allowanceForName(purchaseName(p));
+    if (!a) return;
+    bearing += 1;
+    ['sc', 'skills', 'any'].forEach((k) => {
+      if (a[k] == null) return;
+      out[k] = out[k] == null ? a[k] : Math.max(out[k], a[k]);
+    });
+    if (a.coachOnly) { restricted += 1; coachOnly = [...new Set([...coachOnly, ...a.coachOnly])]; }
+  });
+  if (out.sc == null && out.any == null) out.sc = LIFTING_WEEKLY_CAP;
+  out.coachOnly = bearing > 0 && restricted === bearing ? coachOnly : null;
+  return out;
+}
+
+// Legacy shape, still used by AdminSettings' package overview.
+export function capsForPurchases(purchases) {
+  const a = allowancesForPurchases(purchases);
+  return {
+    nonLiftingCap: a ? (a.skills ?? a.any ?? null) : null,
+    liftingCap: a ? (a.sc ?? a.any ?? null) : null,
+  };
+}
+
 // The warning text for booking one more session, or null when nothing is wrong
 // (or when we simply do not know enough to say anything).
 //
-// `liftingCount` / `nonLiftingCount` are the player's EXISTING bookings in that
-// week, not counting the one being booked now.
-// `self: true` addresses the athlete directly (the player booking themselves);
-// otherwise the message is about them, for a coach reading it.
-export function capWarningMessage({ playerName, self, caps, liftingCount, nonLiftingCount, bookingIsLifting }) {
-  const cap = bookingIsLifting ? caps?.liftingCap : caps?.nonLiftingCap;
-  // Unknown cap -> silence. Never guess a limit the package name did not state.
-  if (cap === null || cap === undefined) return null;
-  const already = bookingIsLifting ? liftingCount : nonLiftingCount;
-  if (already + 1 <= cap) return null;
-  const kind = bookingIsLifting ? 'lifting' : 'non-lifting';
+// `counts` = { sc, skills }: the player's EXISTING bookings that week, not
+// counting the one being booked now. `bookingClass` is the class of the
+// session being booked. `bookingCoachName` is that session's coach, for the
+// coach-only rule. `self: true` addresses the athlete directly; otherwise the
+// message is about them, for a coach reading it.
+export function capWarningMessage({ playerName, self, allowances, counts, bookingClass, bookingCoachName }) {
+  if (!allowances) return null;
   const subject = self ? 'You' : (playerName || 'This athlete');
-  const verb = self ? 'already have' : 'already has';
   const whose = self ? 'your package' : 'their package';
-  return `${subject} ${verb} ${already} ${kind} session${already === 1 ? '' : 's'} booked this week; ${whose} allows ${cap}.`;
+
+  if (allowances.coachOnly && bookingCoachName) {
+    const name = String(bookingCoachName).trim().toLowerCase();
+    if (!allowances.coachOnly.includes(name)) {
+      const names = allowances.coachOnly.map((n) => n.replace(/\b\w/g, (c) => c.toUpperCase())).join(' or ');
+      return `${subject} ${self ? 'hold' : 'holds'} a package that covers sessions with ${names} only — this session is with ${bookingCoachName}.`;
+    }
+  }
+
+  const sc = counts?.sc || 0;
+  const skills = counts?.skills || 0;
+  let cap;
+  let already;
+  let kind;
+  if (allowances.any != null && allowances[bookingClass] == null) {
+    cap = allowances.any;
+    already = sc + skills;
+    kind = '';
+  } else {
+    cap = allowances[bookingClass];
+    already = bookingClass === SESSION_SC ? sc : skills;
+    kind = bookingClass === SESSION_SC ? 'strength & conditioning ' : 'skills ';
+  }
+  // Unknown cap -> silence. Never guess a limit nobody stated.
+  if (cap === null || cap === undefined) return null;
+  if (already + 1 <= cap) return null;
+  const verb = self ? 'already have' : 'already has';
+  return `${subject} ${verb} ${already} ${kind}session${already === 1 ? '' : 's'} booked this week; ${whose} allows ${cap}.`;
 }

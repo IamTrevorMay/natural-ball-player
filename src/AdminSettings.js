@@ -4,7 +4,7 @@ import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, Ch
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS, SC_SKILL } from './skillOptions';
-import { weeklyNonLiftingCap, stripFrequencySuffix, LIFTING_WEEKLY_CAP } from './bookingCaps';
+import { allowanceForName, stripFrequencySuffix, LIFTING_WEEKLY_CAP } from './bookingCaps';
 import BulkTagFacilityEventTeams from './BulkTagFacilityEventTeams';
 
 async function deleteAuthUser(userId) {
@@ -639,7 +639,8 @@ function WeeklyBookingCapsPanel({ coaches }) {
       (data || []).forEach(p => {
         const family = stripFrequencySuffix(p.name);
         const key = family.toLowerCase();
-        if (!byFamily[key]) byFamily[key] = { family, cap: weeklyNonLiftingCap(p.name), variants: 0 };
+        // #306: table-first (Cordell's six named programmes), name-parse second.
+        if (!byFamily[key]) byFamily[key] = { family, allowance: allowanceForName(p.name), variants: 0 };
         byFamily[key].variants++;
       });
       setRows(Object.values(byFamily).sort((a, b) => a.family.localeCompare(b.family)));
@@ -657,15 +658,15 @@ function WeeklyBookingCapsPanel({ coaches }) {
       >
         <div>
           <div className="font-semibold text-gray-900 text-sm">Weekly booking caps by package</div>
-          <div className="text-xs text-gray-500">How many non-lifting sessions a week each package allows (read-only)</div>
+          <div className="text-xs text-gray-500">How many S&amp;C and skills sessions a week each package allows (read-only)</div>
         </div>
         <ChevronRight size={18} className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
         <div className="border-t border-gray-200 p-4 space-y-3">
           <div className="text-xs text-gray-600 space-y-1">
-            <p>A package named <span className="font-medium">one time a week</span> allows 1 non-lifting session a week; a package named <span className="font-medium">2–4 times a week</span> allows 2. Every package allows up to {LIFTING_WEEKLY_CAP} lifting sessions a week.</p>
-            <p>A session counts as <span className="font-medium">lifting</span> when its coach carries the “{SC_SKILL}” skill tag. Packages whose name says nothing about frequency show “—”: no cap is applied and no warning is shown.</p>
+            <p>Six programmes have allowances Cordell set by hand (e.g. NBP College Training: 4 S&amp;C + 1 skills a week; Trevor May Pitching Academy: 1 a week, with Trevor May only). For everything else, a package named <span className="font-medium">one time a week</span> allows 1 skills session a week, one named <span className="font-medium">2–4 times a week</span> allows 2, and every package allows up to {LIFTING_WEEKLY_CAP} S&amp;C sessions a week.</p>
+            <p>A session counts as <span className="font-medium">S&amp;C</span> when the coach set its <span className="font-medium">Session type</span> to Strength &amp; Conditioning when creating it; when that is not set, it counts as S&amp;C if the coach carries the “{SC_SKILL}” skill tag. Packages showing “—” have no stated allowance: no cap is applied and no warning is shown.</p>
             <p className="text-gray-500">Going over the cap only warns the athlete or coach — it never blocks the booking.</p>
           </div>
 
@@ -683,8 +684,8 @@ function WeeklyBookingCapsPanel({ coaches }) {
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 border-b border-gray-200">
                     <th className="py-2 pr-3 font-medium">Package</th>
-                    <th className="py-2 pr-3 font-medium whitespace-nowrap">Non-lifting / week</th>
-                    <th className="py-2 font-medium whitespace-nowrap">Lifting / week</th>
+                    <th className="py-2 pr-3 font-medium whitespace-nowrap">Skills / week</th>
+                    <th className="py-2 font-medium whitespace-nowrap">S&amp;C / week</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -693,13 +694,21 @@ function WeeklyBookingCapsPanel({ coaches }) {
                       <td className="py-2 pr-3 text-gray-900">
                         {r.family}
                         {r.variants > 1 && <span className="ml-2 text-[11px] text-gray-400">{r.variants} Square listings</span>}
+                        {r.allowance?.coachOnly && <span className="ml-2 text-[11px] text-amber-700">with {r.allowance.coachOnly.map(n => n.replace(/\b\w/g, c => c.toUpperCase())).join(' or ')} only</span>}
                       </td>
-                      <td className="py-2 pr-3">
-                        {r.cap === null
-                          ? <span className="text-gray-400">—</span>
-                          : <span className="font-medium text-gray-900">{r.cap}</span>}
-                      </td>
-                      <td className="py-2 text-gray-900">{LIFTING_WEEKLY_CAP}</td>
+                      {r.allowance == null ? (
+                        <>
+                          <td className="py-2 pr-3"><span className="text-gray-400">—</span></td>
+                          <td className="py-2"><span className="text-gray-400">—</span></td>
+                        </>
+                      ) : r.allowance.any != null ? (
+                        <td className="py-2" colSpan={2}><span className="font-medium text-gray-900">{r.allowance.any}</span> <span className="text-gray-500">a week, either kind</span></td>
+                      ) : (
+                        <>
+                          <td className="py-2 pr-3"><span className="font-medium text-gray-900">{r.allowance.skills ?? '—'}</span></td>
+                          <td className="py-2 text-gray-900">{r.allowance.sc ?? '—'}</td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
