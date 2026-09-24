@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { parsePositions } from './positions';
 import { supabase } from './supabaseClient';
 import { fetchUserDirectory, readDirectory } from './userDirectory';
 import { Users, Calendar, MessageSquare, User, Mail, Phone, Star, Plus, Trash2, Edit2, Save, X, UserPlus, Search, Radio, CheckCircle } from 'lucide-react';
@@ -1494,37 +1495,21 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
     { code: 'RF', label: 'Right Field',  x: 325, y: 70  },
   ];
 
-  const normalizePosition = (pos) => {
-    if (!pos) return null;
-    const upper = pos.toUpperCase().trim();
-    if (['P', 'RHP', 'LHP', 'SP', 'RP', 'CL', 'PITCHER', 'PITCHERS'].includes(upper)) return 'P';
-    if (['C', 'CATCHER', 'CATCHERS'].includes(upper)) return 'C';
-    if (['1B', '1ST BASE', 'FIRST BASE', 'FIRST BASEMAN', '1STBASE', 'FIRSTBASE'].includes(upper)) return '1B';
-    if (['2B', '2ND BASE', 'SECOND BASE', 'SECOND BASEMAN', '2NDBASE', 'SECONDBASE'].includes(upper)) return '2B';
-    if (['SS', 'SHORTSTOP', 'SHORT STOP', 'IF', 'INFIELD', 'INFIELDER'].includes(upper)) return 'SS';
-    if (['3B', '3RD BASE', 'THIRD BASE', 'THIRD BASEMAN', '3RDBASE', 'THIRDBASE'].includes(upper)) return '3B';
-    if (['LF', 'LEFT FIELD', 'LEFTFIELD', 'LEFT FIELDER', 'LEFTFIELDER'].includes(upper)) return 'LF';
-    if (['CF', 'CENTER FIELD', 'CENTERFIELD', 'CENTER FIELDER', 'CENTERFIELDER', 'OF', 'OUTFIELD', 'OUTFIELDER'].includes(upper)) return 'CF';
-    if (['RF', 'RIGHT FIELD', 'RIGHTFIELD', 'RIGHT FIELDER', 'RIGHTFIELDER'].includes(upper)) return 'RF';
-    return upper;
-  };
-
+  // #427: positions are free text and usually multi-valued ("RHP/INF/OF",
+  // "SS / 2nd"). parsePositions() fans each athlete out to every spot they
+  // list; the old single-token matcher dropped anyone with more than one.
   const rosterByPos = {};
   const prospectByPos = {};
   POSITIONS.forEach(p => { rosterByPos[p.code] = []; prospectByPos[p.code] = []; });
 
   (roster || []).forEach(player => {
-    const pos = normalizePosition(player.player_profile?.position);
-    if (pos && rosterByPos[pos]) rosterByPos[pos].push(player);
+    parsePositions(player.player_profile?.position).forEach(pos => {
+      if (rosterByPos[pos]) rosterByPos[pos].push(player);
+    });
   });
   prospects.forEach(pr => {
-    const seen = new Set();
-    getProspectPositions(pr).forEach(raw => {
-      const pos = normalizePosition(raw);
-      if (pos && prospectByPos[pos] && !seen.has(pos)) {
-        prospectByPos[pos].push(pr);
-        seen.add(pos);
-      }
+    parsePositions(getProspectPositions(pr)).forEach(pos => {
+      if (prospectByPos[pos]) prospectByPos[pos].push(pr);
     });
   });
 
