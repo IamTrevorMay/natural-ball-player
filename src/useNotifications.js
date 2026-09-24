@@ -225,7 +225,7 @@ export function useMainPortalCounts(userId, userRole) {
       try {
         const { data: flags } = await supabase
           .from('booking_package_flags')
-          .select('id, player_id, slot_id, slot_date, created_at, users:player_id(full_name)')
+          .select('id, player_id, slot_id, slot_date, created_at, outcome, reason, users:player_id(full_name)')
           .eq('coach_id', userId)
           .order('created_at', { ascending: false })
           .limit(10);

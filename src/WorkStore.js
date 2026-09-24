@@ -6,7 +6,7 @@ import InvoiceReconcile from './InvoiceReconcile';
 import CancellationReview from './CancellationReview';
 import BulkTagSessions from './BulkTagSessions';
 import DuplicateProducts from './DuplicateProducts';
-import { latestExtension } from './packageExtension';
+import { latestExtension, termDaysForBundleQty } from './packageExtension';
 
 const KIND_OPTIONS = [
   { value: 'lesson',  label: 'Lesson (one-time)' },
@@ -475,13 +475,31 @@ function PurchasesTab({ userRole }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [busyId, setBusyId] = useState(null);
   const [note, setNote] = useState(null);
+  // #305/#340 bulk reconciliation (Trevor, 2026-09-23). 162 lesson packs sat
+  // 'pending' across 116 athletes a month after the per-row button shipped,
+  // and 26 more had gone pending since. One row at a time was not clearing
+  // it. `selected` is the set of purchase ids ticked; `bulk` is the pending
+  // action awaiting confirmation ({ verb: 'paid' | 'cancel' }).
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulk, setBulk] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  // Which date bulk Mark-as-paid stamps as paid_at. Cordell (2026-08-25, #306
+  // Q5): "we will start their package date from the day they paid, even if it
+  // was back in June". The assignment date is the closest thing to that the
+  // portal holds for an invoice/desk payment, so it is the default; a single
+  // chosen date is the alternative for a batch known to have settled together.
+  const [paidDateMode, setPaidDateMode] = useState('assigned'); // 'assigned' | 'chosen'
+  const [paidDate, setPaidDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       const { data } = await supabase
         .from('store_purchases')
-        .select('*, user:users!store_purchases_user_id_fkey(full_name, email)')
+        // store_products(bundle_qty) so bulk Mark-as-paid can start the
+        // 5/10/20 expiry clock and seed remaining_qty the way the Square
+        // webhook does on a real payment.
+        .select('*, user:users!store_purchases_user_id_fkey(full_name, email), store_products(bundle_qty)')
         .order('created_at', { ascending: false })
         .limit(500);
       setRows(data || []);
@@ -564,6 +582,112 @@ function PurchasesTab({ userRole }) {
       || (r.product_name_snapshot || '').toLowerCase().includes(q);
   });
 
+  // ---- bulk selection -------------------------------------------------
+  // Only rows an action could apply to are selectable; the header tick
+  // selects every such row currently VISIBLE (after search + status filter),
+  // never the whole table, so "select all" is always something the person
+  // has just looked at.
+  const selectable = (r) => canMarkPaid(r) || canCancel(r);
+  const visibleSelectable = filtered.filter(selectable);
+  const allVisibleSelected = visibleSelectable.length > 0 && visibleSelectable.every(r => selected.has(r.id));
+  const toggleOne = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAllVisible = () => setSelected(prev => {
+    const next = new Set(prev);
+    if (allVisibleSelected) visibleSelectable.forEach(r => next.delete(r.id));
+    else visibleSelectable.forEach(r => next.add(r.id));
+    return next;
+  });
+  const selectedRows = rows.filter(r => selected.has(r.id));
+  const bulkPaidRows = selectedRows.filter(canMarkPaid);
+  const bulkCancelRows = selectedRows.filter(canCancel);
+
+  // paid_at for one row under the current date mode. 'assigned' uses the
+  // row's own created_at; 'chosen' stamps the picked calendar day at local
+  // noon so it cannot roll to the previous day in UTC.
+  const paidAtFor = (r) => paidDateMode === 'assigned'
+    ? r.created_at
+    : new Date(`${paidDate}T12:00:00`).toISOString();
+
+  // What bulk Mark-as-paid writes for one row. Mirrors the Square webhook's
+  // paid transition (square-webhook/index.ts) rather than the single-row
+  // button: status + paid_at, PLUS expires_at from the 5/10/20 rule anchored
+  // to paid_at (Cordell: clock starts the day they paid, June included — an
+  // already-expired result is expected and is what the Extend button on the
+  // athlete's packages is for), PLUS remaining_qty seeded from bundle_qty
+  // when it was never set. Neither expiry nor remaining is overwritten if
+  // already present. Provenance goes into metadata so a bulk write is never
+  // indistinguishable from a Square-confirmed payment.
+  const bulkPaidPatch = (r, actorId, stamp) => {
+    const paidAt = paidAtFor(r);
+    const patch = { status: 'paid', paid_at: paidAt };
+    const bundleQty = r.store_products?.bundle_qty ?? null;
+    if (r.expires_at == null) {
+      const days = termDaysForBundleQty(bundleQty);
+      if (days) patch.expires_at = new Date(new Date(paidAt).getTime() + days * 86400000).toISOString();
+    }
+    if (r.remaining_qty == null && bundleQty != null) patch.remaining_qty = bundleQty;
+    patch.metadata = {
+      ...(r.metadata || {}),
+      bulk_reconciled_at: stamp,
+      bulk_reconciled_by: actorId,
+      paid_at_source: paidDateMode === 'assigned' ? 'bulk_assignment_date' : 'bulk_chosen_date',
+    };
+    return patch;
+  };
+  const bulkCancelPatch = (r, actorId, stamp) => ({
+    status: 'canceled',
+    metadata: { ...(r.metadata || {}), bulk_canceled_at: stamp, bulk_canceled_by: actorId },
+  });
+
+  // Runs the confirmed bulk action. Each row is its own UPDATE (the patches
+  // differ per row) with the same error + zero-row guard as applyUpdate.
+  // Rows that succeed are reflected immediately; rows that fail stay ticked
+  // so they can be retried, and the note names how many went each way.
+  const runBulk = async () => {
+    if (!bulk) return;
+    const targets = bulk.verb === 'paid' ? bulkPaidRows : bulkCancelRows;
+    if (targets.length === 0) { setBulk(null); return; }
+    setBulkBusy(true);
+    setNote(null);
+    const { data: { user } } = await supabase.auth.getUser();
+    const stamp = new Date().toISOString();
+    const actorId = user?.id || null;
+    let ok = 0;
+    const failed = [];
+    // Sequential, not Promise.all: 100+ concurrent writes against one table
+    // from a browser tab is how you get rate-limited half way through and
+    // left guessing which half landed.
+    for (const r of targets) {
+      const patch = bulk.verb === 'paid' ? bulkPaidPatch(r, actorId, stamp) : bulkCancelPatch(r, actorId, stamp);
+      const { data, error } = await supabase
+        .from('store_purchases')
+        .update(patch)
+        .eq('id', r.id)
+        .select('*, user:users!store_purchases_user_id_fkey(full_name, email), store_products(bundle_qty)');
+      if (error || !data || data.length === 0) {
+        failed.push({ row: r, message: error?.message || 'refused (no permission, or the purchase no longer exists)' });
+        continue;
+      }
+      ok += 1;
+      const fresh = data[0];
+      setRows(prev => prev.map(x => (x.id === r.id ? fresh : x)));
+      setSelected(prev => { const next = new Set(prev); next.delete(r.id); return next; });
+    }
+    setBulkBusy(false);
+    setBulk(null);
+    const verbPast = bulk.verb === 'paid' ? 'marked as paid' : 'cancelled';
+    if (failed.length === 0) {
+      setNote({ kind: 'ok', text: `${ok} purchase${ok === 1 ? '' : 's'} ${verbPast}.` });
+    } else {
+      const first = failed.slice(0, 3).map(f => `${f.row.user?.full_name || 'Unknown'} — ${f.row.product_name_snapshot}: ${f.message}`).join('; ');
+      setNote({ kind: 'error', text: `${ok} ${verbPast}, ${failed.length} failed and left selected. ${first}${failed.length > 3 ? '; …' : ''}` });
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -600,6 +724,58 @@ function PurchasesTab({ userRole }) {
         </div>
       )}
 
+      {/* Bulk action bar — only when something is ticked. */}
+      {canAct && selected.size > 0 && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+          <span className="font-medium text-indigo-900">{selected.size} selected</span>
+          <div className="flex flex-wrap items-center gap-2 text-indigo-900">
+            <span className="text-xs text-indigo-700">Paid on:</span>
+            <label className="inline-flex items-center gap-1 text-xs">
+              <input type="radio" name="paidDateMode" checked={paidDateMode === 'assigned'} onChange={() => setPaidDateMode('assigned')} />
+              the date each was assigned
+            </label>
+            <label className="inline-flex items-center gap-1 text-xs">
+              <input type="radio" name="paidDateMode" checked={paidDateMode === 'chosen'} onChange={() => setPaidDateMode('chosen')} />
+              this date
+            </label>
+            <input
+              type="date"
+              value={paidDate}
+              onChange={(e) => { setPaidDate(e.target.value); setPaidDateMode('chosen'); }}
+              className="px-2 py-1 border border-indigo-200 rounded text-xs bg-white"
+            />
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setBulk({ verb: 'paid' })}
+              disabled={bulkBusy || bulkPaidRows.length === 0}
+              className="border border-green-600 text-green-700 bg-white px-3 py-1.5 rounded text-xs font-medium hover:bg-green-50 transition disabled:opacity-50"
+            >
+              Mark {bulkPaidRows.length} as paid…
+            </button>
+            <button
+              onClick={() => setBulk({ verb: 'cancel' })}
+              disabled={bulkBusy || bulkCancelRows.length === 0}
+              className="border border-gray-300 text-gray-700 bg-white px-3 py-1.5 rounded text-xs font-medium hover:bg-gray-50 transition disabled:opacity-50"
+            >
+              Cancel {bulkCancelRows.length}…
+            </button>
+            <button onClick={() => setSelected(new Set())} disabled={bulkBusy} className="text-xs text-indigo-700 hover:underline px-1">Clear</button>
+          </div>
+        </div>
+      )}
+
+      {bulk && (
+        <BulkPurchaseConfirm
+          verb={bulk.verb}
+          rows={bulk.verb === 'paid' ? bulkPaidRows : bulkCancelRows}
+          paidAtFor={paidAtFor}
+          busy={bulkBusy}
+          onCancel={() => !bulkBusy && setBulk(null)}
+          onConfirm={runBulk}
+        />
+      )}
+
       {loading ? (
         <div className="text-center py-12 text-gray-500">Loading…</div>
       ) : filtered.length === 0 ? (
@@ -609,6 +785,17 @@ function PurchasesTab({ userRole }) {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                {canAct && (
+                  <th className="px-3 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible purchases"
+                      checked={allVisibleSelected}
+                      disabled={visibleSelectable.length === 0}
+                      onChange={toggleAllVisible}
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
@@ -622,7 +809,19 @@ function PurchasesTab({ userRole }) {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filtered.map(r => (
-                <tr key={r.id}>
+                <tr key={r.id} className={selected.has(r.id) ? 'bg-indigo-50/60' : undefined}>
+                  {canAct && (
+                    <td className="px-3 py-2">
+                      {selectable(r) ? (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${r.user?.full_name || 'purchase'} — ${r.product_name_snapshot}`}
+                          checked={selected.has(r.id)}
+                          onChange={() => toggleOne(r.id)}
+                        />
+                      ) : null}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-sm text-gray-700">{new Date(r.created_at).toLocaleString()}</td>
                   <td className="px-4 py-2 text-sm text-gray-900">
                     <div>{r.user?.full_name || '—'}</div>
@@ -671,6 +870,92 @@ function PurchasesTab({ userRole }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// Bulk confirmation. InvoiceReconcile.js says, rightly, that a wrong bulk run
+// marks a hundred families paid — so this dialog is the whole safeguard: it
+// lists EVERY row that will change, with the exact paid date each will get,
+// and asks the person to type the count. No summary-only confirm, no
+// window.confirm that truncates on a phone.
+function BulkPurchaseConfirm({ verb, rows, paidAtFor, busy, onCancel, onConfirm }) {
+  const [typed, setTyped] = useState('');
+  const n = rows.length;
+  const armed = typed.trim() === String(n);
+  const total = rows.reduce((s, r) => s + ((r.discounted_price_cents ?? r.amount_cents) || 0), 0);
+  const isPaid = verb === 'paid';
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
+          <h3 className="text-lg font-bold text-gray-900">
+            {isPaid ? `Mark ${n} purchase${n === 1 ? '' : 's'} as PAID?` : `Cancel ${n} purchase${n === 1 ? '' : 's'}?`}
+          </h3>
+          <button onClick={onCancel} disabled={busy} className="text-gray-400 hover:text-gray-600"><X size={22} /></button>
+        </div>
+        <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0 space-y-3 text-sm">
+          {isPaid ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
+              Only do this if the money has actually arrived in Square or in person for <span className="font-medium">every</span> row below
+              (${(total / 100).toFixed(2)} in total). Each athlete can use their package immediately. Session packs get their expiry
+              clock started from the paid date shown — packs paid months ago may come out already expired, which is expected;
+              use <span className="font-medium">Extend</span> on the athlete's packages to give time back.
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
+              Each purchase stops counting towards what the athlete owns and disappears from their account. The records are kept
+              and can be marked paid again later. <span className="font-medium">This does not refund anything</span> — if money was
+              actually taken, refund it in Square separately.
+            </div>
+          )}
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-gray-500 uppercase">
+                <th className="py-1 pr-3">Athlete</th>
+                <th className="py-1 pr-3">Product</th>
+                <th className="py-1 pr-3">Amount</th>
+                <th className="py-1 pr-3">Now</th>
+                {isPaid && <th className="py-1">Paid on</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td className="py-1 pr-3 text-gray-900">{r.user?.full_name || '—'}</td>
+                  <td className="py-1 pr-3 text-gray-700">{r.product_name_snapshot}</td>
+                  <td className="py-1 pr-3 text-gray-700">${(((r.discounted_price_cents ?? r.amount_cents) || 0) / 100).toFixed(2)}</td>
+                  <td className="py-1 pr-3 text-gray-500">{r.status}</td>
+                  {isPaid && <td className="py-1 text-gray-700">{new Date(paidAtFor(r)).toLocaleDateString()}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-gray-200 px-6 py-4 flex flex-wrap items-center gap-3 flex-shrink-0">
+          <label className="text-sm text-gray-700 flex items-center gap-2">
+            Type <span className="font-mono font-semibold">{n}</span> to confirm
+            <input
+              type="text"
+              inputMode="numeric"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              disabled={busy}
+              className="w-20 px-2 py-1 border border-gray-300 rounded"
+            />
+          </label>
+          <div className="ml-auto flex gap-2">
+            <button onClick={onCancel} disabled={busy} className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition disabled:opacity-50">Back</button>
+            <button
+              onClick={onConfirm}
+              disabled={!armed || busy}
+              className={`px-4 py-2 rounded-lg text-white transition disabled:opacity-50 ${isPaid ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-700 hover:bg-gray-800'}`}
+            >
+              {busy ? 'Working…' : isPaid ? `Mark ${n} as paid` : `Cancel ${n}`}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

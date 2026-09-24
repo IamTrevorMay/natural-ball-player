@@ -13,7 +13,7 @@ import MessageCoachModal from './MessageCoachModal'; // #407
 import { formatUserError } from './errorMessage';
 import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS } from './skillOptions';
-import { capsForPurchases, isLiftingCoach, weekRangeForDate, capWarningMessage } from './bookingCaps';
+import { capsForPurchases, isLiftingCoach, weekRangeForDate, capWarningMessage, weeklyFrequencyFromName } from './bookingCaps';
 import { CreateUserModal } from './AdminSettings';
 import { familyKey, familyLabel, sameFamily } from './productFamily';
 import { applySessionUsage } from './sessionUsage';
@@ -9049,8 +9049,10 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
 function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   const [playerNote, setPlayerNote] = useState('');
   const [loading, setLoading] = useState(false);
-  // #305: reason is only set when gated and blocked — 'none' | 'expired' |
-  // 'no_sessions'. Used to pick the specific refusal message below.
+  // #305: reason is set when the gate has something to say — 'none' |
+  // 'expired' | 'no_sessions' (pkg is null for those three) | 'paused' (pkg
+  // IS set: the athlete holds a matching subscription but it is paused in
+  // Square, so they may book, with a warning). Picks the banner below.
   const [pkgCheck, setPkgCheck] = useState({ checking: true, pkg: null, reason: null });
   // #244/#249: names of the subscription plan(s) this session accepts (if any).
   const [subNames, setSubNames] = useState([]);
@@ -9065,21 +9067,36 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
   // false, the pre-#311-tagging default) is NOT gated, so this stays exactly
   // as permissive as it always was for the rare untagged slot.
   const requiredProductIds = slot?.store_product_ids?.length ? slot.store_product_ids : (slot?.store_product_id ? [slot.store_product_id] : []);
-  // 🔴 #305 KILL SWITCH — LEAVE THIS `false` UNTIL CORDELL FIXES THE DATA.
+  // 🔴 #305 GATE MODE — 'off' | 'warn' | 'block'.
   //
-  // Flip to `true` and the "no package, no booking" rule turns on. Measured
-  // against the LIVE database on 2026-08-15, with the package-family matching
-  // in place: 655 of 699 gated sessions are bookable by somebody, but **82 of
-  // the last 147 real bookings would have been refused**. The cause is not this
-  // code — 130 lesson-pack purchases held by 99 athletes are all sitting at
-  // status 'pending' with no session count, so the gate cannot see that those
-  // athletes own anything. Turning this on today locks out paying customers.
+  //   'off'   — nothing but the informational banners (how it shipped in Aug).
+  //   'warn'  — the gate RUNS: the athlete sees the specific refusal reason
+  //             and staff get a booking_package_flags row, but the Reserve
+  //             button stays live and the booking goes through. Zero lockouts.
+  //   'block' — the full "no package, no booking" rule. Reserve is disabled
+  //             and the attempt is flagged as blocked.
   //
-  // Everything else in #305 still runs with this off: the package-family match,
-  // the "Included with:" line, and the "Payment confirmed — N sessions
-  // remaining" badge. Only the refusal and the staff flag are suppressed.
-  const BOOKING_GATE_ENABLED = false;
-  const gated = BOOKING_GATE_ENABLED && !!slot?.is_subscription_session && requiredProductIds.length > 0;
+  // Why 'warn' and not 'block' (Trevor, 2026-09-23): measured against the
+  // LIVE database that day, 'block' would have refused 50 of the last 80
+  // real bookings (14 athletes). Not because the rule is wrong — 162
+  // lesson-pack purchases held by 116 athletes still sit at status 'pending'
+  // (paid by Square invoice or at the desk, never reconciled), so the gate
+  // cannot see that those athletes own anything. Even counting pending and
+  // paused purchases as held, 24 bookings (8 athletes) would still have been
+  // refused. 'warn' gets the flags flowing to staff so the pending pile gets
+  // worked down against real attempts, and flipping to 'block' later is this
+  // one constant. Re-measure before flipping.
+  //
+  // Paused subscriptions (status 'past_due' — every writer maps it from
+  // Square PAUSED, it does not mean money is owed) count as HELD in every
+  // mode, with a warning banner and a flag, so a family taking the season
+  // off is never silently locked out.
+  const BOOKING_GATE_MODE = 'warn';
+  const gateActive = BOOKING_GATE_MODE !== 'off' && !!slot?.is_subscription_session && requiredProductIds.length > 0;
+  const gateBlocks = BOOKING_GATE_MODE === 'block' && gateActive;
+  // Kept under its old name for the JSX below: "the gate has an opinion about
+  // this athlete on this slot" — true in warn AND block mode.
+  const gated = gateActive;
   // Stable, primitive form of requiredProductIds for effect dependency arrays
   // below — the array itself is a new reference every render.
   const requiredProductIdsKey = requiredProductIds.join(',');
@@ -9097,17 +9114,29 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
           .select('id, product_id, product_name_snapshot, remaining_qty, product_kind, expires_at')
           .eq('user_id', user.id)
           .in('product_kind', ['package', 'bundle', 'lesson'])
-          .in('status', ['active', 'paid']);
-        const purchases = data || [];
+          // 'past_due' is Square PAUSED (see PKG_STATUS_LABELS in WorkStore.js),
+          // fetched so a paused holder can be told apart from a non-holder.
+          .in('status', ['active', 'paid', 'past_due']);
+        const all = data || [];
+        const isLive = (p) => p.status === 'active' || p.status === 'paid';
+        const purchases = all.filter(isLive);
+        const paused = all.filter(p => p.status === 'past_due');
         // #276: the weekly-cap check needs the player's live (unexpired)
         // packages. #305's query above deliberately does NOT filter on expiry
         // so it can tell "expired" apart from "never had one", so filter here.
         setOwnedPurchases(purchases.filter(p => !p.expires_at || p.expires_at > today));
-        // remaining_qty === null means "uncounted" — only true unlimited for a
-        // recurring monthly package. For a one-time bundle/lesson purchase,
-        // null means no session count was ever set on it (a plain single-lesson
-        // purchase, not a pack), so it must NOT be treated as an active package.
-        const hasSessionsLeft = (p) => p.product_kind === 'package' ? (p.remaining_qty === null || p.remaining_qty > 0) : p.remaining_qty > 0;
+        // remaining_qty === null means "uncounted". For a recurring monthly
+        // package that is true unlimited. For a one-time purchase it usually
+        // means no session count was ever set (a plain single lesson, not a
+        // pack) — UNLESS the product is really a weekly programme that Square
+        // exported as a one-time item ("NBP 3x A Week Training" is kind
+        // 'lesson' in the catalogue). Those are allowances, not buckets, and
+        // bookingCaps.js already reads the frequency off the name for the
+        // weekly cap — the same rule is reused here so the two agree.
+        const hasSessionsLeft = (p) => {
+          if (p.remaining_qty !== null) return p.remaining_qty > 0;
+          return p.product_kind === 'package' || weeklyFrequencyFromName(p.product_name_snapshot) !== null;
+        };
         const notExpired = (p) => !p.expires_at || p.expires_at > today;
 
         if (requiredProductIds.length > 0) {
@@ -9133,18 +9162,28 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             requiredNames = (prodRows || []).map(r => r.name).filter(Boolean);
           } catch { /* fall back to id-only matching below */ }
 
-          const matching = purchases.filter(p =>
+          const matchesSlot = (p) =>
             (p.product_id && requiredProductIds.includes(p.product_id)) ||
-            requiredNames.some(n => sameFamily(n, p.product_name_snapshot))
-          );
+            requiredNames.some(n => sameFamily(n, p.product_name_snapshot));
+          const matching = purchases.filter(matchesSlot);
           const valid = matching.find(p => hasSessionsLeft(p) && notExpired(p));
-          let reason = null;
-          if (!valid) {
-            if (matching.length === 0) reason = 'none';
-            else if (matching.some(p => !notExpired(p))) reason = 'expired';
-            else reason = 'no_sessions';
+          if (valid) {
+            setPkgCheck({ checking: false, pkg: valid, reason: null });
+            return;
           }
-          setPkgCheck({ checking: false, pkg: valid || null, reason });
+          // No live match. A PAUSED match still counts as held (Trevor,
+          // 2026-09-23: "book with a warning") — the athlete may reserve, the
+          // banner says the subscription is paused, and staff get a flag.
+          const pausedMatch = paused.find(p => matchesSlot(p) && hasSessionsLeft(p) && notExpired(p));
+          if (pausedMatch) {
+            setPkgCheck({ checking: false, pkg: pausedMatch, reason: 'paused' });
+            return;
+          }
+          let reason;
+          if (matching.length === 0) reason = 'none';
+          else if (matching.some(p => !notExpired(p))) reason = 'expired';
+          else reason = 'no_sessions';
+          setPkgCheck({ checking: false, pkg: null, reason });
         } else {
           // Not gated — this slot has no product attached. Preserve the
           // original, pre-#305 behaviour exactly: informational only, never
@@ -9179,33 +9218,46 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     })();
   }, [slot?.is_subscription_session, slot?.store_product_id, slot?.store_product_ids]);
 
-  // #305: log a blocked attempt once per open modal so staff can see it
-  // (Cordell's Q8 — "an athlete without a package should be flagged").
-  // In-app only — never touches #281's parked email send path. Best-effort:
-  // failures (including the table not existing until its migration runs)
-  // are swallowed, same as syncReservationSessionUsage already does for
-  // package errors — this is a side note for staff, never something that
-  // should interrupt or alarm the player trying to book.
+  // #305: flag the attempt so staff can see it (Cordell's Q8 — "an athlete
+  // without a package should be flagged"). In-app only — never touches
+  // #281's parked email send path. Best-effort: failures are swallowed, same
+  // as syncReservationSessionUsage already does for package errors — this is
+  // a side note for staff, never something that should interrupt or alarm
+  // the player trying to book.
+  //
+  // "The gate has a complaint" = no matching package, OR the match is a
+  // paused subscription. When it does:
+  //   block mode, no package  → flagged 'blocked' the moment the modal opens
+  //                             (there will be no reservation row to find).
+  //   otherwise               → flagged 'booked' only once the reservation
+  //                             actually lands (see handleReserve), so a
+  //                             player who opens the modal and closes it is
+  //                             not reported as having booked anything.
+  const gateComplaint = gated && !pkgCheck.checking && (!pkgCheck.pkg || pkgCheck.reason === 'paused');
+  const flagAttempt = async (outcome) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('booking_package_flags').insert({
+        player_id: user.id,
+        slot_id: slot.id,
+        slot_date: slot.slot_date,
+        coach_id: slot.coach_id || coach?.id || null,
+        outcome,
+        reason: pkgCheck.reason,
+      });
+    } catch (e) {
+      console.error('booking_package_flags insert failed (migration pending?):', e);
+    }
+  };
   const flaggedRef = useRef(false);
   useEffect(() => {
-    if (pkgCheck.checking || flaggedRef.current) return;
-    if (gated && !pkgCheck.pkg) {
+    if (flaggedRef.current) return;
+    if (gateBlocks && gateComplaint && !pkgCheck.pkg) {
       flaggedRef.current = true;
-      (async () => {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          await supabase.from('booking_package_flags').insert({
-            player_id: user.id,
-            slot_id: slot.id,
-            slot_date: slot.slot_date,
-            coach_id: slot.coach_id || coach?.id || null,
-          });
-        } catch (e) {
-          console.error('booking_package_flags insert failed (migration pending?):', e);
-        }
-      })();
+      flagAttempt('blocked');
     }
-  }, [pkgCheck.checking, pkgCheck.pkg, gated, slot.id, slot.slot_date, slot.coach_id, coach?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gateBlocks, gateComplaint, pkgCheck.pkg]);
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -9227,7 +9279,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
     // #305: server-side belt for the button's own disabled state below —
     // this is a client-side gate, same tier as the cutoff check just above
     // it (no RLS/DB-level enforcement exists for either one today).
-    if (gated && !pkgCheck.pkg) { alert('You need an active package for this session before you can reserve it.'); return; }
+    if (gateBlocks && !pkgCheck.pkg) { alert('You need an active package for this session before you can reserve it.'); return; }
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -9259,6 +9311,13 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
         player_note: playerNote || null, confirmed_at: slot.auto_confirm ? new Date().toISOString() : null
       });
       if (error) throw error;
+      // #305 warn mode: the booking went through without (or with a paused)
+      // package — tell staff. After the insert, so a failed reservation is
+      // never reported as a booking.
+      if (gateComplaint && !flaggedRef.current) {
+        flaggedRef.current = true;
+        await flagAttempt('booked');
+      }
       alert(slot.auto_confirm ? 'Reservation confirmed!' : 'Reservation submitted! Waiting for coach confirmation.');
       onSuccess();
     } catch (err) { alert('Error: ' + formatUserError(err)); } finally { setLoading(false); }
@@ -9314,7 +9373,14 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             </div>
           )}
           {!pkgCheck.checking && (
-            pkgCheck.pkg ? (
+            pkgCheck.pkg && pkgCheck.reason === 'paused' ? (
+              // #305: a matching subscription exists but Square has it paused.
+              // Held, bookable, flagged — never a lockout.
+              <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+                <span>Your <span className="font-medium">{pkgCheck.pkg.product_name_snapshot}</span> subscription is currently paused. You can still reserve this session — reach out to the front desk to resume it.</span>
+              </div>
+            ) : pkgCheck.pkg ? (
               <div className="flex items-start space-x-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-800">
                 <Check size={16} className="mt-0.5 shrink-0 text-green-600" />
                 <span>
@@ -9333,6 +9399,11 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
                     : pkgCheck.reason === 'no_sessions'
                     ? <>Your {subNames.length ? <span className="font-medium">{subNames.join(', ')}</span> : 'package'} has no sessions left. Purchase more before reserving this session.</>
                     : <>This session requires {subNames.length ? <span className="font-medium">{subNames.join(' or ')}</span> : 'a specific package'}. You don't currently have one — reach out to arrange payment before reserving.</>}
+                  {!gateBlocks && (
+                    // warn mode: say plainly that the button still works, so
+                    // nobody reads the banner as a refusal and gives up.
+                    <> You can still reserve this session today — if you&apos;ve already paid, no action is needed and we&apos;ll sort it out on our end.</>
+                  )}
                 </span>
               </div>
             ) : (
@@ -9344,8 +9415,9 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
               // paid_at NULL because store_webhook_events has been empty since
               // June 2026, so this banner fires for pack holders who HAVE paid.
               // Reworded to state only what the portal knows about itself.
-              // Booking is not gated here (BOOKING_GATE_ENABLED is false) and
-              // this change is text only — nothing about who may reserve moves.
+              // This branch is the UNGATED slot (nothing attached), so it is
+              // informational in every gate mode — nothing about who may
+              // reserve moves here.
               <div className="flex items-start space-x-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
                 <span>We don&apos;t have a package confirmed on your account for this session. You can still reserve it — if you&apos;ve already paid or have a pack, no action is needed and we&apos;ll sort it out on our end.</span>
@@ -9365,7 +9437,7 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
             window height instead of running off the bottom of the phone. */}
         <div className="border-t border-gray-200 px-6 py-4 flex space-x-3 flex-shrink-0">
           <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-50 transition">Cancel</button>
-          <button onClick={() => handleReserve(false)} disabled={loading || bookingClosed || pkgCheck.checking || (gated && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
+          <button onClick={() => handleReserve(false)} disabled={loading || bookingClosed || pkgCheck.checking || (gateBlocks && !pkgCheck.pkg)} className="flex-1 bg-teal-600 text-white py-2 rounded-lg hover:bg-teal-700 transition disabled:opacity-50">{loading ? 'Reserving...' : 'Reserve'}</button>
         </div>
       </div>
       {/* #276: over the weekly allowance — a warning, not a block. */}

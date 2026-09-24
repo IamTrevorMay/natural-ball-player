@@ -210,8 +210,11 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
               </button>
             ))}
 
-            {/* #305 (Q8): a player was blocked from booking for lack of a
-                matching package — flagged so a coach can follow up. */}
+            {/* #305 (Q8): a player booked (warn mode) or was blocked (block
+                mode) without a matching package — flagged so a coach can
+                follow up. `outcome` / `reason` arrive once migration
+                20260923_booking_package_flags_outcome has run; older rows
+                read as blocked. */}
             {(mainCounts?.packageFlags || []).map(flag => (
               <button
                 key={`main-pkg-flag-${flag.id}`}
@@ -222,7 +225,14 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                   <div className="mt-0.5"><AlertTriangle size={16} className="text-red-500" /></div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-gray-900">
-                      <span className="font-medium">{flag.users?.full_name || 'A player'}</span> tried to book without a package
+                      <span className="font-medium">{flag.users?.full_name || 'A player'}</span>{' '}
+                      {flag.reason === 'paused'
+                        ? 'booked with a paused subscription'
+                        : flag.outcome === 'booked'
+                          ? (flag.reason === 'expired' ? 'booked with an expired package'
+                            : flag.reason === 'no_sessions' ? 'booked with no sessions left'
+                            : 'booked without a package')
+                          : 'tried to book without a package'}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
                       {flag.slot_date && fmtDate(flag.slot_date)}
