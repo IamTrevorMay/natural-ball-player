@@ -1514,8 +1514,16 @@ function DepthChartField({ prospects, roster, hoveredPosition, setHoveredPositio
   POSITIONS.forEach(p => { rosterByPos[p.code] = []; prospectByPos[p.code] = []; });
 
   (roster || []).forEach(player => {
-    const pos = normalizePosition(player.player_profile?.position);
-    if (pos && rosterByPos[pos]) rosterByPos[pos].push(player);
+    const rawPos = (player.player_profile?.position || '').trim();
+    if (!rawPos) return;
+    const seen = new Set();
+    rawPos.split(/[,\/]/).forEach(part => {
+      const pos = normalizePosition(part.trim());
+      if (pos && rosterByPos[pos] && !seen.has(pos)) {
+        rosterByPos[pos].push(player);
+        seen.add(pos);
+      }
+    });
   });
   prospects.forEach(pr => {
     const seen = new Set();
