@@ -213,9 +213,9 @@ export default function StoreModal({ userId, onClose, loggedInUserId }) {
                           checkout_url. It was hidden while the payment webhook
                           had never fired ('pending' then included purchases that
                           were really paid, so "Complete" offered paying customers
-                          a second charge). Back since #429, but ONLY on rows the
-                          webhook could have settled — isPayablePurchase holds the
-                          date rule. */}
+                          a second charge). Back since #429; isPayablePurchase
+                          holds the rule (every pending row is unpaid, Cordell
+                          confirmed all 163 on 2026-09-26). */}
                       {isPayablePurchase(pu) && (
                         <a
                           href={pu.checkout_url}

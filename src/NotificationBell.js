@@ -350,8 +350,9 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
             {/* #341: the whole payment block — notice, checkout link and the
                 admin delete button that hangs off it — is behind
                 PAYMENT_DUE_NOTICES_ENABLED (defined in useNotifications.js —
-                off 2026-08-16 → on again 2026-09-26 for #429, with the
-                pre-webhook rows still excluded by isPayablePurchase). This
+                off 2026-08-16 → on again 2026-09-26 for #429; every pending
+                row with a checkout_url is a real bill, see isPayablePurchase).
+                This
                 used to read "Payment due: … tap to
                 complete payment" over a live Square checkout_url; with the
                 payment webhook never firing, that told athletes who HAD paid

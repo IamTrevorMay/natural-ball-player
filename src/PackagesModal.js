@@ -1057,8 +1057,8 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
             Sits OUTSIDE the header button (nested buttons are invalid HTML and
             the header toggles the row) and is visible collapsed or open, so
             it is never one click further away. Only rows isPayablePurchase()
-            accepts get a link — pre-webhook rows may already be paid in
-            Square and get the honest line instead. The athlete gets "Pay now";
+            accepts get a link (pending + checkout_url — every such row is a
+            real bill as of 2026-09-26). The athlete gets "Pay now";
             staff get "Copy payment link" so they hand it to the family rather
             than opening a checkout on their own screen. */}
         {p.status === 'pending' && (
