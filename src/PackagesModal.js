@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, CalendarClock, AlertTriangle, History } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, CalendarClock, AlertTriangle, History, CreditCard, Copy, ExternalLink } from 'lucide-react';
+import { isPayablePurchase } from './useNotifications';
 import { formatUserError } from './errorMessage';
 import { familyLabel, frequencyOf } from './productFamily';
 import {
@@ -690,7 +691,7 @@ function ExtendExpiryPanel({ purchase, athleteName, onCancel, onExtended }) {
   );
 }
 
-export default function PackagesModal({ userId, userName, canManage, canDelete = false, onClose }) {
+export default function PackagesModal({ userId, userName, canManage, canDelete = false, isSelf = false, onClose }) {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState([]);
   const [usageByPurchase, setUsageByPurchase] = useState({});
@@ -725,7 +726,11 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         // #306: `metadata` carries the extension audit trail, so "already
         // extended, by whom" is visible on the list itself and not only after
         // opening the extend panel.
-        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, metadata, store_products(bundle_qty, kind)')
+        // #429: checkout_url was never selected here, so the athlete's own
+        // Packages screen — the one place they open from "Awaiting payment" —
+        // had no way to pay. The link is the Square checkout the assigner
+        // generated; whether it is SAFE to show is isPayablePurchase()'s call.
+        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, checkout_url, metadata, store_products(bundle_qty, kind)')
         .eq('user_id', userId)
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
@@ -889,7 +894,7 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
       // #341: "Awaiting payment" currently means "Square never told us", not
       // "the athlete didn't pay" — so spell that out at the moment of deletion,
       // which is the point of no return.
-      parts.push('This package has no payment confirmed in the portal. Square payment confirmations are not currently syncing, so it may still have been paid. Check Square before continuing.');
+      parts.push('This package has no payment confirmed in the portal. If it was paid by Square invoice or in person, the portal was never told, so it may still have been paid. Check Square before continuing.');
     }
 
     if (!window.confirm(parts.join('\n\n'))) return;
@@ -959,13 +964,24 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
     }
   };
 
-  // #341: Square payment confirmations are not currently reaching the portal —
-  // store_webhook_events has never recorded a single event, so no one-time
-  // purchase has ever been marked paid. That means "Awaiting payment" is NOT
-  // proof the athlete didn't pay; Square may well hold a completed payment for
-  // it. Staff must not delete on the strength of this screen alone. The notice
-  // is driven by the data, so it disappears by itself once payments sync.
+  // #341/#429: "Awaiting payment" is NOT proof the athlete didn't pay. The
+  // webhook only settles purchases paid through the portal's own checkout link
+  // (live since 2026-08-19); a Square invoice or a card at the desk never
+  // reaches us, and rows older than the webhook were never told either. Staff
+  // must not delete on the strength of this screen alone. The notice is driven
+  // by the data, so it disappears by itself once the rows are reconciled.
   const unconfirmedCount = purchases.filter(p => !hasPaymentDate(p) && !isLive(p)).length;
+
+  // #429: copy the Square checkout link so a coach standing next to the
+  // athlete can hand it over without opening (and possibly paying) it.
+  const [copiedId, setCopiedId] = useState(null);
+  const copyPayLink = async (p) => {
+    try {
+      await navigator.clipboard.writeText(p.checkout_url);
+      setCopiedId(p.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (e) { alert('Could not copy the link: ' + formatUserError(e)); }
+  };
 
   // #344: one flat list made "how many packages are running?" unanswerable —
   // a recurring subscription and a one-off lesson pack sat side by side looking
@@ -1035,6 +1051,49 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
             {tl && <div className={`text-xs ${tl.cls}`}>{tl.text}</div>}
           </div>
         </button>
+
+        {/* #429: THE way an athlete pays an assigned package. Cordell's video:
+            an athlete taps "Awaiting payment" and finds nothing to tap next.
+            Sits OUTSIDE the header button (nested buttons are invalid HTML and
+            the header toggles the row) and is visible collapsed or open, so
+            it is never one click further away. Only rows isPayablePurchase()
+            accepts get a link — pre-webhook rows may already be paid in
+            Square and get the honest line instead. The athlete gets "Pay now";
+            staff get "Copy payment link" so they hand it to the family rather
+            than opening a checkout on their own screen. */}
+        {p.status === 'pending' && (
+          isPayablePurchase(p) ? (
+            <div className="flex items-center justify-between gap-3 px-3 py-2 border-t border-amber-200 bg-amber-50">
+              <div className="flex items-center gap-2 text-xs text-amber-900 min-w-0">
+                <CreditCard size={14} className="flex-shrink-0" />
+                <span className="truncate">Payment not confirmed. {isSelf ? 'Pay securely through Square.' : 'The family can pay through this Square link.'}</span>
+              </div>
+              {isSelf ? (
+                <a
+                  href={p.checkout_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-indigo-700 transition flex-shrink-0"
+                >
+                  <ExternalLink size={13} /> Pay now
+                </a>
+              ) : (
+                <button
+                  onClick={() => copyPayLink(p)}
+                  className="flex items-center gap-1.5 border border-indigo-300 text-indigo-700 bg-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-indigo-50 transition flex-shrink-0"
+                >
+                  <Copy size={13} /> {copiedId === p.id ? 'Copied' : 'Copy payment link'}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="px-3 py-2 border-t border-gray-100 text-xs text-gray-500">
+              {isSelf
+                ? 'If you\'ve already paid, you\'re all set — no action needed. Otherwise ask your coach for the payment link.'
+                : 'Assigned before payment confirmations were syncing, so it may already be paid in Square. Confirm there, then mark it paid in Work Portal → Store → Purchases.'}
+            </div>
+          )
+        )}
 
         {isOpen && (
           <div className="border-t border-gray-100 p-3 space-y-3">
@@ -1236,8 +1295,9 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
               <p className="font-semibold mb-1">Check Square before deleting anything here.</p>
               <p>
                 {unconfirmedCount === 1 ? 'One package on this account has' : `${unconfirmedCount} packages on this account have`}{' '}
-                no payment confirmed in the portal. Payment confirmations from Square are
-                not currently reaching us, so some of these may in fact have been paid.
+                no payment confirmed in the portal. Only payments made through the portal's own
+                checkout link confirm automatically — a Square invoice or an in-person payment never
+                reaches us, so some of these may in fact have been paid.
                 Confirm in Square first — deleting a package the athlete paid for cannot be undone.
               </p>
             </div>

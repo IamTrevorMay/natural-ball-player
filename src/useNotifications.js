@@ -5,10 +5,24 @@ import { supabase } from './supabaseClient';
 // tomorrow and silently drops today's events out of the "still live" window.
 import { fmtLocalDate } from './scheduleUtils';
 
-// 🔴 #341 KILL SWITCH — LEAVE THIS `false` UNTIL SQUARE PAYMENT CONFIRMATIONS
-// ARE VERIFIED ARRIVING.
+// #341 KILL SWITCH — was `false` from 2026-08-16 until #429 (2026-09-26).
 //
-// Flip to `true` and the athlete-facing "you still owe us" nudges come back:
+// ON as of #429. The condition below was met: square-webhook was proven live
+// on 2026-08-19 (portal checkout created 21:42, paid 21:45, no human), and by
+// 2026-09-26 store_webhook_events held 3,172 rows with 15 purchases carrying a
+// square_payment_id, the latest paid 2026-09-25. Meanwhile athletes assigned a
+// package had NO way to pay it (Cordell: "losing thousands of dollars daily").
+//
+// The double-charge risk that justified the switch has NOT gone away for rows
+// that predate the webhook: a 'pending' row created before
+// PAYMENT_LINK_SAFE_SINCE may well have been paid in Square with nobody told.
+// So every pay link in the app goes through isPayablePurchase() below, which
+// only offers a link on rows the webhook could have settled. Pre-webhook rows
+// keep the "if you already paid, no action needed" line and no link until
+// staff reconcile them (Work Portal → Store → Purchases).
+//
+// The original rationale, kept for the record. With the flag on, the
+// athlete-facing "you still owe us" nudges come back:
 // the NotificationBell row and the StoreModal "My Purchases" pay link, both of
 // which point at a LIVE Square checkout_url. Measured against the LIVE database
 // on 2026-08-16: `store_webhook_events` holds ZERO rows — Square's payment
@@ -36,7 +50,23 @@ import { fmtLocalDate } from './scheduleUtils';
 // wording in NotificationBell.js / StoreModal.js, which states only what we can
 // evidence ("Payment not confirmed") and tells an athlete who already paid that
 // no action is needed.
-export const PAYMENT_DUE_NOTICES_ENABLED = false;
+export const PAYMENT_DUE_NOTICES_ENABLED = true;
+
+// #429: the first moment a portal-created purchase was observed being flipped
+// to paid by square-webhook. A 'pending' row created on or after this date is
+// one Square would have told us about had it been paid, so its checkout_url is
+// safe to offer. Anything older is unfalsifiable and gets no link.
+export const PAYMENT_LINK_SAFE_SINCE = '2026-08-19T00:00:00Z';
+
+// #429: the ONE rule for "may we show this athlete a pay link". Every consumer
+// (NotificationBell, StoreModal, PackagesModal) uses this rather than testing
+// status/checkout_url itself, so the date rule cannot drift between them.
+export function isPayablePurchase(p) {
+  if (!PAYMENT_DUE_NOTICES_ENABLED) return false;
+  if (!p || p.status !== 'pending' || !p.checkout_url) return false;
+  if (!p.created_at) return false;
+  return new Date(p.created_at).getTime() >= new Date(PAYMENT_LINK_SAFE_SINCE).getTime();
+}
 
 // #224 — Cordell asked for this in as many words: "Can you get a notification
 // system to remind athletes who dont have their whoop connected to connect so
@@ -435,9 +465,11 @@ export function useMainPortalCounts(userId, userRole) {
           .eq('user_id', userId)
           .eq('status', 'pending')
           .not('checkout_url', 'is', null)
+          // #429: pre-webhook rows may already be paid in Square — never nudge on them.
+          .gte('created_at', PAYMENT_LINK_SAFE_SINCE)
           .order('created_at', { ascending: false })
           .limit(10);
-        setPendingPayments(pays || []);
+        setPendingPayments((pays || []).filter(isPayablePurchase));
       } catch (e) { console.error('Pending payments error:', e); }
     } else {
       setPendingPayments([]);

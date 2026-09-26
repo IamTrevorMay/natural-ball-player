@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 import { X, ShoppingBag, Loader2, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
-import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
+import { isPayablePurchase } from './useNotifications';
 
 const KIND_LABEL = {
   lesson: 'Lessons',
@@ -201,7 +201,7 @@ export default function StoreModal({ userId, onClose, loggedInUserId }) {
                           confirmed", flag or no flag — the pill is visible
                           either way and an athlete who paid in Square deserves
                           to be told the portal's silence isn't a bill. */}
-                      {pu.status === 'pending' && (
+                      {pu.status === 'pending' && !isPayablePurchase(pu) && (
                         <p className="text-xs text-gray-500 mt-0.5">
                           If you've already paid, you're all set — no action needed.
                         </p>
@@ -209,15 +209,14 @@ export default function StoreModal({ userId, onClose, loggedInUserId }) {
                     </div>
                     <div className="flex items-center gap-2">
                       <StatusPill status={pu.status} />
-                      {/* #341: the pay-again link is behind
-                          PAYMENT_DUE_NOTICES_ENABLED (useNotifications.js,
-                          currently false). It sends the athlete to the original
-                          live Square checkout_url, and with the payment webhook
-                          never having fired, 'pending' includes purchases that
-                          were really paid — so "Complete" was offering paying
-                          customers a second charge. It comes back, reworded, on
-                          the day Square confirmations are verified arriving. */}
-                      {PAYMENT_DUE_NOTICES_ENABLED && pu.status === 'pending' && pu.checkout_url && (
+                      {/* #341/#429: the link goes to the original live Square
+                          checkout_url. It was hidden while the payment webhook
+                          had never fired ('pending' then included purchases that
+                          were really paid, so "Complete" offered paying customers
+                          a second charge). Back since #429, but ONLY on rows the
+                          webhook could have settled — isPayablePurchase holds the
+                          date rule. */}
+                      {isPayablePurchase(pu) && (
                         <a
                           href={pu.checkout_url}
                           className="text-xs text-blue-600 hover:underline whitespace-nowrap"
