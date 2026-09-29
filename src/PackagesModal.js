@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, CalendarClock, AlertTriangle, History } from 'lucide-react';
+import { X, ChevronDown, ChevronRight, Plus, Calendar, Package, Trash2, Ban, CalendarClock, AlertTriangle, History, CreditCard, Copy, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { isPayablePurchase } from './useNotifications';
+import { manualPaidPatch } from './paidTransition';
 import { formatUserError } from './errorMessage';
 import { familyLabel, frequencyOf } from './productFamily';
 import {
@@ -690,7 +692,129 @@ function ExtendExpiryPanel({ purchase, athleteName, onCancel, onExtended }) {
   );
 }
 
-export default function PackagesModal({ userId, userName, canManage, canDelete = false, onClose }) {
+// #430: mark an assigned package paid from the athlete's own profile.
+//
+// Cordell: "Please update the system to have an option to click on an
+// assigned package to mark it as paid." Until now the only place was Work
+// Portal → Store → Purchases, and this modal's own copy sent staff there —
+// two screens away from the athlete they are standing next to.
+//
+// Same write as every other manual paid path (paidTransition.js: status,
+// paid_at, the expiry clock from the 5/10/20 rule, remaining_qty seeded from
+// bundle_qty). The date is asked for rather than assumed because Cordell's
+// rule (#306) is that the clock starts the day the money moved, and the
+// person at the desk is the one who knows when that was. Defaults to today.
+//
+// Like ExtendExpiryPanel this is a preview first: the staff member sees the
+// paid date, the resulting expiry and the session count before anything is
+// written. The UPDATE is fenced on status='pending' so two people marking
+// the same row cannot both "succeed"; the second one is told to refresh.
+function MarkPaidPanel({ purchase, athleteName, onCancel, onPaid, onStale }) {
+  const today = localDayString(new Date());
+  const [day, setDay] = useState(today);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState('');
+
+  const qty = purchase.store_products?.bundle_qty ?? null;
+  const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(day) ? new Date(`${day}T12:00:00`) : null;
+  const valid = !!paidAt && !Number.isNaN(paidAt.getTime()) && day <= today;
+  const patch = valid ? manualPaidPatch({ row: purchase, bundleQty: qty, paidAt }) : null;
+
+  const submit = async () => {
+    if (!patch) return;
+    setBusy(true);
+    setFailure('');
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const full = {
+        ...patch,
+        // Provenance, so a hand-marked payment is never indistinguishable
+        // from one Square confirmed (mirrors the bulk action in WorkStore.js).
+        metadata: {
+          ...(purchase.metadata || {}),
+          manual_paid_at: new Date().toISOString(),
+          manual_paid_by: user?.id || null,
+          paid_at_source: day === today ? 'profile_today' : 'profile_chosen_date',
+        },
+      };
+      const { data, error } = await supabase
+        .from('store_purchases')
+        .update(full)
+        .eq('id', purchase.id)
+        .eq('status', 'pending')
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        setFailure('This package is no longer awaiting payment — someone else may have marked it paid or removed it. The list has been refreshed.');
+        await onStale();
+        return;
+      }
+      onPaid({ paidDay: day, expiresAt: full.expires_at ?? purchase.expires_at ?? null });
+    } catch (e) {
+      setFailure(formatUserError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const expiryLine = (() => {
+    if (!patch) return null;
+    if (patch.expires_at) return `Expiry clock starts that day — expires ${fmtDate(patch.expires_at)}.`;
+    if (purchase.expires_at) return `Expiry stays ${fmtDate(purchase.expires_at)}.`;
+    return 'No expiry clock for this pack size.';
+  })();
+  const sessionsLine = (() => {
+    if (!patch) return null;
+    if (patch.remaining_qty != null) return `Sessions left set to ${patch.remaining_qty}.`;
+    if (purchase.remaining_qty != null) return `Sessions left stay at ${purchase.remaining_qty}.`;
+    return null;
+  })();
+
+  return (
+    <div className="rounded-lg border border-green-300 bg-green-50 p-3 space-y-2">
+      <p className="text-sm font-semibold text-green-900">
+        Mark &ldquo;{displayName(purchase)}&rdquo; as paid{athleteName ? ` for ${athleteName}` : ''}?
+      </p>
+      <p className="text-xs text-green-800">
+        Only do this if the money has actually arrived — in Square, by invoice, or in person.
+        {athleteName ? ` ${athleteName}` : ' The athlete'} will be able to book against it straight away.
+      </p>
+      <label className="block text-xs text-green-900">
+        <span className="font-medium">Date paid</span>
+        <input
+          type="date"
+          value={day}
+          max={today}
+          onChange={(e) => setDay(e.target.value)}
+          disabled={busy}
+          className="mt-1 block border border-green-300 rounded px-2 py-1 text-sm bg-white text-gray-900"
+        />
+      </label>
+      {valid ? (
+        <ul className="text-xs text-green-900 list-disc pl-4 space-y-0.5">
+          <li>Records {fmtDay(day)} as the paid date.</li>
+          {expiryLine && <li>{expiryLine}</li>}
+          {sessionsLine && <li>{sessionsLine}</li>}
+        </ul>
+      ) : (
+        <p className="text-xs text-red-700">Enter a date on or before today.</p>
+      )}
+      {failure && <p className="text-xs text-red-700">{failure}</p>}
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={submit}
+          disabled={busy || !valid}
+          className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-green-700 transition disabled:opacity-50"
+        >
+          <CheckCircle2 size={13} /> {busy ? 'Saving…' : 'Confirm paid'}
+        </button>
+        <button onClick={onCancel} disabled={busy} className="border border-gray-300 text-gray-700 px-2.5 py-1 rounded text-xs font-medium hover:bg-white transition disabled:opacity-50">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+export default function PackagesModal({ userId, userName, canManage, canDelete = false, isSelf = false, onClose }) {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState([]);
   const [usageByPurchase, setUsageByPurchase] = useState({});
@@ -702,6 +826,10 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
   // What the last successful extension did, so the staff member gets told the
   // write landed instead of watching the row quietly change.
   const [extendNotice, setExtendNotice] = useState(null);
+  // #430: the id of the pending package whose mark-paid panel is open, and
+  // what the last successful write did (same pattern as extend above).
+  const [markingPaidId, setMarkingPaidId] = useState(null);
+  const [paidNotice, setPaidNotice] = useState(null);
   // #344: null means "we could not establish a last-sync date" — either the
   // query failed, or store_backfill_runs is empty. It is NEVER used to mean
   // "synced just now"; the fallback wording says the date is unknown.
@@ -725,7 +853,11 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
         // #306: `metadata` carries the extension audit trail, so "already
         // extended, by whom" is visible on the list itself and not only after
         // opening the extend panel.
-        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, metadata, store_products(bundle_qty, kind)')
+        // #429: checkout_url was never selected here, so the athlete's own
+        // Packages screen — the one place they open from "Awaiting payment" —
+        // had no way to pay. The link is the Square checkout the assigner
+        // generated; whether it is SAFE to show is isPayablePurchase()'s call.
+        .select('id, product_id, product_kind, product_name_snapshot, status, remaining_qty, expires_at, amount_cents, created_at, paid_at, square_subscription_id, checkout_url, metadata, store_products(bundle_qty, kind)')
         .eq('user_id', userId)
         .in('product_kind', ['package', 'bundle', 'lesson'])
         .order('created_at', { ascending: false });
@@ -889,7 +1021,7 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
       // #341: "Awaiting payment" currently means "Square never told us", not
       // "the athlete didn't pay" — so spell that out at the moment of deletion,
       // which is the point of no return.
-      parts.push('This package has no payment confirmed in the portal. Square payment confirmations are not currently syncing, so it may still have been paid. Check Square before continuing.');
+      parts.push('This package has no payment confirmed in the portal. If it was paid by Square invoice or in person, the portal was never told, so it may still have been paid. Check Square before continuing.');
     }
 
     if (!window.confirm(parts.join('\n\n'))) return;
@@ -959,13 +1091,24 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
     }
   };
 
-  // #341: Square payment confirmations are not currently reaching the portal —
-  // store_webhook_events has never recorded a single event, so no one-time
-  // purchase has ever been marked paid. That means "Awaiting payment" is NOT
-  // proof the athlete didn't pay; Square may well hold a completed payment for
-  // it. Staff must not delete on the strength of this screen alone. The notice
-  // is driven by the data, so it disappears by itself once payments sync.
+  // #341/#429: "Awaiting payment" is NOT proof the athlete didn't pay. The
+  // webhook only settles purchases paid through the portal's own checkout link
+  // (live since 2026-08-19); a Square invoice or a card at the desk never
+  // reaches us, and rows older than the webhook were never told either. Staff
+  // must not delete on the strength of this screen alone. The notice is driven
+  // by the data, so it disappears by itself once the rows are reconciled.
   const unconfirmedCount = purchases.filter(p => !hasPaymentDate(p) && !isLive(p)).length;
+
+  // #429: copy the Square checkout link so a coach standing next to the
+  // athlete can hand it over without opening (and possibly paying) it.
+  const [copiedId, setCopiedId] = useState(null);
+  const copyPayLink = async (p) => {
+    try {
+      await navigator.clipboard.writeText(p.checkout_url);
+      setCopiedId(p.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (e) { alert('Could not copy the link: ' + formatUserError(e)); }
+  };
 
   // #344: one flat list made "how many packages are running?" unanswerable —
   // a recurring subscription and a one-off lesson pack sat side by side looking
@@ -1035,6 +1178,97 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
             {tl && <div className={`text-xs ${tl.cls}`}>{tl.text}</div>}
           </div>
         </button>
+
+        {/* #429: THE way an athlete pays an assigned package. Cordell's video:
+            an athlete taps "Awaiting payment" and finds nothing to tap next.
+            Sits OUTSIDE the header button (nested buttons are invalid HTML and
+            the header toggles the row) and is visible collapsed or open, so
+            it is never one click further away. Only rows isPayablePurchase()
+            accepts get a link (pending + checkout_url — every such row is a
+            real bill as of 2026-09-26). The athlete gets "Pay now";
+            staff get "Copy payment link" so they hand it to the family rather
+            than opening a checkout on their own screen. */}
+        {p.status === 'pending' && (
+          isPayablePurchase(p) ? (
+            <div className="flex items-center justify-between gap-3 px-3 py-2 border-t border-amber-200 bg-amber-50">
+              <div className="flex items-center gap-2 text-xs text-amber-900 min-w-0">
+                <CreditCard size={14} className="flex-shrink-0" />
+                <span className="truncate">Payment not confirmed. {isSelf ? 'Pay securely through Square.' : 'The family can pay through this Square link.'}</span>
+              </div>
+              {isSelf ? (
+                <a
+                  href={p.checkout_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-indigo-700 transition flex-shrink-0"
+                >
+                  <ExternalLink size={13} /> Pay now
+                </a>
+              ) : (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => copyPayLink(p)}
+                    className="flex items-center gap-1.5 border border-indigo-300 text-indigo-700 bg-white px-3 py-1.5 rounded text-xs font-semibold hover:bg-indigo-50 transition"
+                  >
+                    <Copy size={13} /> {copiedId === p.id ? 'Copied' : 'Copy payment link'}
+                  </button>
+                  {/* #430: the money can arrive by invoice or at the desk, and
+                      the webhook never hears about either. This is how staff
+                      tell the portal. */}
+                  {canManage && (
+                    <button
+                      onClick={() => setMarkingPaidId(prev => (prev === p.id ? null : p.id))}
+                      disabled={busyId === p.id}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition disabled:opacity-50 ${
+                        markingPaidId === p.id ? 'bg-green-600 text-white hover:bg-green-700' : 'border border-green-400 text-green-800 bg-white hover:bg-green-50'
+                      }`}
+                    >
+                      <CheckCircle2 size={13} /> Mark as paid
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3 px-3 py-2 border-t border-gray-100 text-xs text-gray-500">
+              <span className="min-w-0">
+                {isSelf
+                  ? 'If you\'ve already paid, you\'re all set — no action needed. Otherwise ask your coach for the payment link.'
+                  : 'No Square checkout link is stored on this row, so the family cannot pay it from the portal. If the money has arrived by invoice or in person, mark it paid here.'}
+              </span>
+              {canManage && !isSelf && (
+                <button
+                  onClick={() => setMarkingPaidId(prev => (prev === p.id ? null : p.id))}
+                  disabled={busyId === p.id}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition flex-shrink-0 disabled:opacity-50 ${
+                    markingPaidId === p.id ? 'bg-green-600 text-white hover:bg-green-700' : 'border border-green-400 text-green-800 bg-white hover:bg-green-50'
+                  }`}
+                >
+                  <CheckCircle2 size={13} /> Mark as paid
+                </button>
+              )}
+            </div>
+          )
+        )}
+
+        {/* #430: sits directly under the pending bar, outside the expanded
+            body, so it is reachable whether or not the row is open. */}
+        {canManage && p.status === 'pending' && markingPaidId === p.id && (
+          <div className="border-t border-gray-100 p-3">
+            <MarkPaidPanel
+              purchase={p}
+              athleteName={userName}
+              onCancel={() => setMarkingPaidId(null)}
+              onStale={load}
+              onPaid={async ({ paidDay, expiresAt }) => {
+                setMarkingPaidId(null);
+                setPaidNotice({ id: p.id, name: displayName(p), paidDay, expiresAt });
+                await load();
+                setExpanded(prev => ({ ...prev, [p.id]: true }));
+              }}
+            />
+          </div>
+        )}
 
         {isOpen && (
           <div className="border-t border-gray-100 p-3 space-y-3">
@@ -1231,13 +1465,26 @@ export default function PackagesModal({ userId, userName, canManage, canDelete =
               </button>
             </div>
           )}
+          {paidNotice && (
+            <div className="rounded-lg border border-green-300 bg-green-50 p-3 text-xs text-green-900 flex items-start justify-between gap-3">
+              <p>
+                &ldquo;{paidNotice.name}&rdquo; marked as paid on {fmtDay(paidNotice.paidDay)}
+                {userName ? ` for ${userName}` : ''}.
+                {paidNotice.expiresAt ? ` Expires ${fmtDate(paidNotice.expiresAt)}.` : ''} Your name is on the record.
+              </p>
+              <button onClick={() => setPaidNotice(null)} className="text-green-700 hover:text-green-900 flex-shrink-0" aria-label="Dismiss">
+                <X size={14} />
+              </button>
+            </div>
+          )}
           {!loading && unconfirmedCount > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
               <p className="font-semibold mb-1">Check Square before deleting anything here.</p>
               <p>
                 {unconfirmedCount === 1 ? 'One package on this account has' : `${unconfirmedCount} packages on this account have`}{' '}
-                no payment confirmed in the portal. Payment confirmations from Square are
-                not currently reaching us, so some of these may in fact have been paid.
+                no payment confirmed in the portal. Only payments made through the portal's own
+                checkout link confirm automatically — a Square invoice or an in-person payment never
+                reaches us, so some of these may in fact have been paid.
                 Confirm in Square first — deleting a package the athlete paid for cannot be undone.
               </p>
             </div>

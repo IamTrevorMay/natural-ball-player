@@ -5,10 +5,27 @@ import { supabase } from './supabaseClient';
 // tomorrow and silently drops today's events out of the "still live" window.
 import { fmtLocalDate } from './scheduleUtils';
 
-// 🔴 #341 KILL SWITCH — LEAVE THIS `false` UNTIL SQUARE PAYMENT CONFIRMATIONS
-// ARE VERIFIED ARRIVING.
+// #341 KILL SWITCH — was `false` from 2026-08-16 until #429 (2026-09-26).
 //
-// Flip to `true` and the athlete-facing "you still owe us" nudges come back:
+// ON as of #429. The condition below was met: square-webhook was proven live
+// on 2026-08-19 (portal checkout created 21:42, paid 21:45, no human), and by
+// 2026-09-26 store_webhook_events held 3,172 rows with 15 purchases carrying a
+// square_payment_id, the latest paid 2026-09-25. Meanwhile athletes assigned a
+// package had NO way to pay it (Cordell: "losing thousands of dollars daily").
+//
+// Every pay link in the app goes through isPayablePurchase() below. #429
+// first shipped with a date gate (PAYMENT_LINK_SAFE_SINCE = 2026-08-19, the
+// day the webhook was proven live) on the theory that older 'pending' rows
+// might already have been paid in Square with nobody told. Cordell checked:
+// as of 2026-09-26 ALL 163 pending rows (135 pre-webhook, 117 athletes,
+// oldest 2026-06-16) are genuinely unpaid, and their square.link URLs still
+// resolve to live checkouts. So the gate is gone — pending + checkout_url is
+// the whole rule. If a paid-but-pending batch ever turns up again, staff
+// reconcile it (Work Portal → Store → Purchases), which flips status and
+// removes the link; don't reintroduce a date.
+//
+// The original rationale, kept for the record. With the flag on, the
+// athlete-facing "you still owe us" nudges come back:
 // the NotificationBell row and the StoreModal "My Purchases" pay link, both of
 // which point at a LIVE Square checkout_url. Measured against the LIVE database
 // on 2026-08-16: `store_webhook_events` holds ZERO rows — Square's payment
@@ -36,7 +53,15 @@ import { fmtLocalDate } from './scheduleUtils';
 // wording in NotificationBell.js / StoreModal.js, which states only what we can
 // evidence ("Payment not confirmed") and tells an athlete who already paid that
 // no action is needed.
-export const PAYMENT_DUE_NOTICES_ENABLED = false;
+export const PAYMENT_DUE_NOTICES_ENABLED = true;
+
+// #429: the ONE rule for "may we show this athlete a pay link". Every consumer
+// (NotificationBell, StoreModal, PackagesModal) uses this rather than testing
+// status/checkout_url itself, so the rule cannot drift between them.
+export function isPayablePurchase(p) {
+  if (!PAYMENT_DUE_NOTICES_ENABLED) return false;
+  return !!(p && p.status === 'pending' && p.checkout_url);
+}
 
 // #224 — Cordell asked for this in as many words: "Can you get a notification
 // system to remind athletes who dont have their whoop connected to connect so
@@ -437,7 +462,7 @@ export function useMainPortalCounts(userId, userRole) {
           .not('checkout_url', 'is', null)
           .order('created_at', { ascending: false })
           .limit(10);
-        setPendingPayments(pays || []);
+        setPendingPayments((pays || []).filter(isPayablePurchase));
       } catch (e) { console.error('Pending payments error:', e); }
     } else {
       setPendingPayments([]);

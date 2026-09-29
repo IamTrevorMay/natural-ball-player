@@ -114,6 +114,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     + (mainCounts?.pendingSlots?.length || 0)
     // #341: excluded while PAYMENT_DUE_NOTICES_ENABLED is off, or the badge
     // would advertise notifications the panel below deliberately doesn't render.
+    // #429: on again; the hook only returns rows isPayablePurchase() accepts.
     + (PAYMENT_DUE_NOTICES_ENABLED ? (mainCounts?.pendingPayments?.length || 0) : 0)
     + (mainCounts?.packageFlags?.length || 0)
     // #408: facility events this coach was tagged on and hasn't dismissed.
@@ -348,8 +349,11 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
 
             {/* #341: the whole payment block — notice, checkout link and the
                 admin delete button that hangs off it — is behind
-                PAYMENT_DUE_NOTICES_ENABLED (defined in useNotifications.js,
-                currently false). This used to read "Payment due: … tap to
+                PAYMENT_DUE_NOTICES_ENABLED (defined in useNotifications.js —
+                off 2026-08-16 → on again 2026-09-26 for #429; every pending
+                row with a checkout_url is a real bill, see isPayablePurchase).
+                This
+                used to read "Payment due: … tap to
                 complete payment" over a live Square checkout_url; with the
                 payment webhook never firing, that told athletes who HAD paid
                 that they owed money and gave them one click to pay twice.

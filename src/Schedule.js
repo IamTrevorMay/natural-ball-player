@@ -401,6 +401,11 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
   const [coachSlots, setCoachSlots] = useState([]);
   const [slotReservations, setSlotReservations] = useState([]);
   const [publicSlotBookings, setPublicSlotBookings] = useState([]);
+  // #428: live booked count per occurrence, keyed `${slot_id}|${slot_date}`,
+  // from the slot_booked_counts RPC (SECURITY DEFINER). slotReservations /
+  // publicSlotBookings above are RLS-scoped — an athlete only sees their own
+  // rows, so counting those told them every session was open.
+  const [slotBookedCounts, setSlotBookedCounts] = useState({});
   const [showCreateSlot, setShowCreateSlot] = useState(null);
   const [showReserveSlot, setShowReserveSlot] = useState(null);
   // #276: pending over-the-weekly-cap warning on the coach-side confirm.
@@ -1317,15 +1322,21 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
     setCoachSlots(expandedSlots);
     const slotIds = (slots || []).map(s => s.id);
     if (slotIds.length > 0) {
-      const [resResult, pubResult] = await Promise.all([
+      const [resResult, pubResult, countResult] = await Promise.all([
         supabase.from('slot_reservations').select('*, users:player_id(full_name, email)').in('slot_id', slotIds).gte('slot_date', startStr).lte('slot_date', endStr),
         supabase.from('public_bookings').select('source_id, occurrence_date, guest_name, status').eq('source_type', 'training_slot').in('source_id', slotIds).gte('occurrence_date', startStr).lte('occurrence_date', endStr).in('status', ['pending_payment', 'confirmed']),
+        supabase.rpc('slot_booked_counts', { p_slot_ids: slotIds, p_start: startStr, p_end: endStr }),
       ]);
       setSlotReservations(resResult.data || []);
       setPublicSlotBookings(pubResult.data || []);
+      if (countResult.error) console.error('slot_booked_counts failed:', countResult.error);
+      const counts = {};
+      (countResult.data || []).forEach(c => { counts[`${c.slot_id}|${c.slot_date}`] = c.booked; });
+      setSlotBookedCounts(counts);
     } else {
       setSlotReservations([]);
       setPublicSlotBookings([]);
+      setSlotBookedCounts({});
     }
   };
 
@@ -2233,6 +2244,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
                     slots={coachSlots}
                     reservations={slotReservations}
                     publicBookings={publicSlotBookings}
+                    bookedCounts={slotBookedCounts}
                     coach={selectedCoach}
                     userId={userId}
                     userRole={userRole}
@@ -2805,6 +2817,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
                 slots={coachSlots}
                 reservations={slotReservations}
                 publicBookings={publicSlotBookings}
+                bookedCounts={slotBookedCounts}
                 coach={selectedCoach}
                 userId={userId}
                 userRole={userRole}
@@ -8520,7 +8533,7 @@ const ATTENDANCE_OPTIONS = [
   { value: 'cancelled', label: 'Cancelled', cls: 'bg-gray-500' },
 ];
 
-function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings = [], coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop, onMessageCoach }) {
+function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings = [], bookedCounts = {}, coach, userId, userRole, canManage, onAddSlot, onReserve, onConfirm, onDecline, onMarkAttendance, selecting, selectedIds, onToggleSelect, onEventContextMenu, onSlotDrop, onMessageCoach }) {
   const startOfWeek = new Date(selectedDate);
   startOfWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
@@ -8588,7 +8601,14 @@ function CoachSlotsWeekView({ selectedDate, slots, reservations, publicBookings 
                   const slotRes = reservations.filter(r => r.slot_id === slot.id && r.slot_date === dateStr && r.status !== 'cancelled');
                   const activeSlotRes = slotRes.filter(r => r.status === 'pending' || r.status === 'confirmed');
                   const pubRes = publicBookings.filter(b => b.source_id === slot.id && b.occurrence_date === dateStr);
-                  const isBooked = (activeSlotRes.length + pubRes.length) >= (slot.max_players || 1);
+                  // #428: `bookedCounts` comes from the SECURITY DEFINER RPC and
+                  // is correct for every viewer; the local filter only sees what
+                  // RLS lets this user read (an athlete: their own row), so it
+                  // is a floor, never the truth. Take the larger of the two so a
+                  // just-made booking shows before the counts refetch.
+                  const rpcBooked = bookedCounts[`${slot.id}|${dateStr}`];
+                  const bookedCount = Math.max(rpcBooked ?? 0, activeSlotRes.length + pubRes.length);
+                  const isBooked = bookedCount >= (slot.max_players || 1);
                   const userRes = slotRes.find(r => r.player_id === userId);
                   const endTime = getEndTime(slot.start_time, slot.duration_minutes);
                   const isSel = selecting && selectedIds && selectedIds.has(String(slot.id));
@@ -9318,22 +9338,28 @@ function ReserveSlotModal({ slot, coach, onClose, onSuccess }) {
         });
         if (warning) { setCapWarning(warning); setLoading(false); return; }
       }
+      // #428: count through the SECURITY DEFINER RPC. Counting the two tables
+      // directly ran under THIS athlete's RLS (own rows only / staff only)
+      // and returned 0 for every session they had not booked yet, so a full
+      // session never looked full. The DB trigger below is the real gate;
+      // this check just gives a clean early message.
       const maxPlayers = slot.max_players || 1;
-      const [{ count: resCount, error: resErr }, { count: pubCount, error: pubErr }] = await Promise.all([
-        supabase.from('slot_reservations').select('id', { count: 'exact', head: true })
-          .eq('slot_id', slot.id).eq('slot_date', slot.slot_date).in('status', ['pending', 'confirmed']),
-        supabase.from('public_bookings').select('id', { count: 'exact', head: true })
-          .eq('source_type', 'training_slot').eq('source_id', slot.id).eq('occurrence_date', slot.slot_date)
-          .in('status', ['pending_payment', 'confirmed']),
-      ]);
-      if (resErr) throw resErr;
-      if (pubErr) throw pubErr;
-      if ((resCount + pubCount) >= maxPlayers) { alert('This session is now fully booked.'); setLoading(false); return; }
+      const { data: countRows, error: countErr } = await supabase.rpc('slot_booked_counts', {
+        p_slot_ids: [slot.id], p_start: slot.slot_date, p_end: slot.slot_date,
+      });
+      if (countErr) throw countErr;
+      const booked = (countRows || []).reduce((n, c) => n + (c.booked || 0), 0);
+      if (booked >= maxPlayers) { alert('This session is now fully booked.'); setLoading(false); return; }
       const status = slot.auto_confirm ? 'confirmed' : 'pending';
       const { error } = await supabase.from('slot_reservations').insert({
         slot_id: slot.id, player_id: user.id, slot_date: slot.slot_date, status,
         player_note: playerNote || null, confirmed_at: slot.auto_confirm ? new Date().toISOString() : null
       });
+      // P0428 = slot_reservations_capacity_guard: someone else took the last
+      // spot between the count above and this insert.
+      if (error && (error.code === 'P0428' || /fully booked/i.test(error.message || ''))) {
+        alert('This session is now fully booked.'); onSuccess(); return;
+      }
       if (error) throw error;
       // #305 warn mode: the booking went through without (or with a paused)
       // package — tell staff. After the insert, so a failed reservation is
