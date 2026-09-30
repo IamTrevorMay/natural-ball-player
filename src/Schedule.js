@@ -729,6 +729,18 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
           slotEvents.push({ ...slot, event_date: slot.slot_date, event_type: 'training_slot', title: slot.notes || 'Training Slot', _is_slot: true });
         }
       });
+
+      // #431: attach booking counts so MonthView/WeekView can show a green
+      // checkmark on sessions that have at least one sign-up.
+      if (slotEvents.length > 0) {
+        const slotIds = [...new Set(slotEvents.map(e => e.id))];
+        const { data: counts, error: cErr } = await supabase.rpc('slot_booked_counts', { p_slot_ids: slotIds, p_start: startStr, p_end: endStr });
+        if (!cErr && counts) {
+          const countMap = {};
+          counts.forEach(c => { countMap[`${c.slot_id}|${c.slot_date}`] = c.booked; });
+          slotEvents.forEach(e => { e._booked_count = countMap[`${e.id}|${e.event_date}`] || 0; });
+        }
+      }
     } else {
       const { data: myRes } = await supabase.from('slot_reservations').select('*, training_slots(*)').eq('player_id', userId).eq('status', 'confirmed');
       (myRes || []).forEach(r => {
@@ -3150,6 +3162,11 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                       {(event.start_time || event.event_time) && <span className="font-medium">{formatTimeDisplay(event.start_time || event.event_time)} </span>}
                       {event.title || event.opponent || event.event_type}
                     </span>
+                    {event.event_type === 'training_slot' && event._booked_count > 0 && (
+                      <span className="flex-shrink-0 w-3.5 h-3.5 bg-green-500 rounded-full inline-flex items-center justify-center group-hover/event:opacity-0 transition">
+                        <Check size={8} className="text-white" />
+                      </span>
+                    )}
                     {canManage && !selecting && <Edit2 size={10} className="flex-shrink-0 opacity-0 group-hover/event:opacity-70 transition" />}
                   </div>
                 ))}
@@ -3343,6 +3360,11 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
       } : undefined}
       title={clickable ? (draggable ? 'Right-click for options. Drag to reschedule.' : 'Click to edit') : undefined}
     >
+      {event.event_type === 'training_slot' && event._booked_count > 0 && (
+        <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full flex items-center justify-center group-hover:opacity-0 transition">
+          <Check size={8} className="text-white" />
+        </span>
+      )}
       {clickable && (
         <Edit2 size={12} className="absolute top-1.5 right-1.5 text-gray-500 opacity-0 group-hover:opacity-100 transition" />
       )}
