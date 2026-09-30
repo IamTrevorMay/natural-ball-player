@@ -3816,7 +3816,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       <FileText size={20} className={waiverData ? 'text-green-600' : 'text-gray-400'} />
                     </div>
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-900">Waiver</h4>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-sm font-semibold text-gray-900">Waiver</h4>
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700">All Athletes</span>
+                      </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {waiverData ? (
                           <span className="text-green-600 font-medium">
@@ -3900,7 +3903,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       <FileText size={20} className={contractData ? 'text-green-600' : 'text-gray-400'} />
                     </div>
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-900">Player Contract</h4>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-sm font-semibold text-gray-900">Player Contract</h4>
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700">Naturals Select</span>
+                      </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {contractData ? (
                           <span className="text-green-600 font-medium">
@@ -3977,7 +3983,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       <FileText size={20} className={loiData ? 'text-green-600' : 'text-gray-400'} />
                     </div>
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-900">Letter of Intent</h4>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-sm font-semibold text-gray-900">Letter of Intent</h4>
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-purple-50 text-purple-700">Naturals Select</span>
+                      </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {loiData ? (
                           <span className="text-green-600 font-medium">
@@ -4058,7 +4067,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                         <FileText size={20} className={facilityFineData ? 'text-green-600' : 'text-gray-400'} />
                       </div>
                       <div>
-                        <h4 className="text-sm font-semibold text-gray-900">{FACILITY_FINE_LABEL}</h4>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="text-sm font-semibold text-gray-900">{FACILITY_FINE_LABEL}</h4>
+                          <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700">All Athletes</span>
+                        </div>
                         <p className="text-xs text-gray-500 mt-0.5">
                           {facilityFineData ? (
                             <span className="text-green-600 font-medium">
@@ -4123,7 +4135,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                       <FileText size={20} className={medicalHistory ? 'text-green-600' : 'text-gray-400'} />
                     </div>
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-900">Medical History / Athlete Intake Form</h4>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-sm font-semibold text-gray-900">Medical History / Athlete Intake Form</h4>
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700">All Athletes</span>
+                      </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         {medicalHistory ? (
                           <span className="text-green-600 font-medium">
