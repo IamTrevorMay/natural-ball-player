@@ -2497,10 +2497,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 // if a future edit removes it this filter still fails closed.
                 if (userRole === 'player' && loggedInUserId !== userId) return false;
                 // #226: age-gate sensitive tabs, fail-closed — hidden when the viewed
-                // athlete's DOB is missing or under the threshold, for everyone
-                // (including the athlete's own view): Recruitment 15+.
+                // athlete's DOB is missing or under the threshold.
+                // Staff (admin/coach) bypass the gate so they can always manage recruitment.
                 // Marek (18+) is now a Health sub-tab and gated there (#376).
-                if (tab.key === 'recruitment' && !meetsAge(userData?.date_of_birth, 15)) return false;
+                if (tab.key === 'recruitment' && !['admin', 'coach'].includes(userRole) && !meetsAge(userData?.date_of_birth, 15)) return false;
                 // Players get a read-only Schedule tab (calendar + their programming,
                 // merged per #226) on their OWN profile so they can see what's
                 // programmed for them (#153). Staff keep it via tab.roles below.
