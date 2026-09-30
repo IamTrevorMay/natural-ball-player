@@ -6,6 +6,7 @@ import { useModalTracking, trackAction } from './usage';
 import { COACH_SKILL_OPTIONS, SC_SKILL } from './skillOptions';
 import { allowanceForName, stripFrequencySuffix, LIFTING_WEEKLY_CAP } from './bookingCaps';
 import BulkTagFacilityEventTeams from './BulkTagFacilityEventTeams';
+import SoftwareDownloads from './SoftwareDownloads';
 
 async function deleteAuthUser(userId) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -304,6 +305,21 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
                 Facility Teams
               </button>
             )}
+            {/* Admin-only: installers for the desktop tools staff run alongside
+                the portal (BullpenSync first). Coaches get a tool from an
+                admin, not from here. */}
+            {userRole === 'admin' && (
+              <button
+                onClick={() => setActiveTab('downloads')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm transition whitespace-nowrap ${
+                  activeTab === 'downloads'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Downloads
+              </button>
+            )}
           </nav>
         </div>
 
@@ -365,6 +381,9 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
           )}
           {activeTab === 'facility-teams' && userRole === 'admin' && (
             <BulkTagFacilityEventTeams />
+          )}
+          {activeTab === 'downloads' && userRole === 'admin' && (
+            <SoftwareDownloads />
           )}
         </div>
       </div>

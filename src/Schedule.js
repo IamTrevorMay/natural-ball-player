@@ -818,10 +818,51 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
     const facPeople = await fetchUserDirectory(
       combined.flatMap(e => [e.athlete_id, e.coach_id])
     );
+
+    // #431 (facility calendar): who is booked on each occurrence, so the
+    // Month/Week/Lane views can flag it without a hover. Cordell: "If a green
+    // check mark pops up in the top right corner of all sessions that have an
+    // athlete(s) signed up ... that would make it easy to delete the ones not
+    // used." Three sources, any one is enough: athletes who signed themselves
+    // up (event_signups — keyed by the series master OR the child row, plus
+    // the occurrence date, exactly as FacilityEventDetail reads them), athletes
+    // staff put on the event (athlete_id / athlete_ids), and paid-or-pending
+    // public bookings. event_signups is staff-read-all and public_bookings is
+    // staff-only, so this is skipped for athletes — their own calendar is
+    // already filtered to events they're on.
+    const bookedByKey = {};
+    const addBooked = (eventId, date, who) => {
+      if (!eventId || !date) return;
+      const k = `${eventId}|${date}`;
+      (bookedByKey[k] = bookedByKey[k] || new Set()).add(who);
+    };
+    if (!restrictToPlayer && combined.length > 0) {
+      const [signupRes, pubRes] = await Promise.all([
+        supabase.from('event_signups').select('event_id, event_date, user_id').gte('event_date', startStr).lte('event_date', endStr),
+        supabase.from('public_bookings').select('id, source_id, occurrence_date').eq('source_type', 'facility_event').in('status', ['pending_payment', 'confirmed']).gte('occurrence_date', startStr).lte('occurrence_date', endStr),
+      ]);
+      if (signupRes.error) console.error('fetchFacilityEvents: event_signups query failed:', signupRes.error);
+      if (pubRes.error) console.error('fetchFacilityEvents: public_bookings query failed:', pubRes.error);
+      (signupRes.data || []).forEach(r => addBooked(r.event_id, r.event_date, `u:${r.user_id}`));
+      (pubRes.data || []).forEach(r => addBooked(r.source_id, r.occurrence_date, `p:${r.id}`));
+    }
+    const bookedCountFor = (e) => {
+      // A virtual occurrence's id is synthetic (`${master}_${n}`); its sign-ups
+      // live under _master_id. A child exception row can hold rows under its
+      // own id or its parent's (see FacilityEventDetail's ownChildRowId branch).
+      const ids = [...new Set([e._master_id, e.recurrence_parent_id, e._is_virtual ? null : e.id].filter(Boolean))];
+      const people = new Set();
+      ids.forEach(id => (bookedByKey[`${id}|${e.event_date}`] || []).forEach(who => people.add(who)));
+      if (e.athlete_id) people.add(`u:${e.athlete_id}`);
+      (e.athlete_ids || []).forEach(id => people.add(`u:${id}`));
+      return people.size;
+    };
+
     setFacilityEvents(combined.map(e => ({
       ...e,
       athlete: e.athlete_id ? (facPeople.get(e.athlete_id) || null) : null,
       coach: e.coach_id ? (facPeople.get(e.coach_id) || null) : null,
+      _booked_count: bookedCountFor(e),
     })));
   };
 
@@ -3162,8 +3203,11 @@ function MonthView({ selectedDate, events, onDateClick, hoveredDate, setHoveredD
                       {(event.start_time || event.event_time) && <span className="font-medium">{formatTimeDisplay(event.start_time || event.event_time)} </span>}
                       {event.title || event.opponent || event.event_type}
                     </span>
-                    {event.event_type === 'training_slot' && event._booked_count > 0 && (
-                      <span className="flex-shrink-0 w-3.5 h-3.5 bg-green-500 rounded-full inline-flex items-center justify-center group-hover/event:opacity-0 transition">
+                    {/* #431: training slots (coach schedule) and facility events
+                        both carry _booked_count; anything without it (team
+                        schedule events) gets no badge. */}
+                    {event._booked_count > 0 && (
+                      <span className="flex-shrink-0 w-3.5 h-3.5 bg-green-500 rounded-full inline-flex items-center justify-center group-hover/event:opacity-0 transition" title={`${event._booked_count} booked`}>
                         <Check size={8} className="text-white" />
                       </span>
                     )}
@@ -3360,8 +3404,8 @@ function EventCard({ event, compact, eventColorFn, onClick, draggable, onContext
       } : undefined}
       title={clickable ? (draggable ? 'Right-click for options. Drag to reschedule.' : 'Click to edit') : undefined}
     >
-      {event.event_type === 'training_slot' && event._booked_count > 0 && (
-        <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full flex items-center justify-center group-hover:opacity-0 transition">
+      {event._booked_count > 0 && (
+        <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full flex items-center justify-center group-hover:opacity-0 transition" title={`${event._booked_count} booked`}>
           <Check size={8} className="text-white" />
         </span>
       )}
@@ -3855,6 +3899,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         entryTimeRange ? `${entryTitle} - ${entryTimeRange}` : entryTitle,
                         entryCoachNames.length ? `Coach: ${entryCoachNames.join(', ')}` : null,
                         entry.event.athlete?.full_name ? `Athlete: ${entry.event.athlete.full_name}` : null,
+                        entry.event._booked_count > 0 ? `Booked: ${entry.event._booked_count}` : null,
                       ].filter(Boolean);
                       return (
                         <td
@@ -3920,6 +3965,15 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                             className={`${colorClasses} rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}
                           >
                             <span className="truncate text-[8px] font-semibold leading-none">{entryTitle}</span>
+                            {/* #431: at-a-glance "someone is on this" — the
+                                lane bars are 26px tall and the title already
+                                truncates, so the badge is small and pinned to
+                                the right edge. */}
+                            {entry.event._booked_count > 0 && (
+                              <span className="ml-auto pl-1 flex-shrink-0 inline-flex items-center justify-center w-3 h-3 bg-green-500 rounded-full">
+                                <Check size={7} className="text-white" />
+                              </span>
+                            )}
                           </button>
                         </td>
                       );
@@ -4034,6 +4088,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   colorClass: getTrainingSlotColorClasses(s.title, 'lane'),
                   timeLabel: `${formatTimeDisplay(s.start_time)}–${endLabel(s.start_time, s.duration_minutes || 60)}`,
                   info: clients > 0 ? `${clients}/${s.capacity} booked` : (s.is_public ? 'Open' : 'Unbooked'),
+                  booked: clients > 0, // #431
                   // #309/#314: was always null — hover tooltip only, no route
                   // to the roster/attendance tools that already exist for
                   // this exact session in CoachSlotsWeekView. Opens that
@@ -4054,11 +4109,17 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                 const startIdx = timeToIndex(startTime);
                 const endIdx = ev.end_time ? timeToIndex(ev.end_time) : startIdx + 4;
                 const pubs = eventPublicBookings[ev._master_id || ev.id] || [];
+                // #431: _booked_count (sign-ups + assigned athletes + public
+                // bookings for the month range) already includes today's
+                // public bookings; the day-scoped `pubs` is kept as a fallback
+                // for the moment between the two fetches.
+                const bookedCount = Math.max(ev._booked_count || 0, pubs.length);
                 return {
                   startIdx, span: Math.max(endIdx - startIdx, 1), kind: 'facility',
                   title: ev.title,
                   timeLabel: `${formatTimeDisplay(startTime)}${ev.end_time ? `–${formatTimeDisplay(ev.end_time)}` : ''}`,
-                  info: pubs.length > 0 ? `${pubs.length} booked` : null,
+                  info: bookedCount > 0 ? `${bookedCount} booked` : null,
+                  booked: bookedCount > 0,
                   onClick: () => onEventClick && onEventClick(ev),
                 };
               });
@@ -4085,7 +4146,16 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
                       const entryTitleAttr = [entry.title, entry.timeLabel, entry.info].filter(Boolean).join(' - ');
-                      const inner = <span className="truncate text-[8px] font-semibold leading-none">{entry.title}</span>;
+                      const inner = (
+                        <>
+                          <span className="truncate text-[8px] font-semibold leading-none">{entry.title}</span>
+                          {entry.booked && (
+                            <span className="ml-auto pl-1 flex-shrink-0 inline-flex items-center justify-center w-3 h-3 bg-green-500 rounded-full">
+                              <Check size={7} className="text-white" />
+                            </span>
+                          )}
+                        </>
+                      );
                       const entryIsHourStart = timeSlots[entry.startIdx].endsWith(':00');
                       return (
                         <td
