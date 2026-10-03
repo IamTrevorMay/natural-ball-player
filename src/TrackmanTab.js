@@ -17,7 +17,12 @@ const nums = (rows, key) => rows.map((r) => r[key]).filter((v) => v != null && v
 const dateLabel = (d) =>
   d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown date';
 
-export default function TrackmanTab({ userId }) {
+// Pitch type codes shared with BullpenSync (tools/bullpen-sync/static/index.html).
+const PITCH_TYPES = ['FB', 'SI', 'CT', 'SL', 'CB', 'CH', 'SP'];
+
+export default function TrackmanTab({ userId, userRole, loggedInUserId }) {
+  // #435: the linked athlete (own pitches) or staff may retag a pitch.
+  const canEdit = userRole === 'admin' || userRole === 'coach' || (userRole === 'player' && loggedInUserId === userId);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -41,6 +46,17 @@ export default function TrackmanTab({ userId }) {
     })();
     return () => { cancelled = true; };
   }, [userId]);
+
+  const retag = async (pitchId, type) => {
+    const value = type || null;
+    const prev = rows;
+    setRows((rs) => rs.map((r) => (r.id === pitchId ? { ...r, tagged_pitch_type: value } : r)));
+    const { error } = await supabase.from('trackman_pitches').update({ tagged_pitch_type: value }).eq('id', pitchId);
+    if (error) {
+      setRows(prev);
+      alert(`Could not update pitch type: ${error.message}`);
+    }
+  };
 
   // Group rows into sessions, tagging the athlete's role in each.
   const sessions = (() => {
@@ -112,7 +128,7 @@ export default function TrackmanTab({ userId }) {
 
       <div className="space-y-2">
         {visible.map((s) => (
-          <SessionCard key={s.id} session={s} open={openId === s.id} onToggle={() => setOpenId(openId === s.id ? null : s.id)} />
+          <SessionCard key={s.id} session={s} open={openId === s.id} onToggle={() => setOpenId(openId === s.id ? null : s.id)} onRetag={canEdit ? retag : null} />
         ))}
       </div>
     </div>
@@ -129,7 +145,7 @@ function BestTile({ label, value, icon, tone }) {
   );
 }
 
-function SessionCard({ session, open, onToggle }) {
+function SessionCard({ session, open, onToggle, onRetag }) {
   const isPitch = session.pitcherRows.length > 0;
   const isHit = session.batterRows.length > 0;
   return (
@@ -149,7 +165,7 @@ function SessionCard({ session, open, onToggle }) {
       </button>
       {open && (
         <div className="border-t border-gray-100 p-3 space-y-4 bg-gray-50/50">
-          {isPitch && <PitchingDetail rows={session.pitcherRows} />}
+          {isPitch && <PitchingDetail rows={session.pitcherRows} onRetag={onRetag} />}
           {isHit && <HittingDetail rows={session.batterRows} />}
         </div>
       )}
@@ -166,7 +182,7 @@ function Stat({ label, value }) {
   );
 }
 
-function PitchingDetail({ rows }) {
+function PitchingDetail({ rows, onRetag }) {
   // Summary by pitch type.
   const byType = {};
   for (const r of rows) {
@@ -195,7 +211,7 @@ function PitchingDetail({ rows }) {
       </div>
       <DetailTable
         cols={['#', 'Type', 'Velo', 'Spin', 'IVB', 'HB', 'Tilt', 'Ext', 'Result']}
-        rows={rows.map((r) => [r.pitch_no ?? '', r.tagged_pitch_type || '—', n1(r.rel_speed), n0(r.spin_rate), n1(r.induced_vert_break), n1(r.horz_break), r.tilt || '—', n1(r.extension), r.pitch_call || '—'])}
+        rows={rows.map((r) => [r.pitch_no ?? '', onRetag ? <PitchTypeSelect key={r.id} value={r.tagged_pitch_type} onChange={(t) => onRetag(r.id, t)} /> : (r.tagged_pitch_type || '—'), n1(r.rel_speed), n0(r.spin_rate), n1(r.induced_vert_break), n1(r.horz_break), r.tilt || '—', n1(r.extension), r.pitch_call || '—'])}
       />
     </div>
   );
@@ -217,6 +233,24 @@ function HittingDetail({ rows }) {
         rows={rows.map((r) => [r.pitch_no ?? '', n1(r.exit_speed), n1(r.launch_angle), n0(r.distance), r.hit_type || '—'])}
       />
     </div>
+  );
+}
+
+function PitchTypeSelect({ value, onChange }) {
+  const cur = value || '';
+  // Keep an unexpected existing tag (e.g. Trackman's "Fastball") selectable.
+  const opts = cur && !PITCH_TYPES.includes(cur) ? [cur, ...PITCH_TYPES] : PITCH_TYPES;
+  return (
+    <select
+      value={cur}
+      onChange={(e) => onChange(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+      title="Change pitch type"
+    >
+      <option value="">—</option>
+      {opts.map((p) => <option key={p} value={p}>{p}</option>)}
+    </select>
   );
 }
 

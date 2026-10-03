@@ -2649,7 +2649,7 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
           )}
 
           {activeProfileTab === 'trackman' && (
-            <TrackmanTab userId={userId} />
+            <TrackmanTab userId={userId} userRole={userRole} loggedInUserId={loggedInUserId} />
           )}
 
           {activeProfileTab === 'stats' && (

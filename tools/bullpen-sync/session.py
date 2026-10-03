@@ -93,7 +93,7 @@ class LiveSession:
                     merged["tagged_pitch_type"] = self.current_pitch_type
                     self._type_source[uid] = "coach"
                 else:
-                    merged["tagged_pitch_type"] = classifier.classify(merged)
+                    merged["tagged_pitch_type"] = classifier.classify(merged, self.athlete.get("throws"))
                     self._type_source[uid] = "auto"
             else:
                 pno = existing.get("pitch_no")
@@ -103,7 +103,7 @@ class LiveSession:
                 merged["tagged_pitch_type"] = tag
                 # Refine an auto guess as metrics complete.
                 if self._type_source.get(uid) == "auto":
-                    merged["tagged_pitch_type"] = classifier.classify(merged)
+                    merged["tagged_pitch_type"] = classifier.classify(merged, self.athlete.get("throws"))
 
             self._rows[uid] = merged
             self._flush_csv()

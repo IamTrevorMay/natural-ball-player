@@ -114,15 +114,21 @@ class NbpClient:
         return r.json()
 
     def athlete_throws(self, user_id: str) -> str | None:
+        """Throwing hand ('Right' / 'Left') from the athlete's player profile.
+
+        player_profiles has its own primary key; the athlete is linked through
+        `user_id` (#435 — this used to filter on `id`, so it never matched and
+        handedness was always None).
+        """
         try:
             r = requests.get(
                 f"{self.url}/rest/v1/player_profiles",
                 headers=self._headers(),
-                params={"select": "throws", "id": f"eq.{user_id}"},
+                params={"select": "throws", "user_id": f"eq.{user_id}", "limit": "1"},
                 timeout=10,
             )
             if r.status_code == 200 and r.json():
-                return r.json()[0].get("throws")
+                return r.json()[0].get("throws") or None
         except requests.RequestException:
             pass
         return None
