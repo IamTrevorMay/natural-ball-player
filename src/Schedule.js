@@ -997,6 +997,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
         max_players: template.max_players,
         auto_confirm: template.auto_confirm,
         notes: template.notes ?? null,
+        lanes: template.lanes || [],
       }).select('id').single();
       if (error) { alert('Failed to move slot: ' + formatUserError(error)); return; }
       childId = inserted.id;
@@ -1174,6 +1175,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
               max_players: master.max_players,
               auto_confirm: master.auto_confirm,
               notes: master.notes ?? null,
+              lanes: master.lanes || [],
             });
             if (error) throw error;
           }
@@ -1299,6 +1301,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
       duration_minutes: s.duration_minutes,
       title: s.notes || 'Training slot',
       is_public: !!s.is_public,
+      lanes: s.lanes || [],
       capacity: s.max_players || 1,
       reserved: resCount[s.id] || 0,
       publicBookings: pubBySlot[s.id] || [],
@@ -3651,6 +3654,40 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
     });
   });
 
+  // #434: coach lessons that reserved a lane render in the lane rows too, so
+  // staff see lane availability without cross-checking the Staff Schedule
+  // band. Pseudo-events: not draggable here (retime them in the staff band,
+  // #309), click opens the coach's session tools like the band entry does.
+  coachDaySlots.forEach(s => {
+    const slotLanes = s.lanes || [];
+    if (slotLanes.length === 0) return;
+    const startIdx = timeToIndex(s.start_time);
+    if (startIdx < 0) return;
+    const durationMin = s.duration_minutes || 60;
+    const span = Math.max(Math.round(durationMin / 15), 1);
+    const [sh, sm] = s.start_time.split(':').map(Number);
+    const endTotal = sh * 60 + (sm || 0) + durationMin;
+    const endTime = `${String(Math.floor(endTotal / 60) % 24).padStart(2, '0')}:${String(endTotal % 60).padStart(2, '0')}`;
+    const coach = coaches.find(c => c.id === s.coach_id) || null;
+    const clients = (s.reserved || 0) + (s.publicBookings ? s.publicBookings.length : 0);
+    const pseudo = {
+      id: `slot-${s.slot_id}-${s.slot_date}`,
+      _isSlot: true,
+      _slotCoach: coach,
+      _slotTitle: s.title,
+      _capacity: s.capacity,
+      title: `${coach?.full_name ? coach.full_name.split(' ')[0] : 'Coach'} · ${s.title}`,
+      start_time: s.start_time,
+      end_time: endTime,
+      lanes: slotLanes,
+      coach_id: s.coach_id,
+      _booked_count: clients,
+    };
+    slotLanes.forEach(lane => {
+      if (laneEvents[lane]) laneEvents[lane].push({ startIdx, span, event: pseudo });
+    });
+  });
+
   // Assign each lane's events to non-overlapping tracks so overlapping events render as stacked rows
   const assignTracks = (entries) => {
     const sorted = [...entries].sort((a, b) => a.startIdx - b.startIdx);
@@ -3883,7 +3920,9 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                   {timeSlots.map((slot, slotIdx) => {
                     const entry = track.find(e => e.startIdx === slotIdx);
                     if (entry) {
-                      const colorClasses = getFacilityColorClasses(entry.event.color, 'lane');
+                      const colorClasses = entry.event._isSlot
+                        ? getTrainingSlotColorClasses(entry.event._slotTitle, 'lane')
+                        : getFacilityColorClasses(entry.event.color, 'lane');
                       const entryIsHourStart = timeSlots[entry.startIdx].endsWith(':00');
                       const entryTitle = entry.event.title || entry.event.opponent;
                       const entryStart = entry.event.start_time || entry.event.event_time;
@@ -3899,7 +3938,10 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         entryTimeRange ? `${entryTitle} - ${entryTimeRange}` : entryTitle,
                         entryCoachNames.length ? `Coach: ${entryCoachNames.join(', ')}` : null,
                         entry.event.athlete?.full_name ? `Athlete: ${entry.event.athlete.full_name}` : null,
-                        entry.event._booked_count > 0 ? `Booked: ${entry.event._booked_count}` : null,
+                        entry.event._isSlot ? 'Coach lesson (also on the Staff Schedule band)' : null,
+                        entry.event._isSlot
+                          ? (entry.event._booked_count > 0 ? `Booked: ${entry.event._booked_count}/${entry.event._capacity}` : 'Unbooked')
+                          : (entry.event._booked_count > 0 ? `Booked: ${entry.event._booked_count}` : null),
                       ].filter(Boolean);
                       return (
                         <td
@@ -3937,7 +3979,7 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                         >
                           <button
                             type="button"
-                            draggable={canManage && !entry.event._isMealPlan && !!onEventMove}
+                            draggable={canManage && !entry.event._isMealPlan && !entry.event._isSlot && !!onEventMove}
                             onDragStart={(e) => {
                               e.stopPropagation();
                               e.dataTransfer.setData('application/x-event-id', String(entry.event.id));
@@ -3960,7 +4002,13 @@ function LaneView({ selectedDate, events, laneDate, setLaneDate, canManage, onCe
                               });
                             }}
                             onDragEnd={clearDragPreview}
-                            onClick={() => onEventClick && onEventClick(entry.event)}
+                            onClick={() => {
+                              if (entry.event._isSlot) {
+                                if (onSlotEntryClick && entry.event._slotCoach) onSlotEntryClick(entry.event._slotCoach);
+                                return;
+                              }
+                              if (onEventClick) onEventClick(entry.event);
+                            }}
                             title={entryTooltipParts.join('\n')}
                             className={`${colorClasses} rounded px-1 h-[26px] w-full text-left hover:opacity-80 transition leading-none flex items-center overflow-hidden`}
                           >
@@ -8892,6 +8940,8 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
   const [repeatDows, setRepeatDows] = useState(() => new Set([initialDow]));
   const [maxPlayers, setMaxPlayers] = useState(existingSlot?.max_players || 1);
   const [notes, setNotes] = useState(existingSlot?.notes || '');
+  // #434: optional facility lanes — with any set, the lesson also renders in the Lanes grid.
+  const [lanes, setLanes] = useState(existingSlot?.lanes || []);
   const [loading, setLoading] = useState(false);
   // Public booking (#229): let outside customers book & pay for this session.
   const [isPublic, setIsPublic] = useState(existingSlot?.is_public || false);
@@ -8993,6 +9043,7 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
       store_product_ids: isSubscriptionSession ? storeProductIds : [],
       store_product_id: isSubscriptionSession ? (storeProductIds[0] || null) : null,
       session_type: sessionType || null,
+      lanes,
     };
     setLoading(true);
     try {
@@ -9063,6 +9114,20 @@ function CreateSlotPanel({ onClose, onSuccess, coachId, coachName, initialDate, 
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Duration</label><select value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option><option value={90}>90 min</option></select></div>
           </div>
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Max Players</label><input type="number" min="1" max="50" value={maxPlayers} onChange={(e) => setMaxPlayers(parseInt(e.target.value) || 1)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500" /></div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Lanes <span className="font-normal text-gray-400">(optional)</span></label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {LANES.map(lane => (
+                <label key={lane} className="flex items-center space-x-2 text-sm">
+                  <input type="checkbox" checked={lanes.includes(lane)} onChange={(e) => {
+                    setLanes(e.target.checked ? LANES.filter(l => l === lane || lanes.includes(l)) : lanes.filter(l => l !== lane));
+                  }} className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500" />
+                  <span className="text-gray-700">{lane}</span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">With a lane set, this lesson also shows in the Lanes grid so staff can see which lanes are free (#434).</p>
+          </div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="autoConfirm" checked={autoConfirm} onChange={(e) => setAutoConfirm(e.target.checked)} className="rounded" /><label htmlFor="autoConfirm" className="text-sm text-gray-700">Auto-confirm reservations</label></div>
           <div className="flex items-center space-x-3"><input type="checkbox" id="repeatWeekly" checked={repeatWeekly} onChange={(e) => setRepeatWeekly(e.target.checked)} className="rounded" /><label htmlFor="repeatWeekly" className="text-sm text-gray-700">Repeat weekly</label></div>
           {repeatWeekly && (

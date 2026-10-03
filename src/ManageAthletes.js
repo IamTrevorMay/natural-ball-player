@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ProgramStatusBadge, { fetchProgramStatus } from './ProgramStatusBadge';
 import { supabase } from './supabaseClient';
 import { GRAD_YEAR_OPTIONS, classLabelForGradYear } from './gradYear';
 import { Users, Search, Edit2, X, Save, AlertTriangle, Mail } from 'lucide-react';
@@ -50,6 +51,8 @@ const OFFER_STATUS_COLORS = {
 };
 
 export default function ManageAthletes({ userId, userRole, onNavigateToProfile }) {
+  // #436: { userId: status } for training-group athletes; null until loaded.
+  const [programStatus, setProgramStatus] = useState(null);
   const [rosterPlayers, setRosterPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,7 +87,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     setLoading(true);
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email, phone, avatar_url, date_of_birth, parent1_email, parent2_email, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, grad_year, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name))')
+      .select('id, full_name, email, phone, avatar_url, date_of_birth, parent1_email, parent2_email, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, grad_year, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name, team_type))')
       .or('role.eq.player,secondary_role.eq.player')
       .order('full_name');
 
@@ -102,6 +105,9 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     }
     setRosterPlayers(filtered);
     setLoading(false);
+    // #436: programmed check marks for athletes in a training group.
+    const nbpIds = filtered.filter(p => (p.team_members || []).some(tm => tm.teams?.team_type === 'training')).map(p => p.id);
+    fetchProgramStatus(nbpIds).then(setProgramStatus);
   };
 
   const fetchTeamCoaches = async () => {
@@ -488,12 +494,15 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                 return (
                   <tr key={player.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-3">
-                      <button
-                        onClick={() => onNavigateToProfile && onNavigateToProfile(player.id)}
-                        className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        {firstName}
-                      </button>
+                      <span className="inline-flex items-center gap-1.5">
+                        <ProgramStatusBadge status={programStatus ? programStatus[player.id] : undefined} size={14} />
+                        <button
+                          onClick={() => onNavigateToProfile && onNavigateToProfile(player.id)}
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {firstName}
+                        </button>
+                      </span>
                       {(profile.signup_intent === 'team' || profile.signup_intent === 'both') && (
                         <span
                           className="block mt-0.5 w-fit bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-1.5 py-0.5 text-[10px] font-medium"

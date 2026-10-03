@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ProgramStatusBadge, { fetchProgramStatus } from './ProgramStatusBadge';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
 import { Plus, Users, X, Edit2, Save, Trash2, UserPlus, ChevronRight, Search, CheckCircle, XCircle, Calendar, Clock, ClipboardList, Mail, AlertTriangle, Key } from 'lucide-react';
 import { formatUserError } from './errorMessage';
@@ -163,7 +164,7 @@ function AdminSettingsInner({ userId, userRole, onNavigateToProfile }) {
           player_profiles!player_profiles_user_id_fkey(*),
           team_members(
             team_id,
-            teams(name)
+            teams(name, team_type)
           )
         `)
         .order('full_name')
@@ -1071,6 +1072,14 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   const [filterStatus, setFilterStatus] = useState('Active');
   const [sortBy, setSortBy] = useState('name');
   const [showDuplicates, setShowDuplicates] = useState(false);
+  // #436: programmed check marks for users in a training group; null until loaded.
+  const [programStatus, setProgramStatus] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const ids = (users || []).filter(u => (u.team_members || []).some(tm => tm.teams?.team_type === 'training')).map(u => u.id);
+    fetchProgramStatus(ids).then(map => { if (!cancelled) setProgramStatus(map); });
+    return () => { cancelled = true; };
+  }, [users]);
 
   const getUserStatus = (u) => {
     if (u.role === 'player') {
@@ -1199,7 +1208,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
 
           <div className="grid grid-cols-1 gap-4">
             {sortedUsers.map(user => (
-              <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} userRole={userRole} onNavigateToProfile={onNavigateToProfile} />
+              <UserCard key={user.id} user={user} teams={teams} refreshUsers={refreshUsers} userId={userId} userRole={userRole} onNavigateToProfile={onNavigateToProfile} programStatus={programStatus ? programStatus[user.id] : undefined} />
             ))}
           </div>
         </>
@@ -1220,7 +1229,7 @@ function UsersTab({ users, teams, showCreateUser, setShowCreateUser, refreshUser
   );
 }
 
-function UserCard({ user, teams, refreshUsers, userId, userRole, onNavigateToProfile }) {
+function UserCard({ user, teams, refreshUsers, userId, userRole, onNavigateToProfile, programStatus }) {
   const [showEdit, setShowEdit] = useState(false);
 
   const getRoleBadgeColor = (role) => {
@@ -1262,10 +1271,11 @@ function UserCard({ user, teams, refreshUsers, userId, userRole, onNavigateToPro
             </div>
             <div>
               <h4
-                className="font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                className="font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer inline-flex items-center gap-1.5"
                 onClick={(e) => { e.stopPropagation(); onNavigateToProfile && onNavigateToProfile(user.id); }}
               >
                 {user.full_name}
+                <ProgramStatusBadge status={programStatus} size={15} />
               </h4>
               <p className="text-sm text-gray-600">{user.email}</p>
               {user.team_members && user.team_members.length > 0 && (

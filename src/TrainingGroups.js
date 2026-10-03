@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { Layers, Users, Plus, Trash2, X, GripVertical, ChevronDown, ChevronRight, Edit2, Check } from 'lucide-react';
 import { formatUserError } from './errorMessage';
+import ProgramStatusBadge, { fetchProgramStatus, isProgrammed } from './ProgramStatusBadge';
 
 // #219: Training Groups management. Staff (admin/coach) separate the Naturals
 // teams from training groups and bulk-place a whole team's athletes into a
@@ -23,6 +24,8 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
   const [expandedGroups, setExpandedGroups] = useState({});
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingName, setEditingName] = useState('');
+  // #436: { userId: status } for every training-group member; null until loaded.
+  const [programStatus, setProgramStatus] = useState(null);
 
   const toggleGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
 
@@ -50,6 +53,10 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
         (grouped[m.team_id] = grouped[m.team_id] || []).push(m);
       });
       setMembersByTeam(grouped);
+      // #436: programmed check marks for every athlete in a training group.
+      const trainingIds = new Set((teamRows || []).filter(t => t.team_type === 'training').map(t => t.id));
+      const memberIds = (memberRows || []).filter(m => trainingIds.has(m.team_id) && m.user_id).map(m => m.user_id);
+      fetchProgramStatus(memberIds).then(setProgramStatus);
     } catch (err) {
       flashMsg('error', formatUserError(err));
     } finally {
@@ -301,6 +308,10 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
                             <div className="font-semibold text-gray-900 truncate">{group.name}</div>
                             <div className="text-xs text-gray-400">
                               {group.age_group ? `${group.age_group} · ` : ''}{members.length} athlete{members.length === 1 ? '' : 's'}
+                              {programStatus && members.length > 0 && (() => {
+                                const done = members.filter(m => isProgrammed(programStatus[m.user_id])).length;
+                                return <span className={done === members.length ? 'text-green-600' : 'text-red-500'}> · {done}/{members.length} programmed</span>;
+                              })()}
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0 ml-2">
@@ -338,7 +349,8 @@ export default function TrainingGroups({ userId, userRole, onNavigateToProfile }
                         ) : (
                           <div className="flex flex-wrap gap-1.5">
                             {members.map(m => (
-                              <span key={m.id} className="inline-flex items-center gap-1 bg-gray-100 rounded-full pl-2.5 pr-1 py-1 text-xs text-gray-700">
+                              <span key={m.id} className="inline-flex items-center gap-1 bg-gray-100 rounded-full pl-2 pr-1 py-1 text-xs text-gray-700">
+                                <ProgramStatusBadge status={programStatus ? programStatus[m.user_id] : undefined} size={13} />
                                 <button
                                   type="button"
                                   onClick={() => onNavigateToProfile && m.user_id && onNavigateToProfile(m.user_id)}
