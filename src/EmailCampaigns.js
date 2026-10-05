@@ -189,6 +189,24 @@ const CATEGORIES = [
   { value: 'leads', label: 'Public Leads' },
 ];
 
+// #441: Step 2 "Athlete status" filter, read from player_profiles.status —
+// the same Active / Inactive / Archived vocabulary Manage Athletes writes.
+// 'lapsed' is Cordell's win-back audience: everyone who has paused or left,
+// which is Inactive + Archived together. '' = no status filter (the
+// pre-#441 behaviour, where "Players" reached archived athletes too).
+const ATHLETE_STATUS_OPTIONS = [
+  { value: '', label: 'Any status' },
+  { value: 'Active', label: 'Active' },
+  { value: 'Inactive', label: 'Inactive' },
+  { value: 'Archived', label: 'Archived' },
+  { value: 'lapsed', label: 'Inactive + Archived (win-back)' },
+];
+const athleteStatusList = (value) => {
+  if (value === 'lapsed') return ['Inactive', 'Archived'];
+  return value ? [value] : null;
+};
+const EMPTY_FILTERS = { teamIds: [], athleteStatus: '', staffStatus: '', signedUpAfter: '', signedUpBefore: '' };
+
 // Rich-text toolbar kept to what email clients actually render.
 const QUILL_MODULES = {
   toolbar: [
@@ -214,7 +232,7 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
   // Step 1 — category. Step 2 — filters.
   const [category, setCategory] = useState('all');
   const [teams, setTeams] = useState([]);
-  const [filters, setFilters] = useState({ teamIds: [], staffStatus: '', signedUpAfter: '', signedUpBefore: '' });
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
   // Resolved user ids for the chosen team(s); null = no team filter active.
   const [teamMemberIds, setTeamMemberIds] = useState(null);
 
@@ -294,7 +312,15 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
   // addresses too. Everything that needs a number goes through
   // readRecipientList below, which expands and de-duplicates first.
   const buildRecipientQuery = useCallback((selectCols) => {
-    let q = supabase.from('users').select(selectCols);
+    // #441: an athlete-status filter joins player_profiles (inner, so a user
+    // with no profile row is excluded — they have no status to match) and
+    // filters on the embedded column. Without a status filter the select is
+    // exactly what it was, so the other categories are untouched.
+    const statusList = (category === 'all' || category === 'players') ? athleteStatusList(filters.athleteStatus) : null;
+    let q = supabase.from('users').select(
+      statusList ? `${selectCols}, player_profiles!player_profiles_user_id_fkey!inner(status)` : selectCols
+    );
+    if (statusList) q = q.in('player_profiles.status', statusList);
     if (category === 'players') q = q.eq('role', 'player');
     else if (category === 'staff') q = q.in('role', ['admin', 'coach']);
     else if (category === 'leads') q = q.eq('role', 'public');
@@ -770,7 +796,7 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
             <label className="block text-sm font-medium text-gray-700 mb-1">Client Category</label>
             <select
               value={category}
-              onChange={(e) => { setCategory(e.target.value); setFilters({ teamIds: [], staffStatus: '', signedUpAfter: '', signedUpBefore: '' }); }}
+              onChange={(e) => { setCategory(e.target.value); setFilters(EMPTY_FILTERS); }}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -817,6 +843,22 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
                     Clear selection ({filters.teamIds.length} selected)
                   </button>
                 )}
+              </div>
+            )}
+            {(category === 'all' || category === 'players') && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Athlete Status</label>
+                <select
+                  value={filters.athleteStatus}
+                  onChange={(e) => setFilters({ ...filters, athleteStatus: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {ATHLETE_STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  Reads each athlete's status from Manage Athletes. "Inactive + Archived" is the win-back list —
+                  everyone who has paused or left. Any status (the default) reaches all of them, as before.
+                </p>
               </div>
             )}
             {category === 'staff' && (
