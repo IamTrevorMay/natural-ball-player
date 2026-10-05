@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { readAllPages } from './readAllPages';
+import { scheduleProgramEvents } from './programScheduling';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
-import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots, placeProgramDays } from './scheduleUtils';
+import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots } from './scheduleUtils';
 import { LANES } from './Schedule';
 import { useModalTracking, trackAction } from './usage';
 import { useExerciseVideos } from './exerciseVideos';
@@ -2119,46 +2120,15 @@ function AssignTrainingProgramModal({ program, teams, players, onClose, onSucces
   // weekday ticks don't apply. Hand-built programs keep the round-robin.
   const isWeekdayProgram = program?.day_anchor === 'weekday';
 
+  // #439: the shared writer in programScheduling.js — the same one the
+  // generators use when they assign, so a program lands identically here.
   const generateWorkoutEvents = async ({ teamId, playerIds }) => {
     if (!scheduleOnCalendar || !startDate || !endDate) return { count: 0 };
     if (!isWeekdayProgram && !weekdays.some(Boolean)) return { count: 0 };
-
-    const { data: days } = await supabase
-      .from('training_days')
-      .select('id, day_number, title')
-      .eq('program_id', program.id)
-      .order('day_number');
-    const placed = placeProgramDays({ dayAnchor: program?.day_anchor, days, startStr: startDate, endStr: endDate, weekdays });
-    if (placed.length === 0) return { count: 0 };
-
-    const rows = [];
-    placed.forEach(({ date: dateStr, day }) => {
-      const baseRow = {
-        event_type: 'workout',
-        event_date: dateStr,
-        title: day.title || `${program.name} - Day ${day.day_number}`,
-        training_program_id: program.id,
-        training_day_id: day.id,
-      };
-      if (teamId) {
-        rows.push({ ...baseRow, team_id: teamId, team_ids: [teamId] });
-      } else {
-        (playerIds || []).forEach(pid => rows.push({ ...baseRow, player_id: pid }));
-      }
+    return scheduleProgramEvents({
+      programId: program.id, programName: program.name, dayAnchor: program?.day_anchor,
+      playerIds, teamId, startDate, endDate, weekdays,
     });
-
-    if (rows.length === 0) return { count: 0 };
-
-    // Insert in batches of 500 to avoid request size limits
-    const BATCH = 500;
-    let inserted = 0;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const chunk = rows.slice(i, i + BATCH);
-      const { error: insErr } = await supabase.from('schedule_events').insert(chunk);
-      if (insErr) throw insErr;
-      inserted += chunk.length;
-    }
-    return { count: inserted };
   };
 
   const handleSubmit = async (e) => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { readAllPages } from './readAllPages';
+import { scheduleProgramEvents, deleteProgramEvents, singlePassEndDate, describeScheduled, PROGRAM_CALENDAR_CATEGORY } from './programScheduling';
 import { insertTrainingProgram } from './insertTrainingProgram';
 import {
   Wand2, Search, User, Save, AlertTriangle, ShieldAlert, CheckCircle2, Circle,
@@ -481,6 +482,8 @@ const contentKey = (row, fields) => fields.map((f) => keyPart(row[f])).join('|~|
 export async function saveTrainingProgram({
   name, description, durationWeeks, rows,
   authorId, playerId, startDate, endDate, onStep,
+  // #439: schedule_events.category for the calendar rows (PROGRAM_CALENDAR_CATEGORY).
+  category = null,
 }) {
   const step = (m) => { if (onStep) onStep(m); };
 
@@ -540,19 +543,37 @@ export async function saveTrainingProgram({
     await insertAll('training_exercises', exerciseRows);
     exercisesWritten = exerciseRows.length;
 
+    let scheduled = null;
     if (playerId) {
       stage = 'the assignment';
       step('Assigning to the athlete…');
+      // #439: one pass of the program, ending on its own last day — see
+      // singlePassEndDate for why the caller's start + weeks*7 is one day long.
+      const assignEnd = singlePassEndDate(startDate, rows);
       const { error: aErr } = await supabase.from('training_program_assignments').insert({
         program_id: programId, player_id: playerId,
-        start_date: startDate, end_date: endDate,
+        start_date: startDate, end_date: assignEnd,
         assigned_by: authorId,
       });
       if (aErr) throw aErr;
+
+      // #439: assigning puts the program straight on the athlete's calendar.
+      stage = 'the calendar';
+      step('Adding to the athlete\'s schedule…');
+      scheduled = await scheduleProgramEvents({
+        programId, programName: name, dayAnchor: 'weekday',
+        playerIds: [playerId], startDate, endDate: assignEnd, category,
+        days: dayRows.map((r) => ({ id: r.id, day_number: r.day_number, title: rows.find((d) => d.day_number === r.day_number)?.title })),
+      });
     }
+    return { programId, daysWritten, exercisesWritten, scheduled };
   } catch (e) {
     const base = e.message || 'The save failed.';
     step('Rolling back…');
+    // #439: calendar rows don't cascade from the program (training_program_id
+    // is ON DELETE SET NULL), so clear them first or they'd be orphaned.
+    let calendarLeft = null;
+    try { await deleteProgramEvents(programId); } catch (ce) { calendarLeft = ce.message; }
     // .select('id') is not decoration: a DELETE that RLS silently filters out
     // returns 200 with NO error and NO rows. Reading the deleted rows back is
     // the only way to know the cleanup actually happened before we claim it did.
@@ -563,12 +584,13 @@ export async function saveTrainingProgram({
         ? 'the delete removed no rows — most likely a row-level-security policy blocked it'
         : null;
     if (cleanupFailed) {
-      throw new Error(`${base} — failed while writing ${stage}, AND THE CLEANUP ALSO FAILED (${cleanupFailed}). The program "${name}" (id ${programId}) is STILL in the database with ${daysWritten} day(s) and ${exercisesWritten} exercise(s) and no assignment. Find it in Programming → Programs and delete it by hand.`);
+      throw new Error(`${base} — failed while writing ${stage}, AND THE CLEANUP ALSO FAILED (${cleanupFailed}). The program "${name}" (id ${programId}) is STILL in the database with ${daysWritten} day(s) and ${exercisesWritten} exercise(s) and no assignment. Find it in Programming → Programs and delete it by hand.${calendarLeft ? ` Its calendar workouts could not be removed either (${calendarLeft}).` : ''}`);
     }
-    throw new Error(`${base} — failed while writing ${stage}. Nothing was left behind: "${name}" was deleted, and its days and exercises cascade from it. Nothing was assigned. Fix the cause and save again.`);
+    if (calendarLeft) {
+      throw new Error(`${base} — failed while writing ${stage}. "${name}" was deleted, but its calendar workouts could not be removed (${calendarLeft}) — delete them from the athlete's schedule by hand.`);
+    }
+    throw new Error(`${base} — failed while writing ${stage}. Nothing was left behind: "${name}" was deleted, and its days and exercises cascade from it. Nothing was assigned or scheduled. Fix the cause and save again.`);
   }
-
-  return { programId, daysWritten, exercisesWritten };
 }
 
 /* --------------------------------------------------------------------------
@@ -1305,9 +1327,10 @@ export default function AutoProgram({ userId, userRole }) {
             playerId,
             startDate: shared.programStart,
             endDate: endDateFor(b.counts.weeks),
+            category: PROGRAM_CALENDAR_CATEGORY.sc,
             onStep: stepper('sc'),
           });
-          record('sc', { ok: true, message: `Saved ${r.daysWritten} training day(s) and ${r.exercisesWritten} exercise(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
+          record('sc', { ok: true, message: `Saved ${r.daysWritten} training day(s) and ${r.exercisesWritten} exercise(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}. ${describeScheduled(r.scheduled, selectedName)}` : '.'}` });
         } else if (d.key === 'throwing') {
           const b = built.throwing;
           const phase = THROW_PHASES[shared.phaseId];
@@ -1320,9 +1343,10 @@ export default function AutoProgram({ userId, userRole }) {
             playerId,
             startDate: shared.programStart,
             endDate: endDateFor(b.counts.weeks),
+            category: PROGRAM_CALENDAR_CATEGORY.throwing,
             onStep: stepper('throwing'),
           });
-          record('throwing', { ok: true, message: `Saved ${r.daysWritten} session(s) and ${r.exercisesWritten} drill(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
+          record('throwing', { ok: true, message: `Saved ${r.daysWritten} session(s) and ${r.exercisesWritten} drill(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}. ${describeScheduled(r.scheduled, selectedName)}` : '.'}` });
         } else if (d.key === 'hitting') {
           const b = built.hitting;
           const topFindings = b.plan.findings.slice(0, 3).map((f) => f.title).join('; ');
@@ -1335,9 +1359,10 @@ export default function AutoProgram({ userId, userRole }) {
             playerId,
             startDate: shared.programStart,
             endDate: endDateFor(b.counts.weeks),
+            category: PROGRAM_CALENDAR_CATEGORY.hitting,
             onStep: stepper('hitting'),
           });
-          record('hitting', { ok: true, message: `Saved ${r.daysWritten} day(s) and ${r.exercisesWritten} drill(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}` : ''}.` });
+          record('hitting', { ok: true, message: `Saved ${r.daysWritten} day(s) and ${r.exercisesWritten} drill(s) across ${b.counts.weeks} week(s)${playerId ? ` and assigned to ${selectedName}. ${describeScheduled(r.scheduled, selectedName)}` : '.'}` });
         } else if (d.key === 'nutrition') {
           const b = built.nutrition;
           const r = await saveMealPlan({
@@ -2123,7 +2148,7 @@ export default function AutoProgram({ userId, userRole }) {
                 <div className="text-xs text-gray-600">
                   <label className="flex items-center gap-2">
                     <input type="checkbox" checked={assignAthlete} onChange={(e) => setAssignAthlete(e.target.checked)} />
-                    Assign to {selectedName} (starting {fmtDate(shared.programStart)})
+                    Assign to {selectedName} and add to their schedule from {fmtDate(shared.programStart)}
                   </label>
                   <div className="text-[11px] text-gray-500 mt-1">
                     Will write:{' '}

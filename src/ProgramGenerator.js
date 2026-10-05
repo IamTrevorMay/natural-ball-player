@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { readAllPages } from './readAllPages';
 import { insertTrainingProgram } from './insertTrainingProgram';
+import { scheduleProgramEvents, singlePassEndDate, describeScheduled, PROGRAM_CALENDAR_CATEGORY } from './programScheduling';
 import { Dumbbell, Search, User, Wand2, Save, AlertTriangle, Calendar, ChevronDown, ChevronUp, Check, BarChart3 } from 'lucide-react';
 import { extractMetricSourcesFromSubmissions, parseMetricValue, toRelativeStrength } from './assessmentMetrics';
 import AssessmentReadiness from './AssessmentReadiness';
@@ -503,7 +504,10 @@ export default function ProgramGenerator({ userId, userRole }) {
     try {
       const rows = programToProgramDays(program);
       const durationWeeks = program.lengthWeeks;
-      const endDate = iso(new Date(new Date(planDate + 'T00:00:00').getTime() + durationWeeks * 7 * 24 * 60 * 60 * 1000));
+      // #439: the assignment ends on the last day of ONE pass of the program
+      // (placeProgramDays repeats a weekday block until its end date, so the
+      // old start + weeks*7 maths put a stray day 1 on the Monday after).
+      const endDate = singlePassEndDate(planDate, rows);
       const description = `${program.phaseLabel} · ${durationWeeks}-wk progression · ${program.emphasis} (generated ${iso(new Date())})`;
 
       // #393: these day_numbers are (week-1)*7 + weekday + 1 with weekday 0 =
@@ -538,13 +542,22 @@ export default function ProgramGenerator({ userId, userRole }) {
         }
       }
 
+      let scheduled = null;
       if (assignAthlete && selectedId) {
         const { error: aErr } = await supabase.from('training_program_assignments').insert({
           program_id: prog.id, player_id: selectedId, start_date: planDate, end_date: endDate, assigned_by: userId,
         });
         if (aErr) throw aErr;
+        // #439: assigning puts the program straight on the athlete's calendar.
+        scheduled = await scheduleProgramEvents({
+          programId: prog.id, programName: programName || `${selectedName} — S&C Program`,
+          dayAnchor: 'weekday', playerIds: [selectedId], startDate: planDate, endDate,
+          category: PROGRAM_CALENDAR_CATEGORY.sc,
+        });
       }
-      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}. ${rows.length} training day(s) across ${durationWeeks} week(s). It now appears in the program library${assignAthlete ? ' and on the athlete\'s profile' : ''}. ${DROP_ANCHOR_SAVE_NOTE}`);
+      setSaveMsg(assignAthlete && selectedId
+        ? `Saved "${programName}" and assigned to ${selectedName}. ${rows.length} training day(s) across ${durationWeeks} week(s). ${describeScheduled(scheduled, selectedName)}`
+        : `Saved "${programName}". ${rows.length} training day(s) across ${durationWeeks} week(s). It now appears in the program library. ${DROP_ANCHOR_SAVE_NOTE}`);
     } catch (e) {
       setError(e.message || 'Save failed.');
     } finally {
@@ -889,7 +902,7 @@ export default function ProgramGenerator({ userId, userRole }) {
                 <input className={numInput} value={programName} onChange={(e) => setProgramName(e.target.value)} />
                 <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 cursor-pointer">
                   <input type="checkbox" checked={assignAthlete} onChange={(e) => setAssignAthlete(e.target.checked)} />
-                  Assign to {selectedName || 'athlete'} (appears on their profile)
+                  Assign to {selectedName || 'athlete'} and add to their schedule from {planDate}
                 </label>
                 <button onClick={save} disabled={saving}
                   className="mt-4 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg">

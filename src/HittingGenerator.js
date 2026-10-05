@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { readAllPages } from './readAllPages';
 import { insertTrainingProgram } from './insertTrainingProgram';
+import { scheduleProgramEvents, singlePassEndDate, describeScheduled, mondayOnOrAfter, PROGRAM_CALENDAR_CATEGORY } from './programScheduling';
 import { Target, Search, User, Save, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   LEVELS, LEVEL_NAME, METRICS, BM, UNIV, KIND_COLOR,
@@ -163,6 +164,9 @@ export default function HittingGenerator({ userId, userRole }) {
   const [openPhase, setOpenPhase] = useState({});
   const [programName, setProgramName] = useState('');
   const [assignAthlete, setAssignAthlete] = useState(true);
+  // #439: assigning schedules the roadmap from this date. Defaults to the next
+  // Monday because day 1 of a weekday-anchored program IS Monday.
+  const [startDate, setStartDate] = useState(mondayOnOrAfter(new Date().toISOString().slice(0, 10)));
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
   const [error, setError] = useState('');
@@ -334,13 +338,23 @@ export default function HittingGenerator({ userId, userRole }) {
           if (exErr) throw exErr;
         }
       }
+      let scheduled = null;
       if (assignAthlete && selectedId) {
+        const endDate = singlePassEndDate(startDate, rows);
         const { error: aErr } = await supabase.from('training_program_assignments').insert({
-          program_id: prog.id, player_id: selectedId, start_date: new Date().toISOString().slice(0, 10), assigned_by: userId,
+          program_id: prog.id, player_id: selectedId, start_date: startDate, end_date: endDate, assigned_by: userId,
         });
         if (aErr) throw aErr;
+        // #439: assigning puts the roadmap straight on the athlete's calendar.
+        scheduled = await scheduleProgramEvents({
+          programId: prog.id, programName: programName || `${selectedName} — Hitting Roadmap`,
+          dayAnchor: 'weekday', playerIds: [selectedId], startDate, endDate,
+          category: PROGRAM_CALENDAR_CATEGORY.hitting,
+        });
       }
-      setSaveMsg(`Saved "${programName}"${assignAthlete ? ` and assigned to ${selectedName}` : ''}. ${DROP_ANCHOR_SAVE_NOTE}`);
+      setSaveMsg(assignAthlete && selectedId
+        ? `Saved "${programName}" and assigned to ${selectedName}. ${describeScheduled(scheduled, selectedName)}`
+        : `Saved "${programName}". ${DROP_ANCHOR_SAVE_NOTE}`);
     } catch (e) {
       setError(e.message || 'Save failed.');
     } finally {
@@ -558,8 +572,15 @@ export default function HittingGenerator({ userId, userRole }) {
                   placeholder={selectedName ? `${selectedName} — Hitting Roadmap` : 'Select an athlete first'} />
                 <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 cursor-pointer">
                   <input type="checkbox" checked={assignAthlete} onChange={(e) => setAssignAthlete(e.target.checked)} />
-                  Assign to {selectedName || 'athlete'} (appears on their profile)
+                  Assign to {selectedName || 'athlete'} and add to their schedule
                 </label>
+                {assignAthlete && (
+                  <div className="mt-2">
+                    <label className={label}>Schedule from</label>
+                    <input className={inp} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                    <p className="text-xs text-gray-400 mt-1">Day 1 lands on the Monday on or after this date.</p>
+                  </div>
+                )}
                 <button onClick={save} disabled={saving || !selectedId || !dayPlacement.ok}
                   className="mt-4 w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg">
                   <Save className="w-4 h-4" /> {saving ? 'Saving…' : 'Save Roadmap (one day per phase)'}
