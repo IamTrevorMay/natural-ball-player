@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { Plus, Calendar, Dumbbell, Utensils, TrendingUp, Target, X, Trash2, ChevronDown, ChevronUp, ChevronRight, Users, User, Play, ExternalLink, Clock, Check, XCircle, Edit2, Phone, Link, Search, Eye, EyeOff, GripVertical, ClipboardList, FileText } from 'lucide-react';
 import { formatUserError } from './errorMessage';
 import { buildSlotExceptionMap, getSlotDateException, collectMovedSlots, placeProgramDays } from './scheduleUtils';
@@ -28,12 +29,14 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   };
 
   const fetchPlayers = async () => {
-    const { data, error } = await supabase
+    // #437: paged past the 1,000-row clamp.
+    const { rows, error } = await readAllPages(() => supabase
       .from('users')
       .select('id, full_name, email, player_profiles!player_profiles_user_id_fkey(position, jersey_number, level), team_members(team_id, teams(name))')
       .or('role.eq.player,secondary_role.eq.player')
-      .order('full_name');
-    if (!error) setPlayers(data);
+      .order('full_name')
+      .order('id'));
+    if (!error) setPlayers(rows);
   };
 
   if (loading) {
@@ -642,15 +645,17 @@ function RosterTab({ userRole, userId, teams, onNavigateToProfile, onRefreshPlay
 
   const fetchRosterPlayers = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    // #437: paged past the 1,000-row clamp.
+    const { rows: data, error } = await readAllPages(() => supabase
       .from('users')
       .select('id, full_name, phone, avatar_url, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, bats, throws, program, level, status, sub_status), team_members(team_id, teams(name))')
       .eq('role', 'player')
-      .order('full_name');
+      .order('full_name')
+      .order('id'));
 
     if (error) { console.error(error); setLoading(false); return; }
 
-    let filtered = data || [];
+    let filtered = data;
     if (userRole === 'coach') {
       const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
       const teamIds = (coachTeams || []).map(t => t.team_id);

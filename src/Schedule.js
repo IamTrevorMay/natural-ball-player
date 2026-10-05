@@ -20,6 +20,7 @@ import { applySessionUsage } from './sessionUsage';
 import { CANCEL_REASON_ATHLETE } from './cancelReasons';
 // #277: per-occurrence RSVP (Going / Not going / Maybe) + coach roster & nudge.
 import { EventRsvpSection } from './EventRsvp';
+import { readAllPages } from './readAllPages';
 
 // #347 QA: every path that would wipe a whole facility series asks here first,
 // so the warning and its numbers can never differ between the Delete button on
@@ -552,7 +553,10 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
   };
 
   const fetchPlayers = async () => {
-    let query = supabase
+    // #437: paged. `users` is past 1,000 rows and PostgREST clamps a single
+    // read there with no error, which silently dropped every name from ~"W"
+    // on (Zach Robman) out of this picker.
+    const build = () => supabase
       .from('users')
       .select(`
         id,
@@ -561,7 +565,8 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
       `)
       // Include everyone (players, coaches, interns, admins) so staff can be programmed
       // just like athletes (#156). Coach view is still scoped to their teams below.
-      .order('full_name');
+      .order('full_name')
+      .order('id');
 
     // If coach, only show players from their teams
     if (userRole === 'coach') {
@@ -569,7 +574,7 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
         .from('team_members')
         .select('team_id')
         .eq('user_id', userId);
-      
+
       const teamIds = coachTeams?.map(t => t.team_id) || [];
       // A coach only ever sees players on their own teams. With no teams, that's an
       // empty set — never fall through to the unfiltered all-users query.
@@ -578,16 +583,16 @@ export default function Schedule({ userId, userRole, onMessageCoach }) {
         return;
       }
       // Filter to only players on coach's teams
-      const { data } = await query;
-      const filteredPlayers = data?.filter(p =>
+      const { rows } = await readAllPages(build);
+      const filteredPlayers = rows.filter(p =>
         p.team_members?.some(tm => teamIds.includes(tm.team_id))
       );
-      setPlayers(filteredPlayers || []);
+      setPlayers(filteredPlayers);
       return;
     }
 
-    const { data } = await query;
-    setPlayers(data || []);
+    const { rows } = await readAllPages(build);
+    setPlayers(rows);
   };
 
   const fetchTeamEvents = async () => {
@@ -7189,14 +7194,15 @@ function AddFacilityEventPanel({ date, onClose, onSuccess, mode = 'org' }) {
   useEffect(() => {
     (async () => {
       const [aRes, cRes, tRes] = await Promise.all([
-        supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name'),
+        // #437: paged — the athlete directory is within ~50 rows of the 1,000-row clamp.
+        readAllPages(() => supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name').order('id')),
         supabase.from('users').select('id, full_name').in('role', ['admin', 'coach']).order('full_name'),
         supabase.from('teams').select('id, name').order('name'),
       ]);
       if (aRes.error) console.error('AddFacilityEventPanel: athletes query failed:', aRes.error);
       if (cRes.error) console.error('AddFacilityEventPanel: coaches query failed:', cRes.error);
       if (tRes.error) console.error('AddFacilityEventPanel: teams query failed:', tRes.error);
-      setAthletes(aRes.data || []);
+      setAthletes(aRes.rows);
       setCoaches(cRes.data || []);
       setTeams(tRes.data || []);
     })();
@@ -7506,9 +7512,11 @@ function FacilityEventDetail({ event, userId, userRole, onClose, onUpdate, onDel
       // staff-only assign/edit pickers and the assigned-players list. A player
       // opening any facility event used to download the whole thing.
       if (!isStaff) return;
-      const { data: athleteData, error: athleteError } = await supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name');
+      // #437: paged past the 1,000-row clamp.
+      const { rows: athleteData, error: athleteError } = await readAllPages(() =>
+        supabase.from('users').select('id, full_name').eq('role', 'player').order('full_name').order('id'));
       if (athleteError) console.error('FacilityEventDetail: athletes query failed:', athleteError);
-      setAthletes(athleteData || []);
+      setAthletes(athleteData);
     })();
   }, [isStaff]);
 

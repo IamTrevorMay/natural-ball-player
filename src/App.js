@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, supabaseUrl, supabaseAnonKey } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { buildSlotExceptionMap, getSlotDateException } from './scheduleUtils';
 import AdminSettings from './AdminSettings';
 import PlayerDashboard from './PlayerDashboard';
@@ -1037,13 +1038,16 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
       // Staff also see players whose birthday is today
       let players = [];
       if (userRole === 'admin' || userRole === 'coach') {
-        const { data: rows } = await supabase
+        // #437: paged, and ordered — an unordered read past the 1,000-row
+        // clamp would drop a random slice of players rather than a predictable one.
+        const { rows } = await readAllPages(() => supabase
           .from('users')
           .select('id, full_name, date_of_birth')
           .eq('role', 'player')
-          .not('date_of_birth', 'is', null);
+          .not('date_of_birth', 'is', null)
+          .order('id'));
         if (cancelled) return;
-        players = (rows || [])
+        players = rows
           .filter(r => r.id !== userId && r.date_of_birth && r.date_of_birth.slice(5) === mmdd)
           .map(r => ({ id: r.id, full_name: r.full_name }));
       }

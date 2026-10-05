@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { fetchUserDirectory } from './userDirectory';
 import { MessageSquare, Plus, Users, User, Pin, Send, X, ArrowLeft, Bell, UserPlus, UserMinus, Search, Trash2 } from 'lucide-react';
 import { useModalTracking, trackAction } from './usage';
@@ -226,11 +227,15 @@ export default function Messages({ userId, userRole, initialConversationId, onIn
 
   const fetchUsers = async () => {
     if (userRole === 'admin' || userRole === 'coach') {
-      const { data } = await supabase
+      // #437: paged — users is past the 1,000-row clamp, which was silently
+      // dropping late-alphabet names from the recipient picker.
+      const { rows, error } = await readAllPages(() => supabase
         .from('users')
         .select('id, full_name, role, is_intern')
-        .order('full_name');
-      if (data) setUsers(data);
+        .order('full_name')
+        .order('id'));
+      if (error) console.error('Messages: users query failed:', error);
+      setUsers(rows);
     }
   };
 

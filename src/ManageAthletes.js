@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ProgramStatusBadge, { fetchProgramStatus } from './ProgramStatusBadge';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { GRAD_YEAR_OPTIONS, classLabelForGradYear } from './gradYear';
 import { Users, Search, Edit2, X, Save, AlertTriangle, Mail } from 'lucide-react';
 import EmailComposeModal from './EmailComposeModal';
@@ -85,15 +86,17 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
 
   const fetchRosterPlayers = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    // #437: paged past the 1,000-row clamp.
+    const { rows: data, error } = await readAllPages(() => supabase
       .from('users')
       .select('id, full_name, email, phone, avatar_url, date_of_birth, parent1_email, parent2_email, player_profiles!player_profiles_user_id_fkey(id, position, jersey_number, grade, grad_year, bats, throws, program, level, status, sub_status, trainer_id, offer_status, signup_intent), team_members(team_id, teams(name, team_type))')
       .or('role.eq.player,secondary_role.eq.player')
-      .order('full_name');
+      .order('full_name')
+      .order('id'));
 
     if (error) { console.error(error); setLoading(false); return; }
 
-    let filtered = (data || []).map(p => {
+    let filtered = data.map(p => {
       // Normalize: player_profiles may be object (unique FK) or array
       const pp = p.player_profiles;
       return { ...p, player_profiles: pp ? (Array.isArray(pp) ? pp : [pp]) : [] };

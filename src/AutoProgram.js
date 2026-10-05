@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { insertTrainingProgram } from './insertTrainingProgram';
 import {
   Wand2, Search, User, Save, AlertTriangle, ShieldAlert, CheckCircle2, Circle,
@@ -760,13 +761,15 @@ export default function AutoProgram({ userId, userRole }) {
   useEffect(() => {
     if (!allowed) return;
     (async () => {
-      const { data, error: e } = await supabase
+      // #437: paged past the 1,000-row clamp.
+      const { rows: data, error: e } = await readAllPages(() => supabase
         .from('users')
         .select('id, full_name, player_profiles!player_profiles_user_id_fkey(position, throws, level, training_age_months)')
         .in('role', ['player', 'coach', 'admin'])
-        .order('full_name');
+        .order('full_name')
+        .order('id'));
       if (e) { setError(`Could not load the roster: ${e.message}`); return; }
-      let filtered = data || [];
+      let filtered = data;
       if (userRole === 'coach') {
         const { data: coachTeams, error: ctErr } = await supabase
           .from('team_members').select('team_id').eq('user_id', userId);

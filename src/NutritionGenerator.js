@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { Utensils, Search, User, Save, Check, AlertTriangle, Droplet, Clock } from 'lucide-react';
 import {
   Sex, Goal, Phase, DayType, makeProfile, generatePlan, planToMealRows, mealTotals,
@@ -67,10 +68,11 @@ export default function NutritionGenerator({ userId, userRole }) {
 
   useEffect(() => {
     (async () => {
-      const { data, error: e } = await supabase
-        .from('users').select('id, full_name').in('role', ['player', 'coach', 'admin']).order('full_name');
+      // #437: paged past the 1,000-row clamp.
+      const { rows: data, error: e } = await readAllPages(() => supabase
+        .from('users').select('id, full_name').in('role', ['player', 'coach', 'admin']).order('full_name').order('id'));
       if (e) { setError(e.message); return; }
-      let filtered = data || [];
+      let filtered = data;
       if (userRole === 'coach') {
         const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
         const teamIds = (coachTeams || []).map((t) => t.team_id);

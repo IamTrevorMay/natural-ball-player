@@ -9,6 +9,7 @@
 // in Manage Athletes (or inline here).
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { ChevronDown, ChevronRight, Users, RefreshCw } from 'lucide-react';
 import { GRAD_YEAR_OPTIONS, RECRUITING_CLASSES, classForGradYear, schoolYearEnd } from './gradYear';
 import { formatUserError } from './errorMessage';
@@ -29,12 +30,14 @@ export default function RecruitingBoard({ onNavigateToProfile, highlightUserId }
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const [{ data: profiles, error: pErr }, { data: rt, error: rErr }, { count, error: cErr }] = await Promise.all([
-        supabase
+      const [{ rows: profiles, error: pErr }, { data: rt, error: rErr }, { count, error: cErr }] = await Promise.all([
+        // #437: paged past the 1,000-row clamp.
+        readAllPages(() => supabase
           .from('player_profiles')
           .select('id, user_id, grade, grad_year, position, level, status, users!player_profiles_user_id_fkey(id, full_name, role)')
           .not('grad_year', 'is', null)
-          .or('status.is.null,status.neq.Archived'),
+          .or('status.is.null,status.neq.Archived')
+          .order('id')),
         supabase.from('recruitment_teams').select('user_id, status, level, organization_name'),
         supabase
           .from('player_profiles')

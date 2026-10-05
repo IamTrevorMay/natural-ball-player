@@ -5,6 +5,7 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import DOMPurify from 'dompurify';
 import { formatUserError } from './errorMessage';
+import { readAllPages } from './readAllPages';
 
 /*
  * Issue #281 — Email Campaigns, Phase 1 of 3. Mirrors EZFacility's Email
@@ -36,22 +37,10 @@ import { formatUserError } from './errorMessage';
  * more — it has to expand and de-duplicate first. See expandRecipients.
  */
 
-// Paginated read. A single .range(0, 9999) is silently clamped to the
-// project's db-max-rows (1000 by default) and returns a SHORT LIST WITH NO
-// ERROR. Module-level on purpose: it closes over nothing, so effects can
-// depend on callers of it without dragging the whole component into deps.
-const readAllPages = async (build) => {
-  const PAGE = 1000;
-  const out = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await build().range(from, from + PAGE - 1);
-    if (error) return { rows: out, error };
-    const page = data || [];
-    out.push(...page);
-    if (page.length < PAGE) break;
-  }
-  return { rows: out, error: null };
-};
+// Paginated read — see src/readAllPages.js. A single .range(0, 9999) is
+// silently clamped to the project's db-max-rows (1000 by default) and returns
+// a SHORT LIST WITH NO ERROR. Imported rather than defined here since #437
+// made it the shared fix for every list-all-users query in the app.
 
 // Deliberately permissive. Apostrophes are legal in a local part and were
 // wrongly rejected here once already; what this needs to catch is the shape a

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { Dumbbell, Utensils, Zap, Target, FolderOpen, Wand2, Sparkles, Link2 } from 'lucide-react';
 import { TrainingTab, MealsTab } from './CoachTools';
 import ProgramGenerator from './ProgramGenerator';
@@ -41,13 +42,15 @@ export default function Programming({ userId, userRole }) {
       const { data: t, error: tErr } = await supabase.from('teams').select('*').order('name');
       if (tErr) { setLoadError(`Could not load teams: ${tErr.message}`); return; }
       setTeams(t || []);
-      const { data: p, error: pErr } = await supabase
+      // #437: paged past the 1,000-row clamp.
+      const { rows: p, error: pErr } = await readAllPages(() => supabase
         .from('users')
         .select('id, full_name, email, player_profiles!player_profiles_user_id_fkey(position, jersey_number, level), team_members(team_id, teams(name))')
         .or('role.eq.player,role.eq.coach,role.eq.admin,secondary_role.eq.player')
-        .order('full_name');
+        .order('full_name')
+        .order('id'));
       if (pErr) { setLoadError(`Could not load athletes: ${pErr.message}`); return; }
-      setPlayers(p || []);
+      setPlayers(p);
       setLoadError('');
     })();
   }, []);

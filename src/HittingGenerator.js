@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { readAllPages } from './readAllPages';
 import { insertTrainingProgram } from './insertTrainingProgram';
 import { Target, Search, User, Save, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import {
@@ -168,13 +169,15 @@ export default function HittingGenerator({ userId, userRole }) {
 
   useEffect(() => {
     (async () => {
-      const { data, error: e } = await supabase
+      // #437: paged past the 1,000-row clamp.
+      const { rows: data, error: e } = await readAllPages(() => supabase
         .from('users')
         .select('id, full_name, player_profiles!player_profiles_user_id_fkey(level)')
         .in('role', ['player', 'coach', 'admin'])
-        .order('full_name');
+        .order('full_name')
+        .order('id'));
       if (e) { setError(e.message); return; }
-      let filtered = data || [];
+      let filtered = data;
       if (userRole === 'coach') {
         const { data: coachTeams } = await supabase.from('team_members').select('team_id').eq('user_id', userId);
         const teamIds = (coachTeams || []).map((t) => t.team_id);
