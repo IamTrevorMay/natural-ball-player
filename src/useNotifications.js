@@ -431,8 +431,33 @@ async function fetchPtVisitNotices(userId, userRole) {
   return mine.map(v => ({ ...v, playerName: nameById.get(v.player_id) || null }));
 }
 
+// #438: Monday of the week containing `d`, local time, as YYYY-MM-DD — the
+// same key the weekly-reminders edge function writes (facility time; the
+// athlete's browser is in the same timezone for all practical purposes, and a
+// one-day skew at the edges only delays the bell item, never duplicates it).
+export function weekStartFor(d = new Date()) {
+  const m = new Date(d);
+  m.setDate(m.getDate() - ((m.getDay() + 6) % 7));
+  return fmtLocalDate(m);
+}
+
+// #438: the athlete clears this week's reminder from the bell. Own-row UPDATE
+// under RLS; the cron never un-dismisses, so once cleared it stays cleared.
+export async function dismissWeeklyReminder(reminderId, onSuccess) {
+  if (!reminderId) return;
+  const { error } = await supabase
+    .from('weekly_reminders')
+    .update({ dismissed_at: new Date().toISOString() })
+    .eq('id', reminderId);
+  if (error) { console.error('Weekly reminder dismiss failed:', error); return; }
+  onSuccess?.();
+}
+
 export function useMainPortalCounts(userId, userRole) {
   const [unreadMessages, setUnreadMessages] = useState(0);
+  // #438: this week's undismissed stats/PT reminder rows for the signed-in
+  // athlete (one, in practice). Written by the weekly-reminders cron.
+  const [weeklyReminders, setWeeklyReminders] = useState([]);
   const [pendingSlots, setPendingSlots] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [packageFlags, setPackageFlags] = useState([]);
@@ -466,6 +491,25 @@ export function useMainPortalCounts(userId, userRole) {
       } catch (e) { console.error('Pending payments error:', e); }
     } else {
       setPendingPayments([]);
+    }
+
+    // #438: the row the cron wrote for this week, if the athlete hasn't
+    // cleared it. RLS scopes to own rows; the user_id filter is belt-and-braces.
+    // Fails to EMPTY so a missing table (migration pending) never takes the
+    // rest of the bell down.
+    try {
+      const { data: wr, error: wrErr } = await supabase
+        .from('weekly_reminders')
+        .select('id, week_start, kind, sent_at, created_at')
+        .eq('user_id', userId)
+        .eq('week_start', weekStartFor())
+        .is('dismissed_at', null)
+        .limit(3);
+      if (wrErr) throw wrErr;
+      setWeeklyReminders(wr || []);
+    } catch (e) {
+      console.error('Weekly reminders error (migration pending?):', e);
+      setWeeklyReminders([]);
     }
 
     try {
@@ -607,7 +651,7 @@ export function useMainPortalCounts(userId, userRole) {
     return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); supabase.removeChannel(ch6); supabase.removeChannel(ch7); };
   }, [refresh, userId]);
 
-  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, ptVisitNotices, refresh };
+  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, ptVisitNotices, weeklyReminders, refresh };
 }
 
 // Counts and details for the Work Portal: unread work messages + (admin) pending hours + pending time off.

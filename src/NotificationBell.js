@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity, CalendarPlus, HeartPulse, X } from 'lucide-react';
+import { Bell, MessageSquare, Clock, Plane, ArrowLeftRight, Briefcase, Home, CreditCard, Trash2, AlertTriangle, Activity, CalendarPlus, HeartPulse, ClipboardList, X } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { formatUserError } from './errorMessage';
 import { PAYMENT_DUE_NOTICES_ENABLED } from './useNotifications';
@@ -99,7 +99,7 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment, onOpenAthletePt, onDismissPtNotice, onDismissAllPtNotices }) {
+export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment, onOpenAthletePt, onDismissPtNotice, onDismissAllPtNotices, onOpenWeeklyReminder, onDismissWeeklyReminder }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -121,6 +121,8 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     + (mainCounts?.eventAssignments?.length || 0)
     // #402: PT entries logged on this coach/admin's athletes, not yet seen.
     + (mainCounts?.ptVisitNotices?.length || 0)
+    // #438: this week's stats/PT check-in, until the athlete clears it.
+    + (mainCounts?.weeklyReminders?.length || 0)
     // #224: the WHOOP nudge counts as one. It clears itself the moment the
     // athlete connects — useWhoopNudge only ever sets this when the server
     // says `connected === false`, so there is no state to reset by hand.
@@ -296,6 +298,43 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                 the athlete's Physical Therapy tab, where the existing RLS and
                 the existing screen decide what they see. Clicking dismisses
                 and navigates, as with #408; the X dismisses in place. */}
+            {/* #438: the weekly stats / PT check-in. Click-through opens the
+                athlete's own Stats tab and clears it; the X just clears it. */}
+            {(mainCounts?.weeklyReminders || []).map(r => (
+              <div
+                key={`main-weekly-${r.id}`}
+                className="w-full flex items-start hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <button
+                  onClick={() => {
+                    onDismissWeeklyReminder?.(r.id);
+                    setOpen(false);
+                    if (onOpenWeeklyReminder) onOpenWeeklyReminder();
+                    else jump('main', 'profile');
+                  }}
+                  className="flex-1 text-left px-4 py-3 min-w-0"
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className="mt-0.5"><ClipboardList size={16} className="text-blue-600" /></div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-900">
+                        Weekly check-in: <span className="font-medium">update your game stats</span> and let your coach know about any PT or injury news
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">Week of {fmtDate(r.week_start)} · opens your Stats tab</p>
+                    </div>
+                    {currentPortal !== 'main' && <PortalTag kind="main" />}
+                  </div>
+                </button>
+                <button
+                  onClick={() => onDismissWeeklyReminder?.(r.id)}
+                  title="Dismiss"
+                  className="px-3 py-3 text-gray-400 hover:text-gray-700 transition shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+
             {(mainCounts?.ptVisitNotices || []).map(visit => (
               <div
                 key={`main-pt-visit-${visit.id}`}

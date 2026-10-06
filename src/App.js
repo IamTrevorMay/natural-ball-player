@@ -29,7 +29,7 @@ import PublicPortal from './PublicPortal';
 import NotificationBell, { deletePendingPayment, dismissEventAssignment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
-import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge, dismissPtVisitNotice, markAllPtVisitNoticesSeen } from './useNotifications';
+import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge, dismissPtVisitNotice, markAllPtVisitNoticesSeen, dismissWeeklyReminder } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, Dumbbell } from 'lucide-react';
 import './App.css';
 
@@ -53,6 +53,21 @@ export default function App() {
   const [secondaryRole, setSecondaryRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [currentView, setCurrentView] = useState(() => {
+    // #438: the weekly reminder email deep-links with ?view=stats (profile,
+    // Stats tab — MainApp's profileInitialTab reads the same param) or
+    // ?view=messages. Consumed once: the param is stripped so a refresh goes
+    // back to the remembered view.
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const v = p.get('view');
+      if (v === 'stats' || v === 'messages') {
+        if (v === 'stats') { try { sessionStorage.setItem('nbp_deeplink_tab', 'stats'); } catch {} }
+        p.delete('view');
+        const qs = p.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash || ''}`);
+        return v === 'stats' ? 'profile' : 'messages';
+      }
+    } catch {}
     try { return localStorage.getItem('nbp_current_view') || ''; } catch { return ''; }
   });
   const [workPortalView, setWorkPortalView] = useState(() => {
@@ -888,7 +903,18 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const [navigateTeamId, setNavigateTeamId] = useState(null);
   // Lets the player dashboard's post-practice stats reminder (#278) open
   // Profile directly on the Practice Stats tab instead of the default one.
-  const [profileInitialTab, setProfileInitialTab] = useState(null);
+  // #438: ?view=stats (from the weekly reminder email) lands on the Stats tab.
+  // The top-level App already turned that param into currentView='profile'
+  // and stripped it, so read it before that happens: this initialiser runs on
+  // MainApp's first mount, which is after the strip — hence the sessionStorage
+  // hand-off below rather than re-reading window.location here.
+  const [profileInitialTab, setProfileInitialTab] = useState(() => {
+    try {
+      const v = sessionStorage.getItem('nbp_deeplink_tab');
+      if (v) { sessionStorage.removeItem('nbp_deeplink_tab'); return v; }
+    } catch {}
+    return null;
+  });
   // #407: conversation to open when Schedule's "Message coach" jumps to Messages.
   const [messagesInitialConversationId, setMessagesInitialConversationId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1148,6 +1174,14 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   const handleDismissPtNotice = (visitId) => dismissPtVisitNotice(visitId, userId, mainCounts.refresh);
   const handleDismissAllPtNotices = () => markAllPtVisitNoticesSeen(userId, mainCounts.refresh);
 
+  // #438: the weekly check-in opens the athlete's OWN profile on the Stats
+  // tab ('stats' is a top-level profile tab, Profile.js:90).
+  const handleOpenWeeklyReminder = () => {
+    setProfileInitialTab('stats');
+    setCurrentView('profile');
+  };
+  const handleDismissWeeklyReminder = (reminderId) => dismissWeeklyReminder(reminderId, mainCounts.refresh);
+
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
       <WorkPortalShell
@@ -1212,6 +1246,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             onOpenAthletePt={handleOpenAthletePt}
             onDismissPtNotice={handleDismissPtNotice}
             onDismissAllPtNotices={handleDismissAllPtNotices}
+            onOpenWeeklyReminder={handleOpenWeeklyReminder}
+            onDismissWeeklyReminder={handleDismissWeeklyReminder}
           />
         </div>
 
