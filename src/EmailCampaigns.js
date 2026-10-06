@@ -182,12 +182,34 @@ const SECTIONS = [
 
 const STEPS = ['Select Clients', 'Filter Clients', 'Compose Message', 'Preview and Send'];
 
+// #441 follow-up (Cordell, 2026-10-06): the archived / inactive lists are
+// Step 1 categories in their own right, so picking one needs no further
+// action — Step 2 then hides the Teams box, because most archived athletes
+// have been removed from every group or team and the box read as required.
 const CATEGORIES = [
   { value: 'all', label: 'All Contacts' },
   { value: 'players', label: 'Players' },
+  { value: 'players_inactive', label: 'Inactive athletes' },
+  { value: 'players_archived', label: 'Archived athletes' },
+  { value: 'players_lapsed', label: 'Inactive + Archived athletes (win-back)' },
   { value: 'staff', label: 'Staff (Coaches & Admins)' },
   { value: 'leads', label: 'Public Leads' },
 ];
+// Categories whose athlete status is fixed by the category itself. The
+// status comes from player_profiles.status (Manage Athletes); team
+// membership is deliberately NOT part of the definition.
+const CATEGORY_FIXED_STATUS = {
+  players_inactive: ['Inactive'],
+  players_archived: ['Archived'],
+  players_lapsed: ['Inactive', 'Archived'],
+};
+const CATEGORY_AUDIENCE_NOTE = {
+  players_inactive: 'Every athlete whose status in Manage Athletes is Inactive — on a team or not.',
+  players_archived: 'Every athlete whose status in Manage Athletes is Archived — on a team or not.',
+  players_lapsed: 'Every athlete whose status in Manage Athletes is Inactive or Archived — on a team or not. This is the win-back list.',
+};
+// Categories that still offer the optional Teams box and the status select.
+const hasTeamFilters = (category) => category === 'all' || category === 'players';
 
 // #441: Step 2 "Athlete status" filter, read from player_profiles.status —
 // the same Active / Inactive / Archived vocabulary Manage Athletes writes.
@@ -316,12 +338,13 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
     // with no profile row is excluded — they have no status to match) and
     // filters on the embedded column. Without a status filter the select is
     // exactly what it was, so the other categories are untouched.
-    const statusList = (category === 'all' || category === 'players') ? athleteStatusList(filters.athleteStatus) : null;
+    const statusList = CATEGORY_FIXED_STATUS[category]
+      || (hasTeamFilters(category) ? athleteStatusList(filters.athleteStatus) : null);
     let q = supabase.from('users').select(
       statusList ? `${selectCols}, player_profiles!player_profiles_user_id_fkey!inner(status)` : selectCols
     );
     if (statusList) q = q.in('player_profiles.status', statusList);
-    if (category === 'players') q = q.eq('role', 'player');
+    if (category === 'players' || CATEGORY_FIXED_STATUS[category]) q = q.eq('role', 'player');
     else if (category === 'staff') q = q.in('role', ['admin', 'coach']);
     else if (category === 'leads') q = q.eq('role', 'public');
     // 'all' = All Contacts: every user row with an email.
@@ -812,10 +835,15 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
       {step === 2 && (
         <div className="space-y-4">
           {stepHeader('Filter Clients')}
+          {CATEGORY_AUDIENCE_NOTE[category] && (
+            <div className="max-w-2xl bg-blue-50 border border-blue-200 text-blue-900 text-sm rounded-lg px-4 py-3">
+              <span className="font-medium">{activeCategoryLabel}.</span> {CATEGORY_AUDIENCE_NOTE[category]} No team or group needs to be chosen — only the sign-up date filters below narrow this list.
+            </div>
+          )}
           <div className="grid sm:grid-cols-2 gap-4 max-w-2xl">
-            {(category === 'all' || category === 'players') && (
+            {hasTeamFilters(category) && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Teams</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teams <span className="font-normal text-gray-400">(optional)</span></label>
                 <div className="border border-gray-300 rounded-lg overflow-y-auto max-h-40 divide-y divide-gray-100">
                   {teams.map(t => (
                     <label key={t.id} className="flex items-center space-x-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
@@ -845,7 +873,7 @@ export default function EmailCampaigns({ userId, userRole, section, onSectionCha
                 )}
               </div>
             )}
-            {(category === 'all' || category === 'players') && (
+            {hasTeamFilters(category) && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Athlete Status</label>
                 <select
