@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ProgramStatusBadge, { fetchProgramStatus } from './ProgramStatusBadge';
+import AgreementStatusChip, { fetchAgreementStatus } from './AgreementStatusChip';
 import { supabase } from './supabaseClient';
 import { readAllPages } from './readAllPages';
 import { GRAD_YEAR_OPTIONS, classLabelForGradYear } from './gradYear';
@@ -54,6 +55,8 @@ const OFFER_STATUS_COLORS = {
 export default function ManageAthletes({ userId, userRole, onNavigateToProfile }) {
   // #436: { userId: status } for training-group athletes; null until loaded.
   const [programStatus, setProgramStatus] = useState(null);
+  // #440: { userId: agreement | null } for training-group athletes; null until loaded.
+  const [agreementStatus, setAgreementStatus] = useState(null);
   const [rosterPlayers, setRosterPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -111,6 +114,7 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
     // #436: programmed check marks for athletes in a training group.
     const nbpIds = filtered.filter(p => (p.team_members || []).some(tm => tm.teams?.team_type === 'training')).map(p => p.id);
     fetchProgramStatus(nbpIds).then(setProgramStatus);
+    fetchAgreementStatus(nbpIds).then(setAgreementStatus);
   };
 
   const fetchTeamCoaches = async () => {
@@ -506,6 +510,16 @@ export default function ManageAthletes({ userId, userRole, onNavigateToProfile }
                           {firstName}
                         </button>
                       </span>
+                      {/* #440: NBP+ athletes only — signed / countersign / none; click to review. */}
+                      {agreementStatus && programStatus && programStatus[player.id] !== undefined && (
+                        <AgreementStatusChip
+                          status={agreementStatus[player.id]}
+                          athleteId={player.id}
+                          userId={userId}
+                          userRole={userRole}
+                          className="block mt-0.5 w-fit"
+                        />
+                      )}
                       {(profile.signup_intent === 'team' || profile.signup_intent === 'both') && (
                         <span
                           className="block mt-0.5 w-fit bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
