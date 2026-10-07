@@ -25,7 +25,7 @@ export const SOFTWARE_CATALOG = [
     platform: 'macOS 12 or later, Intel or Apple Silicon',
     tagPrefix: 'bullpensync-v',
     assetName: 'BullpenSync.zip',
-    latestKnown: { version: '1.0.0', tag: 'bullpensync-v1.0.0', publishedAt: '2026-09-30' },
+    latestKnown: { version: '1.0.1', tag: 'bullpensync-v1.0.1', publishedAt: '2026-10-07' },
     requirements: [
       'The iPad running the Trackman app, connected to the Mac by USB and trusted (tap Trust on the iPad the first time).',
       'A Mac admin password once, for the one-time setup wizard inside the app.',
