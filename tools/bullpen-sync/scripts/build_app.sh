@@ -21,7 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 APP="$DIST/BullpenSync.app"
 CONTENTS="$APP/Contents"
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 echo "==> Cleaning $APP"
 rm -rf "$APP"

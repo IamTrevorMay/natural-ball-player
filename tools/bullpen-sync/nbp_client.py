@@ -7,6 +7,15 @@ policies on trackman_sessions / trackman_pitches enforce permission.
 On upload failure the whole payload is dropped into a local retry queue
 (config.QUEUE_DIR) as JSON and re-sent by drain_queue() — the on-disk CSV is
 always written first by the app, so a failed upload never loses data.
+
+Token lifetime (#442). Supabase access tokens expire after an hour. 1.0.0
+kept only the access token from login, so any bullpen that ended more than an
+hour after sign-in failed with `PGRST303 JWT expired` and "Retry upload" could
+never succeed either. Every authed request now goes through _request(), which
+refreshes the token (grant_type=refresh_token) shortly before expiry and, as a
+belt-and-braces, on a 401 — retrying the call once. If the refresh itself is
+refused the client signs out and reports "sign in again", and the payload is
+already in the retry queue for after that.
 """
 from __future__ import annotations
 
@@ -35,6 +44,8 @@ class NbpClient:
         self.url = config.SUPABASE_URL.rstrip("/")
         self.anon = config.SUPABASE_ANON_KEY
         self.access_token: str | None = None
+        self.refresh_token: str | None = None
+        self.expires_at: float = 0.0  # unix seconds; 0 = unknown
         self.user_id: str | None = None
         self.user_role: str | None = None
         self.user_name: str | None = None
@@ -51,7 +62,7 @@ class NbpClient:
         if r.status_code != 200:
             raise NbpError("Invalid email or password.")
         data = r.json()
-        self.access_token = data.get("access_token")
+        self._take_tokens(data)
         user = data.get("user") or {}
         self.user_id = user.get("id")
         # Role lives in public.users, not the auth record — fetch it.
@@ -62,11 +73,76 @@ class NbpClient:
         return {"id": self.user_id, "role": self.user_role, "name": self.user_name}
 
     def logout(self) -> None:
-        self.access_token = self.user_id = self.user_role = self.user_name = None
+        self.access_token = self.refresh_token = None
+        self.expires_at = 0.0
+        self.user_id = self.user_role = self.user_name = None
 
     @property
     def is_authed(self) -> bool:
         return bool(self.access_token and self.user_role in STAFF_ROLES)
+
+    # ── Token refresh (#442) ──
+
+    # Refresh this many seconds BEFORE the access token expires, so a long
+    # pitches insert started near the edge doesn't cross it mid-flight.
+    REFRESH_MARGIN_S = 120
+
+    def _take_tokens(self, data: dict) -> None:
+        self.access_token = data.get("access_token")
+        # Supabase rotates the refresh token on every refresh; always keep the
+        # newest one or the next refresh is refused.
+        self.refresh_token = data.get("refresh_token") or self.refresh_token
+        exp = data.get("expires_at")
+        if not exp and data.get("expires_in"):
+            exp = time.time() + float(data["expires_in"])
+        self.expires_at = float(exp) if exp else 0.0
+
+    def _token_stale(self) -> bool:
+        return bool(self.expires_at) and time.time() >= self.expires_at - self.REFRESH_MARGIN_S
+
+    def refresh(self) -> None:
+        """Swap the refresh token for a new access token. Signs out and raises
+        when the refresh is refused (token revoked, user deleted, long idle)."""
+        if not self.refresh_token:
+            self.logout()
+            raise NbpError("Session expired — please sign in again.")
+        try:
+            r = requests.post(
+                f"{self.url}/auth/v1/token?grant_type=refresh_token",
+                headers={"apikey": self.anon, "Content-Type": "application/json"},
+                json={"refresh_token": self.refresh_token},
+                timeout=15,
+            )
+        except requests.RequestException as e:
+            # Network blip: keep the session, let the caller's request fail on
+            # its own terms rather than forcing a sign-out over wifi.
+            raise NbpError(f"Could not refresh sign-in ({e}).")
+        if r.status_code != 200:
+            log.warning(f"token refresh refused ({r.status_code}): {r.text[:200]}")
+            self.logout()
+            raise NbpError("Session expired — please sign in again.")
+        self._take_tokens(r.json())
+        log.info("access token refreshed")
+
+    def _request(self, method: str, path: str, *, extra_headers: dict | None = None, **kw) -> requests.Response:
+        """An authed PostgREST call that keeps the token fresh: refresh ahead
+        of expiry, and on a 401 refresh once and retry."""
+        if not self.access_token:
+            raise NbpError("Not logged in.")
+        if self._token_stale() and self.refresh_token:
+            self.refresh()
+        r = requests.request(method, f"{self.url}{path}", headers=self._headers(extra_headers), **kw)
+        if r.status_code == 401:
+            if not self.refresh_token:
+                # Nothing to refresh with: the sign-in is dead. Say so rather
+                # than letting every later call (and the whole retry queue)
+                # fail the same way.
+                self.logout()
+                raise NbpError("Session expired — please sign in again.")
+            log.info("401 from PostgREST — refreshing token and retrying once")
+            self.refresh()
+            r = requests.request(method, f"{self.url}{path}", headers=self._headers(extra_headers), **kw)
+        return r
 
     def _headers(self, extra: dict | None = None) -> dict:
         if not self.access_token:
@@ -81,9 +157,8 @@ class NbpClient:
         return h
 
     def _fetch_role_name(self) -> tuple[str | None, str | None]:
-        r = requests.get(
-            f"{self.url}/rest/v1/users",
-            headers=self._headers(),
+        r = self._request(
+            "GET", "/rest/v1/users",
             params={"select": "role,full_name", "id": f"eq.{self.user_id}"},
             timeout=15,
         )
@@ -106,9 +181,7 @@ class NbpClient:
         if q:
             like = f"*{q}*"
             params["or"] = f"(full_name.ilike.{like},email.ilike.{like})"
-        r = requests.get(
-            f"{self.url}/rest/v1/users", headers=self._headers(), params=params, timeout=15
-        )
+        r = self._request("GET", "/rest/v1/users", params=params, timeout=15)
         if r.status_code != 200:
             raise NbpError(f"Athlete search failed ({r.status_code}).")
         return r.json()
@@ -121,15 +194,14 @@ class NbpClient:
         handedness was always None).
         """
         try:
-            r = requests.get(
-                f"{self.url}/rest/v1/player_profiles",
-                headers=self._headers(),
+            r = self._request(
+                "GET", "/rest/v1/player_profiles",
                 params={"select": "throws", "user_id": f"eq.{user_id}", "limit": "1"},
                 timeout=10,
             )
             if r.status_code == 200 and r.json():
                 return r.json()[0].get("throws") or None
-        except requests.RequestException:
+        except (requests.RequestException, NbpError):
             pass
         return None
 
@@ -143,6 +215,8 @@ class NbpClient:
         except (requests.RequestException, NbpError) as e:
             qpath = self._queue(payload)
             log.warning(f"upload failed, queued at {qpath} — {e}")
+            if not self.is_authed:
+                raise NbpError("Upload failed — saved to retry queue. Your sign-in expired: sign in again, then click Retry upload.")
             raise NbpError(f"Upload failed — saved to retry queue. ({e})")
 
     def _do_upload(self, payload: dict) -> dict:
@@ -150,9 +224,9 @@ class NbpClient:
         pitches = payload["pitches"]
 
         # 1. Insert the session (return representation to get its id).
-        r = requests.post(
-            f"{self.url}/rest/v1/trackman_sessions",
-            headers=self._headers({"Prefer": "return=representation"}),
+        r = self._request(
+            "POST", "/rest/v1/trackman_sessions",
+            extra_headers={"Prefer": "return=representation"},
             json=session,
             timeout=20,
         )
@@ -168,9 +242,9 @@ class NbpClient:
             rows.append({**p, "session_row_id": session_row_id,
                          "trackman_session_id": session.get("trackman_session_id")})
         if rows:
-            r2 = requests.post(
-                f"{self.url}/rest/v1/trackman_pitches?on_conflict=pitch_uid",
-                headers=self._headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            r2 = self._request(
+                "POST", "/rest/v1/trackman_pitches?on_conflict=pitch_uid",
+                extra_headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
                 json=rows,
                 timeout=60,
             )
@@ -207,4 +281,8 @@ class NbpClient:
             except (requests.RequestException, NbpError, json.JSONDecodeError) as e:
                 log.warning(f"retry still failing for {f.name} — {e}")
                 failed += 1
+                # #442: once the sign-in is gone every remaining file fails the
+                # same way — stop here so the caller can ask for a sign-in.
+                if not self.is_authed:
+                    break
         return {"sent": sent, "failed": failed, "remaining": self.queued_count()}

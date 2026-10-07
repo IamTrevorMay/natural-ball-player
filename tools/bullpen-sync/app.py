@@ -271,6 +271,10 @@ async def session_end() -> dict:
         "uploaded": uploaded,
         "message": message,
         "queued": hub.nbp.queued_count(),
+        # #442: False when the upload failed because the sign-in expired and
+        # could not be refreshed — the UI then offers "Sign in again" instead
+        # of a Retry that can only fail.
+        "authed": hub.nbp.is_authed,
     }
     hub.emit({"type": "session_ended", **result})
     return result
@@ -279,7 +283,8 @@ async def session_end() -> dict:
 @app.post("/api/queue/drain")
 async def queue_drain() -> dict:
     _require_auth()
-    return await asyncio.to_thread(hub.nbp.drain_queue)
+    result = await asyncio.to_thread(hub.nbp.drain_queue)
+    return {**result, "authed": hub.nbp.is_authed}
 
 
 @app.post("/api/quit")

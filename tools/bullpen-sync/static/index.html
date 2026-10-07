@@ -169,8 +169,25 @@ let chosenAthlete = null, sessionActive = false, ws = null;
 
 async function api(path, opts={}) {
   const r = await fetch(path, {headers:{"Content-Type":"application/json"}, ...opts});
-  if (!r.ok) { const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail || r.statusText); }
+  if (!r.ok) {
+    const e = await r.json().catch(()=>({detail:r.statusText}));
+    // #442: the server signs out when its Supabase token expires and can't be
+    // refreshed. Any 401 after login means exactly that — go back to the
+    // login card with a reason, instead of a dead button and no explanation.
+    if (r.status === 401 && path !== "/api/login") signedOut("Your sign-in expired. Sign in again, then click Retry upload — nothing was lost.");
+    throw new Error(e.detail || r.statusText);
+  }
   return r.json();
+}
+
+// #442: drop back to the login card, keeping the queue count visible so the
+// coach knows the bullpen is waiting to be re-sent.
+function signedOut(msg) {
+  $("#view-main").classList.add("hidden");
+  $("#view-setup").classList.add("hidden");
+  $("#view-login").classList.remove("hidden");
+  $("#pill-user").classList.add("hidden"); $("#btn-logout").classList.add("hidden");
+  if (msg) { $("#login-err").textContent = msg; $("#login-err").classList.remove("hidden"); }
 }
 
 // ── status pills ──
@@ -310,19 +327,26 @@ function showEndResult(r) {
   $("#setup").classList.remove("hidden");
   chosenAthlete=null; $("#in-athlete").value=""; $("#athlete-chosen").textContent=""; $("#btn-start").disabled=true;
   const cls = r.uploaded ? "good":"bad";
-  const retry = r.uploaded ? "" : ` <button id="btn-retry" class="btn-ghost" style="margin-left:10px;padding:5px 10px;font-size:12px">Retry upload</button>`;
+  // #442: if the sign-in died during the upload, retrying can only fail — offer sign-in instead.
+  const needsLogin = !r.uploaded && r.authed === false;
+  const retry = r.uploaded ? "" : ` <button id="btn-retry" class="btn-ghost" style="margin-left:10px;padding:5px 10px;font-size:12px">${needsLogin ? "Sign in again" : "Retry upload"}</button>`;
   const banner = document.createElement("div");
   banner.className = "banner "+cls;
   banner.innerHTML = `${r.uploaded?"✅":"⚠️"} ${r.pitch_count} pitches — ${esc(r.message)}<br>
     <span class="muted" style="font-weight:400">CSV saved: ${esc(r.csv_path)}</span>${retry}`;
   $("#setup").prepend(banner);
   renderQueue(r.queued||0);
-  if (!r.uploaded) $("#btn-retry").onclick = drainQueue;
+  if (!r.uploaded) $("#btn-retry").onclick = needsLogin
+    ? () => signedOut("Your sign-in expired during the upload. Sign in again, then click Retry upload — the pitches are saved and queued.")
+    : drainQueue;
 }
 async function drainQueue() {
-  const r = await api("/api/queue/drain",{method:"POST"});
-  renderQueue(r.remaining||0);
-  alert(`Retry: ${r.sent} sent, ${r.failed} still failing.`);
+  try {
+    const r = await api("/api/queue/drain",{method:"POST"});
+    renderQueue(r.remaining||0);
+    if (r.authed === false) { signedOut("Your sign-in expired. Sign in again, then click Retry upload."); return; }
+    alert(`Retry: ${r.sent} sent, ${r.failed} still failing.`);
+  } catch(e) { if (!$("#view-login").classList.contains("hidden")) return; alert(e.message); }
 }
 
 // ── live table ──
