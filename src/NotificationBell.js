@@ -99,7 +99,7 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment, onOpenAthletePt, onDismissPtNotice, onDismissAllPtNotices, onOpenWeeklyReminder, onDismissWeeklyReminder }) {
+export default function NotificationBell({ currentPortal, mainCounts, workCounts, onJump, userRole, onDeletePayment, needsWhoop, onOpenWhoop, onDismissEventAssignment, onOpenAthletePt, onDismissPtNotice, onDismissAllPtNotices, onOpenWeeklyReminder, onDismissWeeklyReminder, onOpenWhoopNudge, onDismissWhoopNudge }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -123,6 +123,7 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
     + (mainCounts?.ptVisitNotices?.length || 0)
     // #438: this week's stats/PT check-in, until the athlete clears it.
     + (mainCounts?.weeklyReminders?.length || 0)
+    + (mainCounts?.whoopNudges?.length || 0)
     // #224: the WHOOP nudge counts as one. It clears itself the moment the
     // athlete connects — useWhoopNudge only ever sets this when the server
     // says `connected === false`, so there is no state to reset by hand.
@@ -298,6 +299,47 @@ export default function NotificationBell({ currentPortal, mainCounts, workCounts
                 the athlete's Physical Therapy tab, where the existing RLS and
                 the existing screen decide what they see. Clicking dismisses
                 and navigates, as with #408; the X dismisses in place. */}
+            {/* #443: WHOOP coaching nudges (lift intensity, zone 5 time,
+                pre-game strain, sleep, fuelling). Click-through opens the
+                athlete's WHOOP tab and clears it; the X just clears it.
+                Warnings (zone 5, pre-game) are amber; the rest are plain. */}
+            {(mainCounts?.whoopNudges || []).map(n => (
+              <div
+                key={`main-whoop-nudge-${n.id}`}
+                className="w-full flex items-start hover:bg-gray-50 border-b border-gray-100 transition"
+              >
+                <button
+                  onClick={() => {
+                    onDismissWhoopNudge?.(n.id);
+                    setOpen(false);
+                    if (onOpenWhoopNudge) onOpenWhoopNudge();
+                    else jump('main', 'profile');
+                  }}
+                  className="flex-1 text-left px-4 py-3 min-w-0"
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className="mt-0.5">
+                      {n.severity === 'warning'
+                        ? <AlertTriangle size={16} className="text-amber-600" />
+                        : <Activity size={16} className="text-emerald-600" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-900 font-medium">{n.title}</p>
+                      <p className="text-xs text-gray-600 mt-0.5">{n.body}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">WHOOP · opens your WHOOP tab</p>
+                    </div>
+                    {currentPortal !== 'main' && <PortalTag kind="main" />}
+                  </div>
+                </button>
+                <button
+                  onClick={() => onDismissWhoopNudge?.(n.id)}
+                  title="Dismiss"
+                  className="px-3 py-3 text-gray-400 hover:text-gray-700 transition shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
             {/* #438: the weekly stats / PT check-in. Click-through opens the
                 athlete's own Stats tab and clears it; the X just clears it. */}
             {(mainCounts?.weeklyReminders || []).map(r => (

@@ -1,5 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders as makeCors, preflight } from "../_shared/cors.ts";
+import { evaluateNudges } from "./nudges.ts";
+
+// #443: facility timezone for "today" and game times. Same env the other
+// functions read; same default as calendar-feed.
+const FACILITY_TZ = Deno.env.get("FACILITY_TIMEZONE") || "America/Los_Angeles";
 
 const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v2";
 const WHOOP_AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth";
@@ -329,10 +334,13 @@ async function handleDisconnect(userId: string, corsHeaders: Record<string, stri
   });
 }
 
-async function handleSync(userId: string, targetUserId: string | undefined, corsHeaders: Record<string, string>): Promise<Response> {
-  const adminClient = getAdminClient();
-  const athleteId = targetUserId || userId;
-
+// Pull everything new from WHOOP for one athlete and upsert it. Shared by the
+// athlete-triggered sync and the #443 cron. Throws on any failure (including
+// WHOOP_REAUTH_REQUIRED) so the caller decides how to report it.
+async function syncAthlete(
+  adminClient: ReturnType<typeof getAdminClient>,
+  athleteId: string
+): Promise<{ cycles: number; sleep: number; workouts: number }> {
   const accessToken = await ensureValidToken(adminClient, athleteId);
 
   const endDate = new Date().toISOString().split("T")[0];
@@ -429,6 +437,10 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
       workouts.map(async (w: any) => {
         const startMs = new Date(w.start).getTime();
         const endMs = new Date(w.end).getTime();
+        // #443: heart-rate zone split + real timestamps, so the nudge rules
+        // don't have to decrypt raw_data. WHOOP v2 nests these under
+        // score.zone_durations.
+        const z = w.score?.zone_durations || w.score?.zone_duration || {};
         return {
           athlete_id: athleteId,
           whoop_workout_id: String(w.id),
@@ -440,6 +452,15 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
           max_heart_rate: w.score?.max_heart_rate ?? null,
           distance_meter: w.score?.distance_meter ?? null,
           duration_ms: endMs - startMs,
+          start_at: new Date(startMs).toISOString(),
+          end_at: new Date(endMs).toISOString(),
+          kilojoule: w.score?.kilojoule ?? null,
+          zone_zero_ms: z.zone_zero_milli ?? null,
+          zone_one_ms: z.zone_one_milli ?? null,
+          zone_two_ms: z.zone_two_milli ?? null,
+          zone_three_ms: z.zone_three_milli ?? null,
+          zone_four_ms: z.zone_four_milli ?? null,
+          zone_five_ms: z.zone_five_milli ?? null,
           raw_data: await encrypt(JSON.stringify(w)),
         };
       })
@@ -450,17 +471,124 @@ async function handleSync(userId: string, targetUserId: string | undefined, cors
     if (workoutsErr) throw new Error(`whoop_workouts upsert failed: ${workoutsErr.message}`);
   }
 
+  await adminClient
+    .from("whoop_tokens")
+    .update({ last_synced_at: new Date().toISOString(), last_sync_error: null })
+    .eq("user_id", athleteId);
+
+  return { cycles: cycles.length, sleep: sleeps.length, workouts: workouts.length };
+}
+
+async function handleSync(userId: string, targetUserId: string | undefined, corsHeaders: Record<string, string>): Promise<Response> {
+  const adminClient = getAdminClient();
+  const athleteId = targetUserId || userId;
+
+  const counts = await syncAthlete(adminClient, athleteId);
+
+  // #443: a manual sync should surface nudges too, not just the cron. A rules
+  // failure must not fail the sync the athlete just asked for.
+  let nudges: unknown = null;
+  try {
+    nudges = await evaluateNudges(adminClient, athleteId, FACILITY_TZ);
+  } catch (e) {
+    console.error("whoop nudges (manual sync):", e);
+  }
+
   return new Response(
-    JSON.stringify({
-      success: true,
-      counts: {
-        cycles: cycles.length,
-        sleep: sleeps.length,
-        workouts: workouts.length,
-      },
-    }),
+    JSON.stringify({ success: true, counts, nudges }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
+}
+
+// #443: ?action=cron — sync every connected athlete and run the nudge rules.
+// Called by api/whoop-sync.js (Vercel cron, every 2 hours) with the service
+// role key; also runnable by a staff user for testing. Query params:
+//   dry_run=1   evaluate rules but write nothing (sync still runs)
+//   user_id=    one athlete only
+//   limit=N     first N athletes (oldest sync first)
+// One athlete's failure (expired WHOOP grant, API hiccup) is recorded on the
+// token row and never stops the others.
+function decodeJwtRole(token: string): string | null {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof payload?.role === "string" ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleCron(req: Request, corsHeaders: Record<string, string>): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  const adminClient = getAdminClient();
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token) return json({ error: "Missing authorization header" }, 401);
+  let via = "service";
+  if (token !== serviceKey && decodeJwtRole(token) !== "service_role") {
+    const { data: { user }, error } = await getUserClient(authHeader).auth.getUser();
+    if (error || !user) return json({ error: "Unauthorized" }, 401);
+    const { data: me } = await adminClient.from("users").select("role").eq("id", user.id).maybeSingle();
+    if (!me || !["admin", "coach"].includes(me.role)) return json({ error: "Unauthorized: staff only" }, 403);
+    via = `staff:${user.id}`;
+  }
+
+  const url = new URL(req.url);
+  const dryRun = ["1", "true"].includes(url.searchParams.get("dry_run") || "");
+  const onlyUserId = url.searchParams.get("user_id");
+  const limit = Math.max(0, parseInt(url.searchParams.get("limit") || "0", 10) || 0);
+
+  let q = adminClient
+    .from("whoop_tokens")
+    .select("user_id, last_synced_at")
+    .order("last_synced_at", { ascending: true, nullsFirst: true });
+  if (onlyUserId) q = q.eq("user_id", onlyUserId);
+  if (limit) q = q.limit(limit);
+  const { data: tokens, error: tErr } = await q;
+  if (tErr) return json({ error: `whoop_tokens read failed: ${tErr.message}` }, 500);
+
+  const startedAt = Date.now();
+  const results: Array<Record<string, unknown>> = [];
+  const queue = [...(tokens || [])];
+  const CONCURRENCY = 4;
+
+  const worker = async () => {
+    while (queue.length) {
+      const row = queue.shift()!;
+      const athleteId = row.user_id as string;
+      const r: Record<string, unknown> = { user_id: athleteId };
+      try {
+        r.counts = await syncAthlete(adminClient, athleteId);
+        r.nudges = await evaluateNudges(adminClient, athleteId, FACILITY_TZ, { dryRun });
+      } catch (e) {
+        const msg = (e as Error)?.message || String(e);
+        r.error = msg;
+        await adminClient
+          .from("whoop_tokens")
+          .update({ last_sync_error: msg.slice(0, 500) })
+          .eq("user_id", athleteId);
+      }
+      results.push(r);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+
+  const summary = {
+    via,
+    dry_run: dryRun,
+    athletes: results.length,
+    synced: results.filter((r) => !r.error).length,
+    failed: results.filter((r) => r.error).length,
+    reauth_required: results.filter((r) => String(r.error || "").includes("WHOOP_REAUTH_REQUIRED")).length,
+    nudges_inserted: results.reduce((n, r) => n + (((r.nudges as any)?.inserted as number) || 0), 0),
+    nudge_candidates: results.reduce((n, r) => n + (((r.nudges as any)?.candidates as number) || 0), 0),
+    elapsed_ms: Date.now() - startedAt,
+    results,
+  };
+  console.log("whoop cron:", JSON.stringify({ ...summary, results: undefined }));
+  return json(summary);
 }
 
 async function handleData(
@@ -540,6 +668,10 @@ Deno.serve(async (req) => {
     // OAuth callback now lives in `whoop-callback` (vercel.json routes
     // /api/whoop/callback → that function). The `?action=callback` path here
     // is removed to keep one canonical implementation.
+
+    // #443: the cron authenticates with the service-role key (or a staff
+    // JWT) and has no end user, so it is routed before the getUser() gate.
+    if (action === "cron") return await handleCron(req, corsHeaders);
 
     // All actions require auth
     const authHeader = req.headers.get("Authorization");

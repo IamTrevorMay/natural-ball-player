@@ -29,7 +29,7 @@ import PublicPortal from './PublicPortal';
 import NotificationBell, { deletePendingPayment, dismissEventAssignment } from './NotificationBell';
 import { formatUserError } from './errorMessage';
 import { initUsage, setUsageContext, trackView, trackViewExit } from './usage';
-import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge, dismissPtVisitNotice, markAllPtVisitNoticesSeen, dismissWeeklyReminder } from './useNotifications';
+import { useMainPortalCounts, useWorkPortalCounts, useWhoopNudge, dismissPtVisitNotice, markAllPtVisitNoticesSeen, dismissWeeklyReminder, dismissWhoopNudge } from './useNotifications';
 import { Users, Calendar, BarChart3, BookOpen, MessageSquare, Settings, TrendingUp, Activity, Target, Wrench, Bell, Clock, UserCog, FileText, FolderOpen, ChevronDown, ChevronRight, Briefcase, Mail, Lock, ArrowLeft, Menu, X, MapPin, AlertCircle, CheckCircle, Layers, Dumbbell } from 'lucide-react';
 import './App.css';
 
@@ -1182,6 +1182,10 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
   };
   const handleDismissWeeklyReminder = (reminderId) => dismissWeeklyReminder(reminderId, mainCounts.refresh);
 
+  // #443: a WHOOP nudge opens the athlete's own WHOOP tab — the same place
+  // the "connect WHOOP" nudge lands (handleOpenWhoop above).
+  const handleDismissWhoopNudge = (nudgeId) => dismissWhoopNudge(nudgeId, mainCounts.refresh);
+
   if (currentPortal === 'work' && (userRole === 'coach' || userRole === 'admin')) {
     return (
       <WorkPortalShell
@@ -1248,6 +1252,8 @@ function MainApp({ userRole, secondaryRole, userId, userName, userAvatar, onLogo
             onDismissAllPtNotices={handleDismissAllPtNotices}
             onOpenWeeklyReminder={handleOpenWeeklyReminder}
             onDismissWeeklyReminder={handleDismissWeeklyReminder}
+            onOpenWhoopNudge={handleOpenWhoop}
+            onDismissWhoopNudge={handleDismissWhoopNudge}
           />
         </div>
 

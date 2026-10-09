@@ -443,6 +443,19 @@ export function weekStartFor(d = new Date()) {
 
 // #438: the athlete clears this week's reminder from the bell. Own-row UPDATE
 // under RLS; the cron never un-dismisses, so once cleared it stays cleared.
+// #443: the athlete clears a WHOOP nudge from the bell. Own-row UPDATE under
+// RLS (whoop_nudges_update_own); the rules never re-insert a dismissed row
+// because the (athlete, kind, source_key) unique key still exists.
+export async function dismissWhoopNudge(nudgeId, onSuccess) {
+  if (!nudgeId) return;
+  const { error } = await supabase
+    .from('whoop_nudges')
+    .update({ dismissed_at: new Date().toISOString() })
+    .eq('id', nudgeId);
+  if (error) { console.error('WHOOP nudge dismiss failed:', error); return; }
+  onSuccess?.();
+}
+
 export async function dismissWeeklyReminder(reminderId, onSuccess) {
   if (!reminderId) return;
   const { error } = await supabase
@@ -458,6 +471,9 @@ export function useMainPortalCounts(userId, userRole) {
   // #438: this week's undismissed stats/PT reminder rows for the signed-in
   // athlete (one, in practice). Written by the weekly-reminders cron.
   const [weeklyReminders, setWeeklyReminders] = useState([]);
+  // #443: undismissed WHOOP coaching nudges for the signed-in athlete, newest
+  // first. Written server-side by the whoop edge function after each sync.
+  const [whoopNudges, setWhoopNudges] = useState([]);
   const [pendingSlots, setPendingSlots] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
   const [packageFlags, setPackageFlags] = useState([]);
@@ -510,6 +526,28 @@ export function useMainPortalCounts(userId, userRole) {
     } catch (e) {
       console.error('Weekly reminders error (migration pending?):', e);
       setWeeklyReminders([]);
+    }
+
+    // #443: own undismissed WHOOP nudges. Players only — staff have no WHOOP
+    // of their own and the rows are keyed on the athlete. Fails to EMPTY so a
+    // missing table never takes the rest of the bell down.
+    if (userRole === 'player') {
+      try {
+        const { data: wn, error: wnErr } = await supabase
+          .from('whoop_nudges')
+          .select('id, kind, severity, title, body, occurred_on, created_at')
+          .eq('athlete_id', userId)
+          .is('dismissed_at', null)
+          .order('created_at', { ascending: false })
+          .limit(8);
+        if (wnErr) throw wnErr;
+        setWhoopNudges(wn || []);
+      } catch (e) {
+        console.error('WHOOP nudges error (migration pending?):', e);
+        setWhoopNudges([]);
+      }
+    } else {
+      setWhoopNudges([]);
     }
 
     try {
@@ -651,7 +689,7 @@ export function useMainPortalCounts(userId, userRole) {
     return () => { supabase.removeChannel(ch1); supabase.removeChannel(ch2); supabase.removeChannel(ch3); supabase.removeChannel(ch4); supabase.removeChannel(ch5); supabase.removeChannel(ch6); supabase.removeChannel(ch7); };
   }, [refresh, userId]);
 
-  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, ptVisitNotices, weeklyReminders, refresh };
+  return { unreadMessages, pendingSlots, pendingPayments, packageFlags, eventAssignments, ptVisitNotices, weeklyReminders, whoopNudges, refresh };
 }
 
 // Counts and details for the Work Portal: unread work messages + (admin) pending hours + pending time off.
