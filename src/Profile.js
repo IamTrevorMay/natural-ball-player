@@ -9,6 +9,7 @@ import { AddEventPanel } from './Schedule';
 import WhoopTab from './WhoopTab';
 import TrackmanTab from './TrackmanTab';
 import ExternalStatsTab from './ExternalStatsTab';
+import RegistrationTab from './RegistrationTab';
 import { fmtLocalDate } from './scheduleUtils';
 import SignedSignatureImage from './SignedSignatureImage';
 import StoreModal from './StoreModal';
@@ -244,6 +245,9 @@ const noteArea = (n) => n?.area || (n?.category === 'hitting' ? 'hitting' : n?.c
 // Assessment moved here from the Health tab (#376).
 const RECORDS_SUB_TABS = [
   { key: 'documents', label: 'Documents' },
+  // #447: Perfect Game / Top Tier registration proof. Same visibility as
+  // Documents — the athlete and any staff member.
+  { key: 'registration', label: 'Registration' },
   { key: 'codes', label: 'Codes' },
   { key: 'goals', label: 'Goals' },
   { key: 'notes', label: 'Notes', staffOnly: true, playerSelf: true },
@@ -4597,6 +4601,10 @@ export default function Profile({ userId, userRole, onBack, loggedInUserId, onNa
                 </div>
               )}
             </div>
+          )}
+
+          {activeProfileTab === 'records' && activeRecordsSubTab === 'registration' && (
+            <RegistrationTab userId={userId} loggedInUserId={loggedInUserId} userRole={userRole} />
           )}
 
           {activeProfileTab === 'records' && activeRecordsSubTab === 'practice_stats' && (

@@ -11,6 +11,7 @@ import { useExerciseVideos } from './exerciseVideos';
 import ExerciseNameInput from './ExerciseNameInput';
 import { metricsByGroup } from './assessmentMetrics';
 import { EXTERNAL_STAT_SOURCES, EXTERNAL_STATS_BUCKET, sourceInfo, sourceName } from './externalStatsSources';
+import { REGISTRATION_SITES, REGISTRATIONS_BUCKET, hasRegistrationProof } from './registrationSites';
 
 // Format a Date to local YYYY-MM-DD (avoids toISOString UTC drift)
 const fmtLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -47,6 +48,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
   const tabs = [
     { key: 'schedule', icon: Calendar, label: 'Schedule' },
     { key: 'stats', icon: TrendingUp, label: 'Player Stats' },
+    { key: 'registrations', icon: FileText, label: 'Registrations' },
     { key: 'benchmarks', icon: Target, label: 'Assessments' },
     { key: 'slots', icon: Clock, label: 'Training Slots' },
     { key: 'tasks', icon: ClipboardList, label: 'My Tasks' },
@@ -72,6 +74,7 @@ export default function CoachTools({ userRole, userId, onNavigateToProfile }) {
         <div className="p-6">
           {activeTab === 'schedule' && <ScheduleTab teams={teams} />}
           {activeTab === 'stats' && <PlayerStatsTab players={players} onNavigateToProfile={onNavigateToProfile} />}
+          {activeTab === 'registrations' && <RegistrationsTab players={players} onNavigateToProfile={onNavigateToProfile} />}
           {activeTab === 'benchmarks' && <AssessmentsTab players={players} userId={userId} />}
           {activeTab === 'slots' && <TrainingSlotsTab userId={userId} />}
           {activeTab === 'tasks' && <MyTasksTab userId={userId} />}
@@ -4222,6 +4225,172 @@ function PlayerStatsTab({ players, onNavigateToProfile }) {
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// #447: Coach Tools → Registrations. Every athlete with their Perfect Game and
+// Top Tier status side by side, so a coach can clear the gaps before a
+// tournament instead of finding out at the gate. Reads player_registrations
+// (staff see all rows) and joins it to the roster the parent already loaded.
+function RegistrationsTab({ players, onNavigateToProfile }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [onlyMissing, setOnlyMissing] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      // #437: 2 rows per athlete at most, but page anyway so the roster can grow.
+      const { rows: data, error } = await readAllPages(() => supabase
+        .from('player_registrations')
+        .select('id, player_id, site, profile_url, file_url, file_name, notes, updated_at')
+        .order('player_id')
+        .order('id'));
+      if (cancelled) return;
+      if (error) console.error('Error loading registrations:', error);
+      setRows(data || []);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const openFile = async (row) => {
+    const { data, error } = await supabase.storage.from(REGISTRATIONS_BUCKET).createSignedUrl(row.file_url, 600);
+    if (error || !data) { alert('Could not open that file.'); return; }
+    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  // player_id → { site → row }
+  const byPlayer = new Map();
+  for (const r of rows) {
+    if (!byPlayer.has(r.player_id)) byPlayer.set(r.player_id, {});
+    byPlayer.get(r.player_id)[r.site] = r;
+  }
+
+  const teamNames = Array.from(new Set((players || []).flatMap(p => (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean)))).sort();
+
+  const q = search.trim().toLowerCase();
+  const list = (players || []).map(p => {
+    const regs = byPlayer.get(p.id) || {};
+    const status = {};
+    REGISTRATION_SITES.forEach(s => { status[s.value] = hasRegistrationProof(regs[s.value]) ? regs[s.value] : null; });
+    const missingCount = REGISTRATION_SITES.filter(s => !status[s.value]).length;
+    return { player: p, status, missingCount, teams: (p.team_members || []).map(tm => tm.teams?.name).filter(Boolean) };
+  }).filter(item => {
+    if (onlyMissing && item.missingCount === 0) return false;
+    if (teamFilter !== 'all' && !item.teams.includes(teamFilter)) return false;
+    if (!q) return true;
+    return (item.player.full_name || '').toLowerCase().includes(q) || (item.player.email || '').toLowerCase().includes(q);
+  }).sort((a, b) => b.missingCount - a.missingCount || (a.player.full_name || '').localeCompare(b.player.full_name || ''));
+
+  const total = (players || []).length;
+  const complete = (players || []).filter(p => {
+    const regs = byPlayer.get(p.id) || {};
+    return REGISTRATION_SITES.every(s => hasRegistrationProof(regs[s.value]));
+  }).length;
+
+  const fmt = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900">Tournament Registrations</h3>
+        <p className="text-sm text-gray-600 mt-0.5">
+          Perfect Game and Top Tier registration proof per athlete. Athletes add theirs under
+          <span className="font-medium"> Records → Registration</span> on their profile; you can add or fix any athlete's from their profile too.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search athlete..."
+            className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <select
+          value={teamFilter}
+          onChange={(e) => setTeamFilter(e.target.value)}
+          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">All teams</option>
+          {teamNames.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <label className="inline-flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} className="rounded" />
+          <span>Only missing</span>
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+        <span><span className="font-semibold text-gray-900">{complete}</span> of {total} athletes fully registered</span>
+        <span><span className="font-semibold text-gray-900">{total - complete}</span> missing at least one</span>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading...</p>
+      ) : list.length === 0 ? (
+        <div className="text-center py-10 border border-dashed border-gray-300 rounded-lg">
+          <FileText size={28} className="mx-auto text-gray-300 mb-2" />
+          <p className="text-sm text-gray-500">{onlyMissing ? 'Nobody matching is missing a registration.' : 'No athletes match that search.'}</p>
+        </div>
+      ) : (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="hidden md:grid grid-cols-[1fr_1fr_1fr] gap-2 px-4 py-2 bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
+            <span>Athlete</span>
+            {REGISTRATION_SITES.map(s => <span key={s.value}>{s.label}</span>)}
+          </div>
+          <div className="divide-y divide-gray-100">
+            {list.map(({ player, status, teams }) => (
+              <div key={player.id} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr] gap-2 px-4 py-3 items-center">
+                <button
+                  onClick={() => onNavigateToProfile && onNavigateToProfile(player.id)}
+                  className="flex items-center space-x-2 min-w-0 text-left hover:text-blue-600"
+                >
+                  <User size={16} className="text-gray-400 flex-shrink-0" />
+                  <span className="font-medium text-gray-900 truncate">{player.full_name}</span>
+                  {teams.length > 0 && <span className="text-xs text-gray-400 truncate hidden lg:inline">{teams.join(', ')}</span>}
+                </button>
+                {REGISTRATION_SITES.map(s => {
+                  const r = status[s.value];
+                  return (
+                    <div key={s.value} className="flex items-center flex-wrap gap-1.5">
+                      <span className="md:hidden text-xs text-gray-500 w-20">{s.label}</span>
+                      {r ? (
+                        <>
+                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">
+                            <Check size={12} /><span>{fmt(r.updated_at)}</span>
+                          </span>
+                          {r.profile_url && (
+                            <a href={r.profile_url} target="_blank" rel="noopener noreferrer" title="Open profile"
+                              className="p-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"><ExternalLink size={13} /></a>
+                          )}
+                          {r.file_url && (
+                            <button onClick={() => openFile(r)} title={r.file_name || 'Open file'}
+                              className="p-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"><FileText size={13} /></button>
+                          )}
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
+                          <XCircle size={12} /><span>Missing</span>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
